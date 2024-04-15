@@ -1,7 +1,7 @@
 # Anonymous Telegram Chat Bot
 
 ## Deployment
-### Init Terraform Backend
+### Terraform Backend
 First we create a S3 bucket to store Terraform state, a DynamoDB table to persist Terraform state lock and a S3 bucket to deploy Lambda function code bundles. The Terraform state for this init stack is being kept locally.
 ```shell
 cd infra/init
@@ -29,13 +29,14 @@ Create a zip bundle from the built binary
 zip lambda_function.zip bootstrap
 ```
 
-### Upload Bundle
+#### Upload Bundle
 Upload the build zip bundle to S3:
 ```shell
 aws s3 cp lambda_function.zip s3://<S3_CODE_BUCKET_NAME>/lambda_function.zip
 ```
 
-### Add Terraform Variables File
+### Deploy AWS Resources
+#### Add Terraform Variables File
 Create a file named `infra/terraform.tfvars`:
 ```hcl
 aws_region     = <AWS_REGION>
@@ -44,7 +45,7 @@ bot_token      = <TELEGRAM_BOT_TOKEN>
 ```
 You can also pass these variables to `terraform plan` command using multiple `-var` options.
 
-### Initialize Terraform
+#### Initialize Terraform
 Create a Terraform backend configuration file named `infra/backend_config.hcl`:
 ```hcl
 bucket         = <S3_TERRAFORM_STATE_BUCKET_NAME>
@@ -57,7 +58,7 @@ cd infra
 terraform init -backend-config="backend_config.hcl" # Run once
 ```
 
-### Deploy Infrastructure Resources
+#### Deploy
 Use `terraform plan` to create a changeset and run `terraform apply` command to deploy the changeset on AWS:
 ```shell
 cd infra
@@ -75,7 +76,7 @@ curl https://api.telegram.org/bot<BOT_TOKEN>/setWebhook \
 ```
 
 ## Local Development
-Run reverse proxy tool with a public secure API gateway on your local 8080 port.   
+Run a reverse proxy tool with a public secure API gateway on your local 8080 port.   
 For example using [ngrok](https://ngrok.com/):
 ```shell
 ngrok http 8080
