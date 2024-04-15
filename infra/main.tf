@@ -18,9 +18,7 @@ resource "aws_lambda_function" "anonymous_bot" {
 
   environment {
     variables = {
-      TOKEN = var.bot_token
-#       WEBHOOK_SECRET = var.webhook_secret
-#       WEBHOOK_DOMAIN = aws_apigatewayv2_stage.default_stage.invoke_url
+      BOT_TOKEN = var.bot_token
     }
   }
 }
