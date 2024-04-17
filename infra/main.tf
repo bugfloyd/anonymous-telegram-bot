@@ -94,3 +94,50 @@ resource "aws_lambda_permission" "api_gw_lambda" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*/*"
 }
+
+resource "aws_dynamodb_table" "main" {
+  name         = "AnonymousBotMain"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "pk"
+  range_key    = "sk"
+
+  attribute {
+    name = "pk"
+    type = "S"
+  }
+
+  attribute {
+    name = "sk"
+    type = "S"
+  }
+}
+
+resource "aws_iam_policy" "lambda_dynamodb_policy" {
+  name        = "AnonymousDynamoDBLambdaPolicy"
+  description = "Policy to allow Lambda function to manage DynamoDB"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:BatchGetItem",
+          "dynamodb:BatchWriteItem",
+          "dynamodb:DescribeTable",
+        ],
+        Effect   = "Allow",
+        Resource = aws_dynamodb_table.main.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rest_backend_lambda_dynamodb_policy_attachment" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = aws_iam_policy.lambda_dynamodb_policy.arn
+}
