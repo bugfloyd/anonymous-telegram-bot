@@ -76,15 +76,21 @@ curl https://api.telegram.org/bot<BOT_TOKEN>/setWebhook \
 ```
 
 ## Local Development
+Use docker compose to run local DynamoDB and also a local development web server on port 8080:  
+```shell
+export BOT_TOKEN=<BOT_TOKEN>
+docker compose up -d
+```
+
+After applying a change in the bot code, to update the local bot in the docker container:
+```shell
+docker compose restart bot
+```
+
 Run a reverse proxy tool with a public secure API gateway on your local 8080 port.   
 For example using [ngrok](https://ngrok.com/):
 ```shell
 ngrok http 8080
-```
-
-Enter `bot` directory and run the local wrapper to start the local development web server on port 8080:  
-```shell
-BOT_TOKEN=<BOT_TOKEN> go run localwrapper.go
 ```
 
 Register the local bot on Telegram using the ngrok's forwarding endpoint:
