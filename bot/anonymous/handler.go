@@ -46,6 +46,11 @@ func Handler(request Request) (Response, error) {
 	})
 	updater := ext.NewUpdater(dispatcher, nil)
 
+	// /start command to introduce the bot and create the user
+	dispatcher.AddHandler(handlers.NewCommand("start", start))
+	// /source command to send the bot info
+	dispatcher.AddHandler(handlers.NewCommand("info", info))
+
 	// Add echo handler to reply to all text messages.
 	dispatcher.AddHandler(handlers.NewMessage(message.Text, echo))
 
@@ -66,10 +71,39 @@ func Handler(request Request) (Response, error) {
 	}, nil
 }
 
+func start(b *gotgbot.Bot, ctx *ext.Context) error {
+	userRepo, err := NewUserRepository()
+	if err != nil {
+		return fmt.Errorf("failed to init db repo: %w", err)
+	}
+
+	user, err := userRepo.GetUserByUserId(ctx.EffectiveUser.Id)
+	if err != nil {
+		user, err = userRepo.SetUser(ctx.EffectiveUser.Id)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf("UUID: %s", user.UUID), &gotgbot.SendMessageOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to send bot info: %w", err)
+	}
+	return nil
+}
+
+func info(b *gotgbot.Bot, ctx *ext.Context) error {
+	_, err := b.SendMessage(ctx.EffectiveChat.Id, "Bugfloyd Anonymous bot", &gotgbot.SendMessageOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to send bot info: %w", err)
+	}
+	return nil
+}
+
 func echo(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, err := ctx.EffectiveMessage.Reply(b, ctx.EffectiveMessage.Text, nil)
 	if err != nil {
-		return fmt.Errorf("failed to echo message: %w", err)
+		return err
 	}
 	return nil
 }
