@@ -1,4 +1,4 @@
-# Anonymous Telegram Chat Bot
+# Anonymous Telegram Chat Bot [UNDER DEVELOPMENT]
 
 ## Deployment
 ### Terraform Backend
