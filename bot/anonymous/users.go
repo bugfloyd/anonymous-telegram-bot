@@ -11,7 +11,7 @@ import (
 
 type User struct {
 	UUID        string `dynamo:",hash"`
-	UserID      int64  `index:"UserID-index,hash"`
+	UserID      int64  `index:"UserID-GSI,hash"`
 	State       State
 	Name        string
 	Blacklist   []string `dynamo:",set,omitempty"`
@@ -60,7 +60,7 @@ func (repo *UserRepository) GetUserByUUID(uuid string) (*User, error) {
 
 func (repo *UserRepository) GetUserByUserId(userId int64) (*User, error) {
 	var u User
-	err := repo.table.Get("UserID", userId).Index("UserID-index").One(&u)
+	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(&u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
