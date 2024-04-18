@@ -44,7 +44,6 @@ func Handler(request Request) (Response, error) {
 		},
 		MaxRoutines: ext.DefaultMaxRoutines,
 	})
-	updater := ext.NewUpdater(dispatcher, nil)
 
 	// /start command to introduce the bot and create the user
 	dispatcher.AddHandler(handlers.NewCommand("start", start))
@@ -54,15 +53,15 @@ func Handler(request Request) (Response, error) {
 	// Add echo handler to reply to all text messages.
 	dispatcher.AddHandler(handlers.NewMessage(message.Text, echo))
 
-	// Create a channel and send the event body to it
-	c := make(chan json.RawMessage)
-	go func() {
-		c <- []byte(request.Body)
-		close(c)
-	}()
+	var update gotgbot.Update
+	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {
+		log.Println("failed to parse update:", err.Error())
+	}
 
-	// Start dispatcher to process the incoming update in the channel
-	updater.Dispatcher.Start(b, c)
+	err = dispatcher.ProcessUpdate(b, &update, nil)
+	if err != nil {
+		log.Println("failed to process update:", err.Error())
+	}
 
 	// Return a successful response with the message
 	return Response{
@@ -79,6 +78,7 @@ func start(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	user, err := userRepo.GetUserByUserId(ctx.EffectiveUser.Id)
 	if err != nil {
+		log.Println("failed to get user:", err.Error())
 		user, err = userRepo.SetUser(ctx.EffectiveUser.Id)
 		if err != nil {
 			return err
