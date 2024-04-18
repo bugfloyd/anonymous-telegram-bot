@@ -10,10 +10,10 @@ import (
 type Command string
 
 const (
-	Start   Command = "start"
-	Info    Command = "info"
-	GetLink Command = "getLink"
-	Echo    Command = "echo"
+	StartCommand Command = "start"
+	InfoCommand  Command = "info"
+	LinkCommand  Command = "link"
+	EchoCommand  Command = "echo"
 )
 
 type RootHandler struct {
@@ -40,13 +40,13 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 
 	// Decide which function to call based on the command
 	switch command {
-	case Start:
+	case StartCommand:
 		return r.start(b, ctx)
-	case Info:
+	case InfoCommand:
 		return r.info(b, ctx)
-	case GetLink:
+	case LinkCommand:
 		return r.getLink(b, ctx)
-	case Echo:
+	case EchoCommand:
 		return r.echo(b, ctx)
 	default:
 		return fmt.Errorf("unknown command: %s", command)

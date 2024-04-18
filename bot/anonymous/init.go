@@ -48,14 +48,14 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	rootHandler := NewRootHandler()
 
 	// /start command to introduce the bot and create the user
-	dispatcher.AddHandler(handlers.NewCommand("start", rootHandler.init(Start)))
+	dispatcher.AddHandler(handlers.NewCommand(string(StartCommand), rootHandler.init(StartCommand)))
 	// /source command to send the bot info
-	dispatcher.AddHandler(handlers.NewCommand("info", rootHandler.init(Info)))
+	dispatcher.AddHandler(handlers.NewCommand(string(InfoCommand), rootHandler.init(InfoCommand)))
 	// /get_link command to get user entry link
-	dispatcher.AddHandler(handlers.NewCommand("get_link", rootHandler.init(GetLink)))
+	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
 
 	// Add echo handler to reply to all text messages.
-	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(Echo)))
+	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(EchoCommand)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {
