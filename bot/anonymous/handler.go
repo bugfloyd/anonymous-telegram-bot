@@ -14,15 +14,15 @@ import (
 	"os"
 )
 
-type Response events.APIGatewayProxyResponse
-type Request events.APIGatewayProxyRequest
+type APIResponse events.APIGatewayProxyResponse
+type APIRequest events.APIGatewayProxyRequest
 
-// Handler is our lambda handler invoked by the `lambda.Start` function call
-func Handler(request Request) (Response, error) {
+// InitBot is our lambda handler invoked by the `lambda.Start` function call
+func InitBot(request APIRequest) (APIResponse, error) {
 	// Get token from the environment variable.
 	token := os.Getenv("BOT_TOKEN")
 	if token == "" {
-		return Response{StatusCode: 500}, errors.New("TOKEN environment variable is empty")
+		return APIResponse{StatusCode: 500}, errors.New("TOKEN environment variable is empty")
 	}
 
 	// Create bot from environment value.
@@ -32,7 +32,7 @@ func Handler(request Request) (Response, error) {
 		},
 	})
 	if err != nil {
-		return Response{StatusCode: 500}, fmt.Errorf("failed to create new bot: %w", err)
+		return APIResponse{StatusCode: 500}, fmt.Errorf("failed to create new bot: %w", err)
 	}
 
 	// Create updater and dispatcher.
@@ -45,13 +45,17 @@ func Handler(request Request) (Response, error) {
 		MaxRoutines: ext.DefaultMaxRoutines,
 	})
 
+	rootHandler := NewRootHandler()
+
 	// /start command to introduce the bot and create the user
-	dispatcher.AddHandler(handlers.NewCommand("start", start))
+	dispatcher.AddHandler(handlers.NewCommand("start", rootHandler.init(Start)))
 	// /source command to send the bot info
-	dispatcher.AddHandler(handlers.NewCommand("info", info))
+	dispatcher.AddHandler(handlers.NewCommand("info", rootHandler.init(Info)))
+	// /get_link command to get user entry link
+	dispatcher.AddHandler(handlers.NewCommand("get_link", rootHandler.init(GetLink)))
 
 	// Add echo handler to reply to all text messages.
-	dispatcher.AddHandler(handlers.NewMessage(message.Text, echo))
+	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(Echo)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {
@@ -64,46 +68,8 @@ func Handler(request Request) (Response, error) {
 	}
 
 	// Return a successful response with the message
-	return Response{
+	return APIResponse{
 		StatusCode: 200,
 		Body:       "success",
 	}, nil
-}
-
-func start(b *gotgbot.Bot, ctx *ext.Context) error {
-	userRepo, err := NewUserRepository()
-	if err != nil {
-		return fmt.Errorf("failed to init db repo: %w", err)
-	}
-
-	user, err := userRepo.GetUserByUserId(ctx.EffectiveUser.Id)
-	if err != nil {
-		log.Println("failed to get user:", err.Error())
-		user, err = userRepo.SetUser(ctx.EffectiveUser.Id)
-		if err != nil {
-			return err
-		}
-	}
-
-	_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf("UUID: %s", user.UUID), &gotgbot.SendMessageOpts{})
-	if err != nil {
-		return fmt.Errorf("failed to send bot info: %w", err)
-	}
-	return nil
-}
-
-func info(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := b.SendMessage(ctx.EffectiveChat.Id, "Bugfloyd Anonymous bot", &gotgbot.SendMessageOpts{})
-	if err != nil {
-		return fmt.Errorf("failed to send bot info: %w", err)
-	}
-	return nil
-}
-
-func echo(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := ctx.EffectiveMessage.Reply(b, ctx.EffectiveMessage.Text, nil)
-	if err != nil {
-		return err
-	}
-	return nil
 }

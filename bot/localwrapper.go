@@ -18,12 +18,12 @@ func main() {
 		}
 
 		// Create a Request object that mimics API Gateway
-		req := anonymous.Request{
+		req := anonymous.APIRequest{
 			Body: string(body),
 		}
 
 		// Invoke the Lambda handler from your main package
-		resp, err := anonymous.Handler(req)
+		resp, err := anonymous.InitBot(req)
 		if err != nil {
 			log.Printf("Error handling request: %v", err)
 			http.Error(w, fmt.Sprintf("Handler error: %v", err), http.StatusInternalServerError)
