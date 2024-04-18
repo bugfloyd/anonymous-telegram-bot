@@ -52,7 +52,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ],
-        Effect = "Allow",
+        Effect   = "Allow",
         Resource = "arn:aws:logs:*:*:*"
       },
     ]
@@ -78,9 +78,9 @@ resource "aws_apigatewayv2_route" "route" {
 }
 
 resource "aws_apigatewayv2_stage" "default_stage" {
-  api_id        = aws_apigatewayv2_api.http_api.id
-  name          = "$default"
-  auto_deploy   = true
+  api_id      = aws_apigatewayv2_api.http_api.id
+  name        = "$default"
+  auto_deploy = true
 }
 
 output "webhook_url" {
@@ -104,6 +104,21 @@ resource "aws_dynamodb_table" "main" {
     name = "UUID"
     type = "S"
   }
+
+  attribute {
+    name = "UserID"
+    type = "N"
+  }
+
+  global_secondary_index {
+    name            = "UserID-GSI"
+    hash_key        = "UserID"
+    projection_type = "ALL"
+  }
+
+  lifecycle {
+    prevent_destroy = false
+  }
 }
 
 resource "aws_iam_policy" "lambda_dynamodb_policy" {
@@ -126,6 +141,15 @@ resource "aws_iam_policy" "lambda_dynamodb_policy" {
         ],
         Effect   = "Allow",
         Resource = aws_dynamodb_table.main.arn
+      },
+      {
+        Action = [
+          "dynamodb:Query",
+        ],
+        Effect = "Allow",
+        Resource = [
+          "${aws_dynamodb_table.main.arn}/index/UserID-GSI"
+        ]
       }
     ]
   })
