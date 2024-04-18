@@ -96,18 +96,12 @@ resource "aws_lambda_permission" "api_gw_lambda" {
 }
 
 resource "aws_dynamodb_table" "main" {
-  name         = "AnonymousBotMain"
+  name         = "AnonymousBot"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
+  hash_key     = "UUID"
 
   attribute {
-    name = "pk"
-    type = "S"
-  }
-
-  attribute {
-    name = "sk"
+    name = "UUID"
     type = "S"
   }
 }
