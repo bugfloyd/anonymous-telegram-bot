@@ -6,5 +6,5 @@ import (
 )
 
 func main() {
-	lambda.Start(anonymous.Handler)
+	lambda.Start(anonymous.InitBot)
 }
