@@ -67,9 +67,9 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 }
 
 func (r *RootHandler) processUser(userRepo *UserRepository, ctx *ext.Context) (*User, error) {
-	user, err := userRepo.GetUserByUserId(ctx.EffectiveUser.Id)
+	user, err := userRepo.ReadUserByUserId(ctx.EffectiveUser.Id)
 	if err != nil {
-		user, err = userRepo.SetUser(ctx.EffectiveUser.Id)
+		user, err = userRepo.CreateUser(ctx.EffectiveUser.Id)
 		if err != nil {
 			return nil, err
 		}
@@ -86,8 +86,13 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	if len(args) == 2 && args[0] == "/start" {
 		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
-
-		r.user.SetStateToSending(&r.userRepo, args[1])
+		err := r.userRepo.UpdateUser(r.user.UUID, map[string]interface{}{
+			"State":       SENDING,
+			"ContactUUID": args[1],
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update user state: %w", err)
+		}
 	}
 
 	_, err := b.SendMessage(ctx.EffectiveChat.Id, message, &gotgbot.SendMessageOpts{})
@@ -115,8 +120,6 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
-
-	// swich case on r.user.State
 	switch r.user.State {
 	case SENDING:
 		return r.sendAnonymousMessage(b, ctx)
@@ -135,7 +138,7 @@ func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string
 }
 
 func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
-	receiver, err := r.userRepo.GetUserByUUID(r.user.ContactUUID)
+	receiver, err := r.userRepo.ReadUserByUUID(r.user.ContactUUID)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
@@ -175,7 +178,12 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	r.user.SetState(&r.userRepo, REGISTERED)
+	err = r.userRepo.UpdateUser(r.user.UUID, map[string]interface{}{
+		"State": REGISTERED,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update user state: %w", err)
+	}
 
 	_, err = ctx.EffectiveMessage.Reply(b, "Message sent", nil)
 	if err != nil {
@@ -201,9 +209,13 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// store the message id in the user and set status to replying
-	err = r.user.SetStateToReply(&r.userRepo, uuid, messageID)
+	err = r.userRepo.UpdateUser(r.user.UUID, map[string]interface{}{
+		"State":          SENDING,
+		"ContactUUID":    uuid,
+		"ReplyMessageID": messageID,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to set user state: %w", err)
+		return fmt.Errorf("failed to update user state: %w", err)
 	}
 
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
