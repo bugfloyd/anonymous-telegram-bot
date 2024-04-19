@@ -2,6 +2,7 @@ package anonymous
 
 import (
 	"fmt"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
@@ -13,12 +14,12 @@ const (
 	StartCommand Command = "start"
 	InfoCommand  Command = "info"
 	LinkCommand  Command = "link"
-	EchoCommand  Command = "echo"
+	TextMessage  Command = "text"
 )
 
 type RootHandler struct {
 	user     User
-	receiver User
+	userRepo UserRepository
 }
 
 func NewRootHandler() *RootHandler {
@@ -32,11 +33,18 @@ func (r *RootHandler) init(commandName Command) handlers.Response {
 }
 
 func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Command) error {
-	user, err := r.processUser(ctx)
+	// create user repo
+	userRepo, err := NewUserRepository()
+	if err != nil {
+		return fmt.Errorf("failed to init db repo: %w", err)
+	}
+	user, err := r.processUser(userRepo, ctx)
+
 	if err != nil || user == nil {
 		return fmt.Errorf("failed to process user: %w", err)
 	}
 	r.user = *user
+	r.userRepo = *userRepo
 
 	// Decide which function to call based on the command
 	switch command {
@@ -46,19 +54,14 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 		return r.info(b, ctx)
 	case LinkCommand:
 		return r.getLink(b, ctx)
-	case EchoCommand:
-		return r.echo(b, ctx)
+	case TextMessage:
+		return r.processText(b, ctx)
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
 }
 
-func (r *RootHandler) processUser(ctx *ext.Context) (*User, error) {
-	userRepo, err := NewUserRepository()
-	if err != nil {
-		return nil, fmt.Errorf("failed to init db repo: %w", err)
-	}
-
+func (r *RootHandler) processUser(userRepo *UserRepository, ctx *ext.Context) (*User, error) {
 	user, err := userRepo.GetUserByUserId(ctx.EffectiveUser.Id)
 	if err != nil {
 		user, err = userRepo.SetUser(ctx.EffectiveUser.Id)
@@ -78,6 +81,8 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	if len(args) == 2 && args[0] == "/start" {
 		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
+
+		r.user.SetStateToSeding(&r.userRepo, args[1])
 	}
 
 	_, err := b.SendMessage(ctx.EffectiveChat.Id, message, &gotgbot.SendMessageOpts{})
@@ -104,10 +109,60 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-func (r *RootHandler) echo(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := ctx.EffectiveMessage.Reply(b, ctx.EffectiveMessage.Text, nil)
-	if err != nil {
-		return err
+func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
+
+	// swich case on r.user.State
+	switch r.user.State {
+	case SENDING:
+		return r.sendAnonymousMessage(b, ctx)
+	default:
+		return r.sendError(b, ctx, "Unknown Command")
 	}
+}
+
+func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string) error {
+	errorMessage := fmt.Sprintf("Error: %s", message)
+	_, err := ctx.EffectiveMessage.Reply(b, errorMessage, nil)
+	if err != nil {
+		return fmt.Errorf("failed to send error message: %w", err)
+	}
+	return nil
+}
+
+func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
+	receiver, err := r.userRepo.GetUserByUUID(r.user.ContactUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get receiver: %w", err)
+	}
+
+	_, err = b.SendMessage(receiver.UserID, "You have a new message:", &gotgbot.SendMessageOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	// TODO: use CopyMessage method instead of SendMessage
+	_, err = b.SendMessage(receiver.UserID, ctx.EffectiveMessage.Text, &gotgbot.SendMessageOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{
+					{
+						Text:         "Reply",
+						CallbackData: "reply", // TODO: use proper callback data with message id
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	r.user.SetState(&r.userRepo, REGISTERED)
+
+	_, err = ctx.EffectiveMessage.Reply(b, "Message sent", nil)
+	if err != nil {
+		return fmt.Errorf("failed to send message to sender: %w", err)
+	}
+
 	return nil
 }

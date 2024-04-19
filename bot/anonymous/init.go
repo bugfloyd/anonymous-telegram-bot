@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"net/http"
+	"os"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/aws/aws-lambda-go/events"
-	"log"
-	"net/http"
-	"os"
 )
 
 type APIResponse events.APIGatewayProxyResponse
@@ -54,8 +55,8 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	// /get_link command to get user entry link
 	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
 
-	// Add echo handler to reply to all text messages.
-	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(EchoCommand)))
+	// Add handler to process all text messages
+	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(TextMessage)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {

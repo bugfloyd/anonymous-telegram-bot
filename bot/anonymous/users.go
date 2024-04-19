@@ -2,11 +2,12 @@ package anonymous
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
-	"os"
 )
 
 type User struct {
@@ -22,6 +23,7 @@ type State string
 
 const (
 	REGISTERED State = "REGISTERED"
+	SENDING    State = "SENDING"
 )
 
 type UserRepository struct {
@@ -78,4 +80,23 @@ func (repo *UserRepository) SetUser(userId int64) (*User, error) {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 	return &u, nil
+}
+
+func (u *User) SetStateToSeding(repo *UserRepository, contactUUID string) error {
+	u.State = SENDING
+	u.ContactUUID = contactUUID
+	err := repo.table.Put(u).Run()
+	if err != nil {
+		return fmt.Errorf("failed to update user state: %w", err)
+	}
+	return nil
+}
+
+func (u *User) SetState(repo *UserRepository, state State) error {
+	u.State = state
+	err := repo.table.Put(u).Run()
+	if err != nil {
+		return fmt.Errorf("failed to update user state: %w", err)
+	}
+	return nil
 }
