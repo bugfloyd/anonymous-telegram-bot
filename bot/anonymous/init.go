@@ -4,14 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/PaulSonOfLars/gotgbot/v2"
-	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
-	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
-	"github.com/aws/aws-lambda-go/events"
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
+	"github.com/aws/aws-lambda-go/events"
 )
 
 type APIResponse events.APIGatewayProxyResponse
@@ -54,8 +56,12 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	// /get_link command to get user entry link
 	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
 
-	// Add echo handler to reply to all text messages.
-	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(EchoCommand)))
+	// Add handler to process all text messages
+	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
+
+	// Callback queries handlers
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("o|"), rootHandler.init(OpenCallback)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {
@@ -72,4 +78,20 @@ func InitBot(request APIRequest) (APIResponse, error) {
 		StatusCode: 200,
 		Body:       "success",
 	}, nil
+}
+
+func CustomSendMessageFilter(msg *gotgbot.Message) bool {
+	// accept all media and messages
+	return message.Text(msg) ||
+		message.Animation(msg) ||
+		message.Audio(msg) ||
+		message.Document(msg) ||
+		message.Photo(msg) ||
+		message.Sticker(msg) ||
+		message.Story(msg) ||
+		message.Video(msg) ||
+		message.VideoNote(msg) ||
+		message.Voice(msg) ||
+		message.Contact(msg) ||
+		message.Location(msg)
 }
