@@ -206,6 +206,12 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
 
+	// check if currect cb has replyed message id from cb.Update.Message.ReplyMessageID
+	replyMessageID := ctx.EffectiveMessage.MessageId
+	if ctx.EffectiveMessage.ReplyToMessage != nil {
+		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
+	}
+
 	sender, err := r.userRepo.readUserByUUID(uuid)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
@@ -223,7 +229,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			},
 		},
 		ReplyParameters: &gotgbot.ReplyParameters{
-			MessageId:                ctx.EffectiveMessage.MessageId,
+			MessageId:                replyMessageID,
 			AllowSendingWithoutReply: true,
 		},
 	})
