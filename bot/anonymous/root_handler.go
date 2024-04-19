@@ -185,7 +185,6 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	return nil
 }
 
-// add a function for reply anonymous message
 func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	cb := ctx.Update.CallbackQuery
 
