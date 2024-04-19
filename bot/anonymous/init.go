@@ -57,7 +57,7 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
 
 	// Add handler to process all text messages
-	dispatcher.AddHandler(handlers.NewMessage(message.Text, rootHandler.init(TextMessage)))
+	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
 
 	// Callback queries handlers
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
@@ -77,4 +77,20 @@ func InitBot(request APIRequest) (APIResponse, error) {
 		StatusCode: 200,
 		Body:       "success",
 	}, nil
+}
+
+func CustomSendMessageFilter(msg *gotgbot.Message) bool {
+	// accept all media and messages
+	return message.Text(msg) ||
+		message.Animation(msg) ||
+		message.Audio(msg) ||
+		message.Document(msg) ||
+		message.Photo(msg) ||
+		message.Sticker(msg) ||
+		message.Story(msg) ||
+		message.Video(msg) ||
+		message.VideoNote(msg) ||
+		message.Voice(msg) ||
+		message.Contact(msg) ||
+		message.Location(msg)
 }
