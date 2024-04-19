@@ -200,7 +200,6 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 }
 
 func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
-
 	cb := ctx.Update.CallbackQuery
 
 	// split the data
@@ -215,7 +214,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
 
-	// check if currect cb has replyed message id from cb.Update.Message.ReplyMessageID
+	// check if current cb has the replied message id from cb.Update.Message.ReplyMessageID
 	replyMessageID := ctx.EffectiveMessage.MessageId
 	if ctx.EffectiveMessage.ReplyToMessage != nil {
 		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
