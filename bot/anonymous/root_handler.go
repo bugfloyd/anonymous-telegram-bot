@@ -175,7 +175,9 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-		"State": REGISTERED,
+		"State":          REGISTERED,
+		"ContactUUID":    nil,
+		"ReplyMessageID": nil,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
@@ -229,6 +231,8 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
+
+	cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{})
 
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 		Text: "Message opened!",
