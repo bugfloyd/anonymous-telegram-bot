@@ -2,11 +2,12 @@ package anonymous
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
-	"os"
 )
 
 type UserRepository struct {
@@ -75,4 +76,12 @@ func (repo *UserRepository) updateUser(uuid string, updates map[string]interface
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 	return nil
+}
+
+func (repo *UserRepository) resetUserState(uuid string) error {
+	return repo.updateUser(uuid, map[string]interface{}{
+		"State":          REGISTERED,
+		"ContactUUID":    nil,
+		"ReplyMessageID": nil,
+	})
 }

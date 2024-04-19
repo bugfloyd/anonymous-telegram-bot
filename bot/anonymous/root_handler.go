@@ -86,6 +86,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	var message string
 	if len(args) == 1 && args[0] == "/start" {
 		message = fmt.Sprintf("Your UUID: %s", r.user.UUID)
+		r.userRepo.resetUserState(r.user.UUID)
 	}
 	if len(args) == 2 && args[0] == "/start" {
 		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
@@ -110,6 +111,7 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
+	r.userRepo.resetUserState(r.user.UUID)
 	return nil
 }
 
@@ -119,6 +121,7 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return err
 	}
+	r.userRepo.resetUserState(r.user.UUID)
 	return nil
 }
 
@@ -174,11 +177,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-		"State":          REGISTERED,
-		"ContactUUID":    nil,
-		"ReplyMessageID": nil,
-	})
+	err = r.userRepo.resetUserState(r.user.UUID)
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
 	}
