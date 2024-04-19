@@ -2,6 +2,8 @@ package anonymous
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -11,10 +13,11 @@ import (
 type Command string
 
 const (
-	StartCommand Command = "start"
-	InfoCommand  Command = "info"
-	LinkCommand  Command = "link"
-	TextMessage  Command = "text"
+	StartCommand  Command = "start"
+	InfoCommand   Command = "info"
+	LinkCommand   Command = "link"
+	TextMessage   Command = "text"
+	ReplyCallback Command = "reply-callback"
 )
 
 type RootHandler struct {
@@ -56,6 +59,8 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 		return r.getLink(b, ctx)
 	case TextMessage:
 		return r.processText(b, ctx)
+	case ReplyCallback:
+		return r.replyCallback(b, ctx)
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -135,23 +140,36 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
 
-	_, err = b.SendMessage(receiver.UserID, "You have a new message:", &gotgbot.SendMessageOpts{})
+	var replyParameters *gotgbot.ReplyParameters
+	msgText := "You have a new message:"
+	if r.user.ReplyMessageID != 0 {
+		replyParameters = &gotgbot.ReplyParameters{
+			MessageId:                r.user.ReplyMessageID,
+			AllowSendingWithoutReply: true,
+		}
+
+		msgText = "New Reply to your message:"
+	}
+
+	_, err = b.SendMessage(receiver.UserID, msgText, &gotgbot.SendMessageOpts{
+		ReplyParameters: replyParameters,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	// TODO: use CopyMessage method instead of SendMessage
-	_, err = b.SendMessage(receiver.UserID, ctx.EffectiveMessage.Text, &gotgbot.SendMessageOpts{
+	_, err = b.CopyMessage(receiver.UserID, ctx.EffectiveChat.Id, ctx.EffectiveMessage.MessageId, &gotgbot.CopyMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
 						Text:         "Reply",
-						CallbackData: "reply", // TODO: use proper callback data with message id
+						CallbackData: fmt.Sprintf("r|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
 					},
 				},
 			},
 		},
+		ReplyParameters: replyParameters,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
@@ -162,6 +180,45 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	_, err = ctx.EffectiveMessage.Reply(b, "Message sent", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send message to sender: %w", err)
+	}
+
+	return nil
+}
+
+// add a function for reply anonymous message
+func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+	cb := ctx.Update.CallbackQuery
+
+	// split the data
+	split := strings.Split(cb.Data, "|")
+	if len(split) != 3 {
+		return fmt.Errorf("invalid callback data: %s", cb.Data)
+	}
+
+	uuid := split[1]
+	messageID, err := strconv.ParseInt(split[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse message ID: %w", err)
+	}
+
+	// store the message id in the user and set status to replying
+	err = r.user.SetStateToReply(&r.userRepo, uuid, messageID)
+	if err != nil {
+		return fmt.Errorf("failed to set user state: %w", err)
+	}
+
+	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+		Text: "Replying to message...",
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to answer callback: %w", err)
+	}
+
+	_, err = ctx.EffectiveMessage.Reply(b, "Reply to this message:", nil)
+
+	if err != nil {
+		return fmt.Errorf("failed to send reply message: %w", err)
 	}
 
 	return nil

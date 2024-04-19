@@ -11,12 +11,13 @@ import (
 )
 
 type User struct {
-	UUID        string `dynamo:",hash"`
-	UserID      int64  `index:"UserID-GSI,hash"`
-	State       State
-	Name        string
-	Blacklist   []string `dynamo:",set,omitempty"`
-	ContactUUID string   `dynamo:",omitempty"`
+	UUID           string `dynamo:",hash"`
+	UserID         int64  `index:"UserID-GSI,hash"`
+	State          State
+	Name           string
+	Blacklist      []string `dynamo:",set,omitempty"`
+	ContactUUID    string   `dynamo:",omitempty"`
+	ReplyMessageID int64    `dynamo:",omitempty"`
 }
 
 type State string
@@ -85,6 +86,17 @@ func (repo *UserRepository) SetUser(userId int64) (*User, error) {
 func (u *User) SetStateToSeding(repo *UserRepository, contactUUID string) error {
 	u.State = SENDING
 	u.ContactUUID = contactUUID
+	err := repo.table.Put(u).Run()
+	if err != nil {
+		return fmt.Errorf("failed to update user state: %w", err)
+	}
+	return nil
+}
+
+func (u *User) SetStateToReply(repo *UserRepository, contactUUID string, messageID int64) error {
+	u.State = SENDING
+	u.ContactUUID = contactUUID
+	u.ReplyMessageID = messageID
 	err := repo.table.Put(u).Run()
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
