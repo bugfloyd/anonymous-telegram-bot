@@ -87,7 +87,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	if len(args) == 2 && args[0] == "/start" {
 		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
 
-		r.user.SetStateToSeding(&r.userRepo, args[1])
+		r.user.SetStateToSending(&r.userRepo, args[1])
 	}
 
 	_, err := b.SendMessage(ctx.EffectiveChat.Id, message, &gotgbot.SendMessageOpts{})

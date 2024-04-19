@@ -83,7 +83,7 @@ func (repo *UserRepository) SetUser(userId int64) (*User, error) {
 	return &u, nil
 }
 
-func (u *User) SetStateToSeding(repo *UserRepository, contactUUID string) error {
+func (u *User) SetStateToSending(repo *UserRepository, contactUUID string) error {
 	u.State = SENDING
 	u.ContactUUID = contactUUID
 	err := repo.table.Put(u).Run()
