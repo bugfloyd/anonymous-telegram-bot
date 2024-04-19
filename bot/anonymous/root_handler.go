@@ -71,7 +71,16 @@ func (r *RootHandler) processUser(ctx *ext.Context) (*User, error) {
 }
 
 func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf("UUID: %s", r.user.UUID), &gotgbot.SendMessageOpts{})
+	args := ctx.Args()
+	var message string
+	if len(args) == 1 && args[0] == "/start" {
+		message = fmt.Sprintf("Your UUID: %s", r.user.UUID)
+	}
+	if len(args) == 2 && args[0] == "/start" {
+		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
+	}
+
+	_, err := b.SendMessage(ctx.EffectiveChat.Id, message, &gotgbot.SendMessageOpts{})
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
@@ -87,7 +96,8 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := ctx.EffectiveMessage.Reply(b, ctx.EffectiveMessage.Text, nil)
+	link := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
+	_, err := ctx.EffectiveMessage.Reply(b, link, nil)
 	if err != nil {
 		return err
 	}
