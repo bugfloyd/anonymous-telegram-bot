@@ -18,6 +18,7 @@ const (
 	LinkCommand   Command = "link"
 	TextMessage   Command = "text"
 	ReplyCallback Command = "reply-callback"
+	OpenCallback  Command = "open-callback"
 )
 
 type RootHandler struct {
@@ -61,6 +62,8 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 		return r.processText(b, ctx)
 	case ReplyCallback:
 		return r.replyCallback(b, ctx)
+	case OpenCallback:
+		return r.openCallback(b, ctx)
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -144,30 +147,23 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	var replyParameters *gotgbot.ReplyParameters
-	msgText := "You have a new message:"
+	msgText := "You have a new message."
 	if r.user.ReplyMessageID != 0 {
 		replyParameters = &gotgbot.ReplyParameters{
 			MessageId:                r.user.ReplyMessageID,
 			AllowSendingWithoutReply: true,
 		}
 
-		msgText = "New Reply to your message:"
+		msgText = "New Reply to your message."
 	}
 
 	_, err = b.SendMessage(receiver.UserID, msgText, &gotgbot.SendMessageOpts{
-		ReplyParameters: replyParameters,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to send message to receiver: %w", err)
-	}
-
-	_, err = b.CopyMessage(receiver.UserID, ctx.EffectiveChat.Id, ctx.EffectiveMessage.MessageId, &gotgbot.CopyMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
-						Text:         "Reply",
-						CallbackData: fmt.Sprintf("r|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
+						Text:         "Open Message",
+						CallbackData: fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
 					},
 				},
 			},
@@ -186,6 +182,69 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	_, err = ctx.EffectiveMessage.Reply(b, "Message sent", nil)
+	if err != nil {
+		return fmt.Errorf("failed to send message to sender: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+
+	cb := ctx.Update.CallbackQuery
+
+	// split the data
+	split := strings.Split(cb.Data, "|")
+	if len(split) != 3 {
+		return fmt.Errorf("invalid callback data: %s", cb.Data)
+	}
+
+	uuid := split[1]
+	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse message ID: %w", err)
+	}
+
+	sender, err := r.userRepo.readUserByUUID(uuid)
+	if err != nil {
+		return fmt.Errorf("failed to get receiver: %w", err)
+	}
+
+	_, err = b.CopyMessage(ctx.EffectiveChat.Id, sender.UserID, senderMessageID, &gotgbot.CopyMessageOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{
+					{
+						Text:         "Reply",
+						CallbackData: fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID),
+					},
+				},
+			},
+		},
+		ReplyParameters: &gotgbot.ReplyParameters{
+			MessageId:                ctx.EffectiveMessage.MessageId,
+			AllowSendingWithoutReply: true,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+		Text: "Message opened!",
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to answer callback: %w", err)
+	}
+
+	// send message to sender and tell them that their message have been seen
+	_, err = b.SendMessage(sender.UserID, "Your message have been seen", &gotgbot.SendMessageOpts{
+		ReplyParameters: &gotgbot.ReplyParameters{
+			MessageId:                senderMessageID,
+			AllowSendingWithoutReply: true,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to sender: %w", err)
 	}
