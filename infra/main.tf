@@ -110,9 +110,20 @@ resource "aws_dynamodb_table" "main" {
     type = "N"
   }
 
+  attribute {
+    name = "Username"
+    type = "S"
+  }
+
   global_secondary_index {
     name            = "UserID-GSI"
     hash_key        = "UserID"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name            = "Username-GSI"
+    hash_key        = "Username"
     projection_type = "ALL"
   }
 
@@ -148,7 +159,8 @@ resource "aws_iam_policy" "lambda_dynamodb_policy" {
         ],
         Effect = "Allow",
         Resource = [
-          "${aws_dynamodb_table.main.arn}/index/UserID-GSI"
+          "${aws_dynamodb_table.main.arn}/index/UserID-GSI",
+          "${aws_dynamodb_table.main.arn}/index/Username-GSI"
         ]
       }
     ]
