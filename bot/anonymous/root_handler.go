@@ -67,9 +67,9 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 }
 
 func (r *RootHandler) processUser(userRepo *UserRepository, ctx *ext.Context) (*User, error) {
-	user, err := userRepo.ReadUserByUserId(ctx.EffectiveUser.Id)
+	user, err := userRepo.readUserByUserId(ctx.EffectiveUser.Id)
 	if err != nil {
-		user, err = userRepo.CreateUser(ctx.EffectiveUser.Id)
+		user, err = userRepo.createUser(ctx.EffectiveUser.Id)
 		if err != nil {
 			return nil, err
 		}
@@ -86,7 +86,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	if len(args) == 2 && args[0] == "/start" {
 		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
-		err := r.userRepo.UpdateUser(r.user.UUID, map[string]interface{}{
+		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
 			"State":       SENDING,
 			"ContactUUID": args[1],
 		})
@@ -138,7 +138,7 @@ func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string
 }
 
 func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
-	receiver, err := r.userRepo.ReadUserByUUID(r.user.ContactUUID)
+	receiver, err := r.userRepo.readUserByUUID(r.user.ContactUUID)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
@@ -178,7 +178,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	err = r.userRepo.UpdateUser(r.user.UUID, map[string]interface{}{
+	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
 		"State": REGISTERED,
 	})
 	if err != nil {
@@ -209,7 +209,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// store the message id in the user and set status to replying
-	err = r.userRepo.UpdateUser(r.user.UUID, map[string]interface{}{
+	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
 		"State":          SENDING,
 		"ContactUUID":    uuid,
 		"ReplyMessageID": messageID,

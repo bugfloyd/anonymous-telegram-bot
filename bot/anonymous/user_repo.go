@@ -34,7 +34,7 @@ func NewUserRepository() (*UserRepository, error) {
 	}, nil
 }
 
-func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
+func (repo *UserRepository) createUser(userId int64) (*User, error) {
 	u := User{
 		UUID:   uuid.New().String(),
 		UserID: userId,
@@ -47,7 +47,7 @@ func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) ReadUserByUUID(uuid string) (*User, error) {
+func (repo *UserRepository) readUserByUUID(uuid string) (*User, error) {
 	var u User
 	err := repo.table.Get("UUID", uuid).One(&u)
 	if err != nil {
@@ -56,7 +56,7 @@ func (repo *UserRepository) ReadUserByUUID(uuid string) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) ReadUserByUserId(userId int64) (*User, error) {
+func (repo *UserRepository) readUserByUserId(userId int64) (*User, error) {
 	var u User
 	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(&u)
 	if err != nil {
@@ -65,7 +65,7 @@ func (repo *UserRepository) ReadUserByUserId(userId int64) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) UpdateUser(uuid string, updates map[string]interface{}) error {
+func (repo *UserRepository) updateUser(uuid string, updates map[string]interface{}) error {
 	updateBuilder := repo.table.Update("UUID", uuid)
 	for key, value := range updates {
 		updateBuilder = updateBuilder.Set(key, value)
