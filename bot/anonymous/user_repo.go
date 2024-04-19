@@ -2,26 +2,12 @@ package anonymous
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
-	"os"
-)
-
-type User struct {
-	UUID        string `dynamo:",hash"`
-	UserID      int64  `index:"UserID-GSI,hash"`
-	State       State
-	Name        string
-	Blacklist   []string `dynamo:",set,omitempty"`
-	ContactUUID string   `dynamo:",omitempty"`
-}
-
-type State string
-
-const (
-	REGISTERED State = "REGISTERED"
 )
 
 type UserRepository struct {
@@ -49,25 +35,7 @@ func NewUserRepository() (*UserRepository, error) {
 	}, nil
 }
 
-func (repo *UserRepository) GetUserByUUID(uuid string) (*User, error) {
-	var u User
-	err := repo.table.Get("UUID", uuid).One(&u)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
-}
-
-func (repo *UserRepository) GetUserByUserId(userId int64) (*User, error) {
-	var u User
-	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(&u)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	return &u, nil
-}
-
-func (repo *UserRepository) SetUser(userId int64) (*User, error) {
+func (repo *UserRepository) createUser(userId int64) (*User, error) {
 	u := User{
 		UUID:   uuid.New().String(),
 		UserID: userId,
@@ -78,4 +46,46 @@ func (repo *UserRepository) SetUser(userId int64) (*User, error) {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 	return &u, nil
+}
+
+func (repo *UserRepository) readUserByUUID(uuid string) (*User, error) {
+	var u User
+	err := repo.table.Get("UUID", uuid).One(&u)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (repo *UserRepository) readUserByUserId(userId int64) (*User, error) {
+	var u User
+	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(&u)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	return &u, nil
+}
+
+func (repo *UserRepository) updateUser(uuid string, updates map[string]interface{}) error {
+	updateBuilder := repo.table.Update("UUID", uuid)
+	for key, value := range updates {
+		updateBuilder = updateBuilder.Set(key, value)
+	}
+	err := updateBuilder.Run()
+	if err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	return nil
+}
+
+func (repo *UserRepository) resetUserState(uuid string) error {
+	err := repo.updateUser(uuid, map[string]interface{}{
+		"State":          REGISTERED,
+		"ContactUUID":    nil,
+		"ReplyMessageID": nil,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to reset user state: %w", err)
+	}
+	return nil
 }
