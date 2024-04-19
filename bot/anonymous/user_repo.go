@@ -79,9 +79,13 @@ func (repo *UserRepository) updateUser(uuid string, updates map[string]interface
 }
 
 func (repo *UserRepository) resetUserState(uuid string) error {
-	return repo.updateUser(uuid, map[string]interface{}{
+	err := repo.updateUser(uuid, map[string]interface{}{
 		"State":          REGISTERED,
 		"ContactUUID":    nil,
 		"ReplyMessageID": nil,
 	})
+	if err != nil {
+		return fmt.Errorf("failed to reset user state: %w", err)
+	}
+	return nil
 }
