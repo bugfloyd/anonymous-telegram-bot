@@ -169,14 +169,6 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		msgText = "New reply to your message."
 	}
 
-	// Delete temp message has been sent from sender's chat
-	if r.user.DeliveryMessageID != 0 {
-		_, err = b.DeleteMessage(receiver.UserID, r.user.DeliveryMessageID, &gotgbot.DeleteMessageOpts{})
-		if err != nil {
-			fmt.Printf("failed to delete sender's temp message: %s", err)
-		}
-	}
-
 	// Reply to the sender
 	deliveryMessage, err := ctx.EffectiveMessage.Reply(b, "Message sent", nil)
 	if err != nil {
@@ -199,6 +191,14 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	// Delete temp message has been sent from sender's chat
+	if r.user.DeliveryMessageID != 0 {
+		_, err = b.DeleteMessage(receiver.UserID, r.user.DeliveryMessageID, &gotgbot.DeleteMessageOpts{})
+		if err != nil {
+			fmt.Printf("failed to delete sender's temp message: %s", err)
+		}
 	}
 
 	// Reset sender user
@@ -243,12 +243,6 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to send message to sender: %w", err)
 	}
 
-	// Delete message with "Open" button
-	_, err = cb.Message.Delete(b, &gotgbot.DeleteMessageOpts{})
-	if err != nil {
-		fmt.Println("failed to delete message: %w", err)
-	}
-
 	// Copy the sender's message to the receiver
 	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
 	if err != nil {
@@ -276,6 +270,12 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	// Delete message with "Open" button
+	_, err = cb.Message.Delete(b, &gotgbot.DeleteMessageOpts{})
+	if err != nil {
+		fmt.Println("failed to delete message: %w", err)
 	}
 
 	return nil
