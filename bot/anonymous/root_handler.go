@@ -166,16 +166,31 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 			AllowSendingWithoutReply: true,
 		}
 
-		msgText = "New Reply to your message."
+		msgText = "New reply to your message."
 	}
 
+	// Delete temp message has been sent from sender's chat
+	if r.user.DeliveryMessageID != 0 {
+		_, err = b.DeleteMessage(receiver.UserID, r.user.DeliveryMessageID, &gotgbot.DeleteMessageOpts{})
+		if err != nil {
+			fmt.Printf("failed to delete sender's temp message: %s", err)
+		}
+	}
+
+	// Reply to the sender
+	deliveryMessage, err := ctx.EffectiveMessage.Reply(b, "Message sent", nil)
+	if err != nil {
+		return fmt.Errorf("failed to send message to sender: %w", err)
+	}
+
+	// Send the new message notification to the receiver
 	_, err = b.SendMessage(receiver.UserID, msgText, &gotgbot.SendMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
 						Text:         "Open Message",
-						CallbackData: fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
+						CallbackData: fmt.Sprintf("o|%s|%d|%d", r.user.UUID, ctx.EffectiveMessage.MessageId, deliveryMessage.MessageId),
 					},
 				},
 			},
@@ -186,14 +201,10 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
+	// Reset sender user
 	err = r.userRepo.resetUserState(r.user.UUID)
 	if err != nil {
 		return err
-	}
-
-	_, err = ctx.EffectiveMessage.Reply(b, "Message sent", nil)
-	if err != nil {
-		return fmt.Errorf("failed to send message to sender: %w", err)
 	}
 
 	return nil
@@ -201,37 +212,59 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 
 func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	cb := ctx.Update.CallbackQuery
-
-	// split the data
 	split := strings.Split(cb.Data, "|")
-	if len(split) != 3 {
+	if len(split) != 4 {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
-
 	uuid := split[1]
-	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse message ID: %w", err)
-	}
-
-	// check if current cb has the replied message id from cb.Update.Message.ReplyMessageID
-	replyMessageID := ctx.EffectiveMessage.MessageId
-	if ctx.EffectiveMessage.ReplyToMessage != nil {
-		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
-	}
-
 	sender, err := r.userRepo.readUserByUUID(uuid)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
 
+	// Send callback answer to telegram
+	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+		Text: "Message opened!",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to answer callback: %w", err)
+	}
+
+	// Edit delivery message in sender's chat: Sent -> Opened
+	sendersDeliveryMessageID, err := strconv.ParseInt(split[3], 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse sender's message ID: %w", err)
+	}
+	_, _, err = b.EditMessageText("Your message have been seen", &gotgbot.EditMessageTextOpts{
+		ChatId:    sender.UserID,
+		MessageId: sendersDeliveryMessageID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send message to sender: %w", err)
+	}
+
+	// Delete message with "Open" button
+	_, err = cb.Message.Delete(b, &gotgbot.DeleteMessageOpts{})
+	if err != nil {
+		fmt.Println("failed to delete message: %w", err)
+	}
+
+	// Copy the sender's message to the receiver
+	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse message ID: %w", err)
+	}
+	replyMessageID := ctx.EffectiveMessage.MessageId
+	if ctx.EffectiveMessage.ReplyToMessage != nil {
+		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
+	}
 	_, err = b.CopyMessage(ctx.EffectiveChat.Id, sender.UserID, senderMessageID, &gotgbot.CopyMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
 						Text:         "Reply",
-						CallbackData: fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID),
+						CallbackData: fmt.Sprintf("r|%s|%d|%d", sender.UUID, senderMessageID, sendersDeliveryMessageID),
 					},
 				},
 			},
@@ -245,68 +278,46 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{})
-	if err != nil {
-		return fmt.Errorf("failed to remove open message button: %w", err)
-	}
-
-	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: "Message opened!",
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to answer callback: %w", err)
-	}
-
-	// send message to sender and tell them that their message have been seen
-	_, err = b.SendMessage(sender.UserID, "Your message have been seen", &gotgbot.SendMessageOpts{
-		ReplyParameters: &gotgbot.ReplyParameters{
-			MessageId:                senderMessageID,
-			AllowSendingWithoutReply: true,
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to send message to sender: %w", err)
-	}
-
 	return nil
 }
 
 func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	cb := ctx.Update.CallbackQuery
-
-	// split the data
 	split := strings.Split(cb.Data, "|")
-	if len(split) != 3 {
+	if len(split) != 4 {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
-
-	uuid := split[1]
+	receiverUUID := split[1]
 	messageID, err := strconv.ParseInt(split[2], 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
+	sendersDeliveryMessageID, err := strconv.ParseInt(split[3], 10, 64)
+	if err != nil {
+		return fmt.Errorf("failed to parse message ID: %w", err)
+	}
 
-	// store the message id in the user and set status to replying
+	// Store the message id in the user and set status to replying
 	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-		"State":          SENDING,
-		"ContactUUID":    uuid,
-		"ReplyMessageID": messageID,
+		"State":             SENDING,
+		"ContactUUID":       receiverUUID,
+		"ReplyMessageID":    messageID,
+		"DeliveryMessageID": sendersDeliveryMessageID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
 	}
 
+	// Send callback answer to telegram
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 		Text: "Replying to message...",
 	})
-
 	if err != nil {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
+	// Send reply instruction
 	_, err = ctx.EffectiveMessage.Reply(b, "Reply to this message:", nil)
-
 	if err != nil {
 		return fmt.Errorf("failed to send reply message: %w", err)
 	}
