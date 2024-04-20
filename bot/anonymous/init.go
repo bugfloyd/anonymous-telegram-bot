@@ -49,12 +49,11 @@ func InitBot(request APIRequest) (APIResponse, error) {
 
 	rootHandler := NewRootHandler()
 
-	// /start command to introduce the bot and create the user
+	// Commands
 	dispatcher.AddHandler(handlers.NewCommand(string(StartCommand), rootHandler.init(StartCommand)))
-	// /source command to send the bot info
 	dispatcher.AddHandler(handlers.NewCommand(string(InfoCommand), rootHandler.init(InfoCommand)))
-	// /get_link command to get user entry link
 	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
+	dispatcher.AddHandler(handlers.NewCommand(string(Username), rootHandler.init(Username)))
 
 	// Add handler to process all text messages
 	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
@@ -62,6 +61,9 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	// Callback queries handlers
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("o|"), rootHandler.init(OpenCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("u"), rootHandler.init(SetUsernameCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ru"), rootHandler.init(RemoveUserNameCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cu"), rootHandler.init(CancelUserNameCallback)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {

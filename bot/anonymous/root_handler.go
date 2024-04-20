@@ -2,6 +2,7 @@ package anonymous
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,12 +14,16 @@ import (
 type Command string
 
 const (
-	StartCommand  Command = "start"
-	InfoCommand   Command = "info"
-	LinkCommand   Command = "link"
-	TextMessage   Command = "text"
-	ReplyCallback Command = "reply-callback"
-	OpenCallback  Command = "open-callback"
+	StartCommand           Command = "start"
+	InfoCommand            Command = "info"
+	LinkCommand            Command = "link"
+	Username               Command = "username"
+	TextMessage            Command = "text"
+	ReplyCallback          Command = "reply-callback"
+	OpenCallback           Command = "open-callback"
+	SetUsernameCallback    Command = "set-username-callback"
+	RemoveUserNameCallback Command = "remove-username-callback"
+	CancelUserNameCallback Command = "cancel-username-callback"
 )
 
 type RootHandler struct {
@@ -58,12 +63,20 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 		return r.info(b, ctx)
 	case LinkCommand:
 		return r.getLink(b, ctx)
+	case Username:
+		return r.manageUsername(b, ctx)
 	case TextMessage:
 		return r.processText(b, ctx)
 	case ReplyCallback:
 		return r.replyCallback(b, ctx)
 	case OpenCallback:
 		return r.openCallback(b, ctx)
+	case SetUsernameCallback:
+		return r.usernameCallback(b, ctx, "SET")
+	case RemoveUserNameCallback:
+		return r.usernameCallback(b, ctx, "REMOVE")
+	case CancelUserNameCallback:
+		return r.usernameCallback(b, ctx, "CANCEL")
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -83,29 +96,71 @@ func (r *RootHandler) processUser(userRepo *UserRepository, ctx *ext.Context) (*
 
 func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	args := ctx.Args()
-	var message string
 	if len(args) == 1 && args[0] == "/start" {
-		message = fmt.Sprintf("Your UUID: %s", r.user.UUID)
+		// Reset user state
 		err := r.userRepo.resetUserState(r.user.UUID)
 		if err != nil {
 			return err
 		}
+
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, "Welcome! Use /link command to get you link!", &gotgbot.SendMessageOpts{})
+		if err != nil {
+			return fmt.Errorf("failed to send bot info: %w", err)
+		}
+		return nil
 	}
 	if len(args) == 2 && args[0] == "/start" {
-		message = fmt.Sprintf("You are sending message to:\n%s\n\nYour UUID:\n%s", args[1], r.user.UUID)
-		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-			"State":       SENDING,
-			"ContactUUID": args[1],
+
+		var err error
+		var receiverUser *User
+		var identity string
+
+		if strings.HasPrefix(args[1], "_") {
+			username := args[1][1:]
+			receiverUser, err = r.userRepo.readUserByUsername(username)
+		} else {
+			receiverUser, err = r.userRepo.readUserByUUID(args[1])
+		}
+
+		if err != nil || receiverUser == nil {
+			_, err = b.SendMessage(ctx.EffectiveChat.Id, "User not found! Wrong link?", &gotgbot.SendMessageOpts{})
+			if err != nil {
+				return fmt.Errorf("failed to send bot info: %w", err)
+			}
+			return nil
+		}
+
+		if receiverUser.UUID == r.user.UUID {
+			_, err = b.SendMessage(ctx.EffectiveChat.Id, "Do you really want to talk to yourself? So sad! try /random command to connect to someone else!", &gotgbot.SendMessageOpts{})
+			if err != nil {
+				return fmt.Errorf("failed to send bot info: %w", err)
+			}
+			return nil
+		}
+
+		// Set user state to sending
+		err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+			"State":       Sending,
+			"ContactUUID": receiverUser.UUID,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update user state: %w", err)
 		}
+
+		if receiverUser.Name != "" {
+			identity = receiverUser.Name
+		} else if receiverUser.Username != "" {
+			identity = receiverUser.Username
+		} else {
+			identity = receiverUser.UUID
+		}
+
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf("You are sending message to:\n%s\n\nEnter your message:", identity), &gotgbot.SendMessageOpts{})
+		if err != nil {
+			return fmt.Errorf("failed to send bot info: %w", err)
+		}
 	}
 
-	_, err := b.SendMessage(ctx.EffectiveChat.Id, message, &gotgbot.SendMessageOpts{})
-	if err != nil {
-		return fmt.Errorf("failed to send bot info: %w", err)
-	}
 	return nil
 }
 
@@ -122,7 +177,14 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
-	link := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
+	var link string
+	if r.user.Username != "" {
+		usernameLink := fmt.Sprintf("https://t.me/%s?start=_%s", b.User.Username, r.user.Username)
+		uuidLink := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
+		link = fmt.Sprintf("%s\n\nor:\n\n%s", usernameLink, uuidLink)
+	} else {
+		link = fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
+	}
 	_, err := ctx.EffectiveMessage.Reply(b, link, nil)
 	if err != nil {
 		return err
@@ -136,8 +198,10 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	switch r.user.State {
-	case SENDING:
+	case Sending:
 		return r.sendAnonymousMessage(b, ctx)
+	case SettingUsername:
+		return r.setUsername(b, ctx)
 	default:
 		return r.sendError(b, ctx, "Unknown Command")
 	}
@@ -299,7 +363,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	// Store the message id in the user and set status to replying
 	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-		"State":             SENDING,
+		"State":             Sending,
 		"ContactUUID":       receiverUUID,
 		"ReplyMessageID":    messageID,
 		"DeliveryMessageID": sendersDeliveryMessageID,
@@ -323,4 +387,208 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	return nil
+}
+
+func (r *RootHandler) manageUsername(b *gotgbot.Bot, ctx *ext.Context) error {
+	var text string
+	var buttons [][]gotgbot.InlineKeyboardButton
+
+	if r.user.Username != "" {
+		text = fmt.Sprintf("Your current username is: %s", r.user.Username)
+		buttons = [][]gotgbot.InlineKeyboardButton{
+			{
+				{
+					Text:         "Change",
+					CallbackData: "u",
+				},
+				{
+					Text:         "Remove",
+					CallbackData: "ru",
+				},
+				{
+					Text:         "Cancel",
+					CallbackData: "cu",
+				},
+			},
+		}
+	} else {
+		text = "You don't have a username!"
+		buttons = [][]gotgbot.InlineKeyboardButton{
+			{
+				{
+					Text:         "Set one",
+					CallbackData: "u",
+				},
+				{
+					Text:         "Cancel",
+					CallbackData: "cu",
+				},
+			},
+		}
+	}
+
+	_, err := b.SendMessage(ctx.EffectiveChat.Id, text, &gotgbot.SendMessageOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: buttons,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send username info: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action string) error {
+	cb := ctx.Update.CallbackQuery
+
+	// Remove username command buttons
+	_, _, err := cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to update username message markup: %w", err)
+	}
+
+	if action == "CANCEL" {
+		// Send callback answer to telegram
+		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "Never mind!",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to answer callback: %w", err)
+		}
+		// Reset sender user
+		err = r.userRepo.resetUserState(r.user.UUID)
+		if err != nil {
+			return err
+		}
+	} else if action == "SET" {
+		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+			"State":             SettingUsername,
+			"ContactUUID":       nil,
+			"ReplyMessageID":    nil,
+			"DeliveryMessageID": nil,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update user state: %w", err)
+		}
+
+		// Send reply instruction
+		_, err = ctx.EffectiveMessage.Reply(b, "Create a username that starts with a letter, includes 3-20 characters, and may contain letters, numbers, or underscores (_). Usernames are automatically converted to lowercase. \n\nEnter new username:", nil)
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+
+		// Send callback answer to telegram
+		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "Setting username...",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to answer callback: %w", err)
+		}
+	} else if action == "REMOVE" {
+		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+			"State":             Idle,
+			"Username":          nil,
+			"ContactUUID":       nil,
+			"ReplyMessageID":    nil,
+			"DeliveryMessageID": nil,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to remove username: %w", err)
+		}
+
+		_, _, err = cb.Message.EditText(b, "Username has been removed!", &gotgbot.EditMessageTextOpts{})
+		if err != nil {
+			return fmt.Errorf("failed to update username message text: %w", err)
+		}
+
+		// Send callback answer to telegram
+		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: "Username removed!",
+		})
+		if err != nil {
+			return fmt.Errorf("failed to answer callback: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
+	username := ctx.EffectiveMessage.Text
+
+	if isValidUsername(username) == false {
+		// Send username instruction
+		_, err := ctx.EffectiveMessage.Reply(b, "The entered username is not valid. Enter another one:", nil)
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+		return nil
+	}
+
+	// Convert to lowercase
+	username = strings.ToLower(username)
+
+	existingUser, err := r.userRepo.readUserByUsername(username)
+	if err != nil || existingUser == nil {
+		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+			"Username":          username,
+			"State":             Idle,
+			"ContactUUID":       nil,
+			"ReplyMessageID":    nil,
+			"DeliveryMessageID": nil,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update username: %w", err)
+		}
+
+		// Send username instruction
+		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Username has been set: %s", username), nil)
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+	} else {
+		var text string
+		if existingUser.UUID != r.user.UUID {
+			text = "The entered username exists. Enter another one:"
+		} else {
+			text = "You already own this username silly! If you want to change it, run the username command once more!"
+
+			// Reset sender user
+			err = r.userRepo.resetUserState(r.user.UUID)
+			if err != nil {
+				return err
+			}
+		}
+		// Send username instruction
+		_, err = ctx.EffectiveMessage.Reply(b, text, nil)
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func isValidUsername(username string) bool {
+	// Check length
+	if len(username) < 3 || len(username) > 20 {
+		return false
+	}
+
+	// Regular expression to check valid characters
+	// ^[a-zA-Z0-9_]+$
+	// This checks the string consists only of English letters, digits, and underscores
+	re := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+	if !re.MatchString(username) {
+		return false
+	}
+
+	// Check first character (not a digit or underscore)
+	firstChar := username[0]
+	if firstChar == '_' || ('0' <= firstChar && firstChar <= '9') {
+		return false
+	}
+
+	return true
 }
