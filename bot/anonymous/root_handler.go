@@ -336,6 +336,20 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
+	// react with eyes emoji to senderMessageID
+	_, err = b.SetMessageReaction(sender.UserID, senderMessageID, &gotgbot.SetMessageReactionOpts{
+		Reaction: []gotgbot.ReactionType{
+			gotgbot.ReactionTypeEmoji{
+				Emoji: "👀",
+			},
+		},
+		IsBig: true,
+	})
+
+	if err != nil {
+		fmt.Println("failed to react to sender's message: %w", err)
+	}
+
 	// Delete message with "Open" button
 	_, err = cb.Message.Delete(b, &gotgbot.DeleteMessageOpts{})
 	if err != nil {
