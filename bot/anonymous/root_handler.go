@@ -294,17 +294,9 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
-	// Edit delivery message in sender's chat: Sent -> Opened
 	sendersDeliveryMessageID, err := strconv.ParseInt(split[3], 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse sender's message ID: %w", err)
-	}
-	_, _, err = b.EditMessageText("Your message have been seen", &gotgbot.EditMessageTextOpts{
-		ChatId:    sender.UserID,
-		MessageId: sendersDeliveryMessageID,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to send message to sender: %w", err)
 	}
 
 	// Copy the sender's message to the receiver
@@ -334,6 +326,15 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	// Edit delivery message in sender's chat: Sent -> Opened
+	_, _, err = b.EditMessageText("Your message have been seen", &gotgbot.EditMessageTextOpts{
+		ChatId:    sender.UserID,
+		MessageId: sendersDeliveryMessageID,
+	})
+	if err != nil {
+		fmt.Println("failed to edit delivery message: %w", err)
 	}
 
 	// react with eyes emoji to senderMessageID
