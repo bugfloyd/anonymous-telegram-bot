@@ -39,7 +39,7 @@ func (repo *UserRepository) createUser(userId int64) (*User, error) {
 	u := User{
 		UUID:   uuid.New().String(),
 		UserID: userId,
-		State:  REGISTERED,
+		State:  Idle,
 	}
 	err := repo.table.Put(u).Run()
 	if err != nil {
@@ -66,6 +66,15 @@ func (repo *UserRepository) readUserByUserId(userId int64) (*User, error) {
 	return &u, nil
 }
 
+func (repo *UserRepository) readUserByUsername(username string) (*User, error) {
+	var u User
+	err := repo.table.Get("Username", username).Index("Username-GSI").One(&u)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	return &u, nil
+}
+
 func (repo *UserRepository) updateUser(uuid string, updates map[string]interface{}) error {
 	updateBuilder := repo.table.Update("UUID", uuid)
 	for key, value := range updates {
@@ -80,7 +89,7 @@ func (repo *UserRepository) updateUser(uuid string, updates map[string]interface
 
 func (repo *UserRepository) resetUserState(uuid string) error {
 	err := repo.updateUser(uuid, map[string]interface{}{
-		"State":             REGISTERED,
+		"State":             Idle,
 		"ContactUUID":       nil,
 		"ReplyMessageID":    nil,
 		"DeliveryMessageID": nil,
