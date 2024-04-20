@@ -312,7 +312,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
-	replyMessageID := ctx.EffectiveMessage.MessageId
+	var replyMessageID int64
 	if ctx.EffectiveMessage.ReplyToMessage != nil {
 		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
 	}
