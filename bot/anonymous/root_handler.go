@@ -257,7 +257,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	// Delete temp message has been sent from sender's chat
+	// Delete delivery message from sender's chat
 	if r.user.DeliveryMessageID != 0 {
 		_, err = b.DeleteMessage(receiver.UserID, r.user.DeliveryMessageID, &gotgbot.DeleteMessageOpts{})
 		if err != nil {
@@ -299,7 +299,6 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to parse sender's message ID: %w", err)
 	}
 
-	// Copy the sender's message to the receiver
 	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse message ID: %w", err)
@@ -308,13 +307,26 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	if ctx.EffectiveMessage.ReplyToMessage != nil {
 		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
 	}
+
+	// Send seen delivery message to the sender
+	secondDelivery, err := b.SendMessage(sender.UserID, "Your message have been seen", &gotgbot.SendMessageOpts{
+		ReplyParameters: &gotgbot.ReplyParameters{
+			MessageId:                senderMessageID,
+			AllowSendingWithoutReply: true,
+		},
+	})
+	if err != nil {
+		fmt.Println("failed to send final delivery message: %w", err)
+	}
+
+	// Copy the sender's message to the receiver
 	_, err = b.CopyMessage(ctx.EffectiveChat.Id, sender.UserID, senderMessageID, &gotgbot.CopyMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
 						Text:         "Reply",
-						CallbackData: fmt.Sprintf("r|%s|%d|%d", sender.UUID, senderMessageID, sendersDeliveryMessageID),
+						CallbackData: fmt.Sprintf("r|%s|%d|%d", sender.UUID, senderMessageID, secondDelivery.MessageId),
 					},
 				},
 			},
@@ -328,16 +340,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	// Edit delivery message in sender's chat: Sent -> Opened
-	_, _, err = b.EditMessageText("Your message have been seen", &gotgbot.EditMessageTextOpts{
-		ChatId:    sender.UserID,
-		MessageId: sendersDeliveryMessageID,
-	})
-	if err != nil {
-		fmt.Println("failed to edit delivery message: %w", err)
-	}
-
-	// react with eyes emoji to senderMessageID
+	// React with eyes emoji to senderMessageID
 	_, err = b.SetMessageReaction(sender.UserID, senderMessageID, &gotgbot.SetMessageReactionOpts{
 		Reaction: []gotgbot.ReactionType{
 			gotgbot.ReactionTypeEmoji{
@@ -346,9 +349,14 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		},
 		IsBig: true,
 	})
-
 	if err != nil {
 		fmt.Println("failed to react to sender's message: %w", err)
+	}
+
+	// Delete initial delivery message
+	_, err = b.DeleteMessage(sender.UserID, sendersDeliveryMessageID, nil)
+	if err != nil {
+		fmt.Println("failed to delete initial delivery message: %w", err)
 	}
 
 	// Delete message with "Open" button
