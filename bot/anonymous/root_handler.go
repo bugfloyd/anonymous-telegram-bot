@@ -131,7 +131,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		if receiverUser.UUID == r.user.UUID {
-			_, err = b.SendMessage(ctx.EffectiveChat.Id, "Do you really want to talk to yourself? So sad! try /random command to connect to someone else!", &gotgbot.SendMessageOpts{})
+			_, err = b.SendMessage(ctx.EffectiveChat.Id, "Do you really want to talk to yourself? So sad! Share your link with friends or post it on social media to get anonymous messages!", &gotgbot.SendMessageOpts{})
 			if err != nil {
 				return fmt.Errorf("failed to send bot info: %w", err)
 			}
@@ -165,7 +165,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := b.SendMessage(ctx.EffectiveChat.Id, "Bugfloyd Anonymous bot", &gotgbot.SendMessageOpts{})
+	_, err := b.SendMessage(ctx.EffectiveChat.Id, "Bugfloyd Anonymous bot\n\nSource code:\nhttps://github.com/bugfloyd/anonymous-telegram-bot", &gotgbot.SendMessageOpts{})
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
@@ -203,7 +203,7 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	case SettingUsername:
 		return r.setUsername(b, ctx)
 	default:
-		return r.sendError(b, ctx, "Unknown Command")
+		return r.sendError(b, ctx, "Unknown Command!")
 	}
 }
 
