@@ -237,7 +237,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	_, err = ctx.EffectiveMessage.SetReaction(b, &gotgbot.SetMessageReactionOpts{
 		Reaction: []gotgbot.ReactionType{
 			gotgbot.ReactionTypeEmoji{
-				Emoji: "✍",
+				Emoji: "🕊",
 			},
 		},
 		IsBig: false,
