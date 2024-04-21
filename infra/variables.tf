@@ -16,4 +16,5 @@ variable "bot_token" {
 variable "zip_bundle_path" {
   description = "Local Lambda zip bundle path"
   type        = string
+  default     = "../bot/lambda_function.zip"
 }

@@ -18,7 +18,7 @@ terraform apply "init.tfplan"
 
 ### Build and Bundle
 ```shell
-cd bot/cmd/lambda
+cd bot
 
 GOARCH=amd64 GOOS=linux go build -o bootstrap main.go
 ```
@@ -42,7 +42,6 @@ Create a file named `infra/terraform.tfvars`:
 aws_region      = <AWS_REGION>
 lambda_bucket   = <S3_CODE_BUCKET_NAME>
 bot_token       = <TELEGRAM_BOT_TOKEN>
-zip_bundle_path = <ZIP_BUNDLE_PATH>
 ```
 You can also pass these variables to `terraform plan` command using multiple `-var` options.
 
