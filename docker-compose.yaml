@@ -18,7 +18,7 @@ services:
     volumes:
       - ./bot:/app
       - go-mod-cache:/go/pkg/mod
-    command: go run cmd/webserver/main.go
+    command: go run webserver.go
     ports:
       - "8080:8080"
     environment:
