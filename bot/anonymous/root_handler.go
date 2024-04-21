@@ -233,10 +233,17 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		msgText = "New reply to your message."
 	}
 
-	// Reply to the sender
-	deliveryMessage, err := ctx.EffectiveMessage.Reply(b, "Message sent", nil)
+	// React with sent emoji to senderMessageID
+	_, err = ctx.EffectiveMessage.SetReaction(b, &gotgbot.SetMessageReactionOpts{
+		Reaction: []gotgbot.ReactionType{
+			gotgbot.ReactionTypeEmoji{
+				Emoji: "✍",
+			},
+		},
+		IsBig: false,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to send message to sender: %w", err)
+		return fmt.Errorf("failed to react to sender's message: %w", err)
 	}
 
 	// Send the new message notification to the receiver
@@ -246,7 +253,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 				{
 					{
 						Text:         "Open Message",
-						CallbackData: fmt.Sprintf("o|%s|%d|%d", r.user.UUID, ctx.EffectiveMessage.MessageId, deliveryMessage.MessageId),
+						CallbackData: fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
 					},
 				},
 			},
@@ -255,14 +262,6 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
-	}
-
-	// Delete delivery message from sender's chat
-	if r.user.DeliveryMessageID != 0 {
-		_, err = b.DeleteMessage(receiver.UserID, r.user.DeliveryMessageID, &gotgbot.DeleteMessageOpts{})
-		if err != nil {
-			fmt.Printf("failed to delete sender's temp message: %s", err)
-		}
 	}
 
 	// Reset sender user
@@ -277,7 +276,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	cb := ctx.Update.CallbackQuery
 	split := strings.Split(cb.Data, "|")
-	if len(split) != 4 {
+	if len(split) != 3 {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
 	uuid := split[1]
@@ -294,11 +293,6 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
-	sendersDeliveryMessageID, err := strconv.ParseInt(split[3], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse sender's message ID: %w", err)
-	}
-
 	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse message ID: %w", err)
@@ -308,17 +302,6 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
 	}
 
-	// Send seen delivery message to the sender
-	secondDelivery, err := b.SendMessage(sender.UserID, "Your message have been seen", &gotgbot.SendMessageOpts{
-		ReplyParameters: &gotgbot.ReplyParameters{
-			MessageId:                senderMessageID,
-			AllowSendingWithoutReply: true,
-		},
-	})
-	if err != nil {
-		fmt.Println("failed to send final delivery message: %w", err)
-	}
-
 	// Copy the sender's message to the receiver
 	_, err = b.CopyMessage(ctx.EffectiveChat.Id, sender.UserID, senderMessageID, &gotgbot.CopyMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
@@ -326,7 +309,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				{
 					{
 						Text:         "Reply",
-						CallbackData: fmt.Sprintf("r|%s|%d|%d", sender.UUID, senderMessageID, secondDelivery.MessageId),
+						CallbackData: fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID),
 					},
 				},
 			},
@@ -347,16 +330,10 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				Emoji: "👀",
 			},
 		},
-		IsBig: true,
+		IsBig: false,
 	})
 	if err != nil {
 		fmt.Println("failed to react to sender's message: %w", err)
-	}
-
-	// Delete initial delivery message
-	_, err = b.DeleteMessage(sender.UserID, sendersDeliveryMessageID, nil)
-	if err != nil {
-		fmt.Println("failed to delete initial delivery message: %w", err)
 	}
 
 	// Delete message with "Open" button
@@ -371,7 +348,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	cb := ctx.Update.CallbackQuery
 	split := strings.Split(cb.Data, "|")
-	if len(split) != 4 {
+	if len(split) != 3 {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
 	receiverUUID := split[1]
@@ -379,17 +356,12 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
-	sendersDeliveryMessageID, err := strconv.ParseInt(split[3], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse message ID: %w", err)
-	}
 
 	// Store the message id in the user and set status to replying
 	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-		"State":             Sending,
-		"ContactUUID":       receiverUUID,
-		"ReplyMessageID":    messageID,
-		"DeliveryMessageID": sendersDeliveryMessageID,
+		"State":          Sending,
+		"ContactUUID":    receiverUUID,
+		"ReplyMessageID": messageID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
@@ -486,10 +458,9 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 	} else if action == "SET" {
 		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-			"State":             SettingUsername,
-			"ContactUUID":       nil,
-			"ReplyMessageID":    nil,
-			"DeliveryMessageID": nil,
+			"State":          SettingUsername,
+			"ContactUUID":    nil,
+			"ReplyMessageID": nil,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update user state: %w", err)
@@ -510,11 +481,10 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 	} else if action == "REMOVE" {
 		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-			"State":             Idle,
-			"Username":          nil,
-			"ContactUUID":       nil,
-			"ReplyMessageID":    nil,
-			"DeliveryMessageID": nil,
+			"State":          Idle,
+			"Username":       nil,
+			"ContactUUID":    nil,
+			"ReplyMessageID": nil,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to remove username: %w", err)
@@ -555,11 +525,10 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 	existingUser, err := r.userRepo.readUserByUsername(username)
 	if err != nil || existingUser == nil {
 		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
-			"Username":          username,
-			"State":             Idle,
-			"ContactUUID":       nil,
-			"ReplyMessageID":    nil,
-			"DeliveryMessageID": nil,
+			"Username":       username,
+			"State":          Idle,
+			"ContactUUID":    nil,
+			"ReplyMessageID": nil,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update username: %w", err)
