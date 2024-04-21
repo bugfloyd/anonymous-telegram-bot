@@ -14,7 +14,7 @@ resource "aws_lambda_function" "anonymous_bot" {
 
   role = aws_iam_role.lambda_exec_role.arn
 
-  source_code_hash = filebase64sha256("../bot/lambda_function.zip")
+  source_code_hash = filebase64sha256(var.zip_bundle_path)
 
   environment {
     variables = {

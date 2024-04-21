@@ -1,7 +1,8 @@
-package anonymous
+package common
 
 import (
 	"fmt"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"regexp"
 	"strconv"
 	"strings"
@@ -55,6 +56,9 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 	r.user = *user
 	r.userRepo = *userRepo
 
+	// Load locale
+	i18n.SetLocale(i18n.EnUS)
+
 	// Decide which function to call based on the command
 	switch command {
 	case StartCommand:
@@ -103,7 +107,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return err
 		}
 
-		_, err = b.SendMessage(ctx.EffectiveChat.Id, "Welcome! Use /link command to get you link!", &gotgbot.SendMessageOpts{})
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.StartMessage), &gotgbot.SendMessageOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to send bot info: %w", err)
 		}
@@ -155,7 +159,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			identity = receiverUser.UUID
 		}
 
-		_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf("You are sending message to:\n%s\n\nEnter your message:", identity), &gotgbot.SendMessageOpts{})
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf(i18n.T(i18n.InitialSendMessagePrompt), identity), &gotgbot.SendMessageOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to send bot info: %w", err)
 		}

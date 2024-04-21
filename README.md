@@ -18,7 +18,7 @@ terraform apply "init.tfplan"
 
 ### Build and Bundle
 ```shell
-cd bot
+cd bot/cmd/lambda
 
 GOARCH=amd64 GOOS=linux go build -o bootstrap main.go
 ```
@@ -39,9 +39,10 @@ aws s3 cp lambda_function.zip s3://<S3_CODE_BUCKET_NAME>/lambda_function.zip
 #### Add Terraform Variables File
 Create a file named `infra/terraform.tfvars`:
 ```hcl
-aws_region     = <AWS_REGION>
-lambda_bucket  = <S3_CODE_BUCKET_NAME>
-bot_token      = <TELEGRAM_BOT_TOKEN>
+aws_region      = <AWS_REGION>
+lambda_bucket   = <S3_CODE_BUCKET_NAME>
+bot_token       = <TELEGRAM_BOT_TOKEN>
+zip_bundle_path = <ZIP_BUNDLE_PATH>
 ```
 You can also pass these variables to `terraform plan` command using multiple `-var` options.
 

@@ -1,4 +1,4 @@
-package anonymous
+package common
 
 type User struct {
 	UUID           string `dynamo:",hash"`
