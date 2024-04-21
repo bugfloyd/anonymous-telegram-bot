@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/bugfloyd/anonymous-telegram-bot/anonymous"
+	"github.com/bugfloyd/anonymous-telegram-bot/common"
 	"io"
 	"log"
 	"net/http"
@@ -18,12 +18,12 @@ func main() {
 		}
 
 		// Create a Request object that mimics API Gateway
-		req := anonymous.APIRequest{
+		req := common.APIRequest{
 			Body: string(body),
 		}
 
 		// Invoke the Lambda handler from your main package
-		resp, err := anonymous.InitBot(req)
+		resp, err := common.InitBot(req)
 		if err != nil {
 			log.Printf("Error handling request: %v", err)
 			http.Error(w, fmt.Sprintf("Handler error: %v", err), http.StatusInternalServerError)
