@@ -7,7 +7,7 @@ import (
 // TestCompleteTranslations ensures that each language has all required text IDs translated.
 func TestCompleteTranslations(t *testing.T) {
 	requiredTextIDs := []TextID{StartMessage, InitialSendMessagePrompt}
-	languages := []string{"EnUS", "fr"} // Add other language codes as necessary
+	languages := []Language{EnUS, FaIR}
 
 	for _, lang := range languages {
 		LoadLocale(lang) // Ensure the locale is loaded for testing
