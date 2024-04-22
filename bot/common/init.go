@@ -53,7 +53,8 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewCommand(string(StartCommand), rootHandler.init(StartCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(InfoCommand), rootHandler.init(InfoCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
-	dispatcher.AddHandler(handlers.NewCommand(string(Username), rootHandler.init(Username)))
+	dispatcher.AddHandler(handlers.NewCommand(string(UsernameCommand), rootHandler.init(UsernameCommand)))
+	dispatcher.AddHandler(handlers.NewCommand(string(LanguageCommand), rootHandler.init(LanguageCommand)))
 
 	// Add handler to process all text messages
 	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
@@ -62,8 +63,10 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("o|"), rootHandler.init(OpenCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("u"), rootHandler.init(SetUsernameCallback)))
-	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ru"), rootHandler.init(RemoveUserNameCallback)))
-	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cu"), rootHandler.init(CancelUserNameCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ru"), rootHandler.init(RemoveUsernameCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cu"), rootHandler.init(CancelUsernameCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("l|"), rootHandler.init(SetLanguageCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("lc"), rootHandler.init(CancelLanguageCallback)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {
