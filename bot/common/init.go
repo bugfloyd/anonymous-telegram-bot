@@ -61,6 +61,7 @@ func InitBot(request APIRequest) (APIResponse, error) {
 
 	// Callback queries handlers
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("b|"), rootHandler.init(BlockCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("o|"), rootHandler.init(OpenCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("u"), rootHandler.init(SetUsernameCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ru"), rootHandler.init(RemoveUsernameCallback)))

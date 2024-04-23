@@ -1,11 +1,13 @@
 package common
 
 import (
+	"crypto/sha256"
 	"fmt"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -22,6 +24,7 @@ const (
 	LanguageCommand        Command = "language"
 	TextMessage            Command = "text"
 	ReplyCallback          Command = "reply-callback"
+	BlockCallback          Command = "block-callback"
 	OpenCallback           Command = "open-callback"
 	SetUsernameCallback    Command = "set-username-callback"
 	RemoveUsernameCallback Command = "remove-username-callback"
@@ -90,6 +93,8 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 		return r.processText(b, ctx)
 	case ReplyCallback:
 		return r.replyCallback(b, ctx)
+	case BlockCallback:
+		return r.blockCallback(b, ctx)
 	case OpenCallback:
 		return r.openCallback(b, ctx)
 	case SetUsernameCallback:
@@ -336,6 +341,10 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 						Text:         "Reply",
 						CallbackData: fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID),
 					},
+					{
+						Text:         "Block",
+						CallbackData: fmt.Sprintf("b|%s", sender.UUID),
+					},
 				},
 			},
 		},
@@ -404,6 +413,54 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	_, err = ctx.EffectiveMessage.Reply(b, "Reply to this message:", nil)
 	if err != nil {
 		return fmt.Errorf("failed to send reply message: %w", err)
+	}
+
+	return nil
+}
+
+// calback for block
+func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+	cb := ctx.Update.CallbackQuery
+	split := strings.Split(cb.Data, "|")
+	if len(split) != 2 {
+		return fmt.Errorf("invalid callback data: %s", cb.Data)
+	}
+	receiverUUID := split[1]
+
+	// create a hash of receiverUUID
+	hashedUUID := sha256.Sum256([]byte(receiverUUID))
+
+	// Block the user, add hash of uuid to Blacklist of the user
+	err := r.userRepo.updateBlacklist(r.user.UUID, "append", string(hashedUUID[:]))
+
+	if err != nil {
+		return fmt.Errorf("failed to block user: %w", err)
+	}
+
+	// Send callback answer to telegram
+	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+		Text: "User blocked!",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to answer callback: %w", err)
+	}
+
+	// Update button to unblock
+	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{
+					{
+						Text:         "Unblock",
+						CallbackData: fmt.Sprintf("ub|%s", receiverUUID),
+					},
+				},
+			},
+		},
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to update message markup: %w", err)
 	}
 
 	return nil
