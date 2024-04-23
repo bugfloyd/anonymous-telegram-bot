@@ -428,10 +428,10 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	receiverUUID := split[1]
 
 	// create a hash of receiverUUID
-	hashedUUID := sha256.Sum256([]byte(receiverUUID))
+	hashedUUID := fmt.Sprintf("%x", sha256.Sum256([]byte(receiverUUID)))
 
 	// Block the user, add hash of uuid to Blacklist of the user
-	err := r.userRepo.updateBlacklist(r.user.UUID, "append", string(hashedUUID[:]))
+	err := r.userRepo.updateBlacklist(r.user.UUID, "append", hashedUUID)
 
 	if err != nil {
 		return fmt.Errorf("failed to block user: %w", err)
