@@ -36,3 +36,4 @@ terraform.rc
 
 # Ignore terraform backend configuration values
 backend_config.hcl
+.terraform.lock.hcl

@@ -2,7 +2,7 @@ terraform {
   backend "s3" {
     key            = "anonymous-chat-state/terraform.tfstate"
     encrypt        = true
-    dynamodb_table = "anonymous-chat-terraform-state-lock"
+    dynamodb_table = "anonymous-chatbot-terraform-state-lock"
   }
 
   required_providers {
