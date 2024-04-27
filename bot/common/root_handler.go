@@ -1,7 +1,6 @@
 package common
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -22,9 +21,11 @@ const (
 	LinkCommand            Command = "link"
 	UsernameCommand        Command = "username"
 	LanguageCommand        Command = "language"
+	UnBlockAllCommand      Command = "unblockall"
 	TextMessage            Command = "text"
 	ReplyCallback          Command = "reply-callback"
 	BlockCallback          Command = "block-callback"
+	UnBlockCallback        Command = "unblock-callback"
 	OpenCallback           Command = "open-callback"
 	SetUsernameCallback    Command = "set-username-callback"
 	RemoveUsernameCallback Command = "remove-username-callback"
@@ -95,6 +96,10 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 		return r.replyCallback(b, ctx)
 	case BlockCallback:
 		return r.blockCallback(b, ctx)
+	case UnBlockCallback:
+		return r.unBlockCallback(b, ctx)
+	case UnBlockAllCommand:
+		return r.unBlockAll(b, ctx)
 	case OpenCallback:
 		return r.openCallback(b, ctx)
 	case SetUsernameCallback:
@@ -343,7 +348,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 					},
 					{
 						Text:         "Block",
-						CallbackData: fmt.Sprintf("b|%s", sender.UUID),
+						CallbackData: fmt.Sprintf("b|%s|%d", sender.UUID, senderMessageID),
 					},
 				},
 			},
@@ -418,26 +423,21 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-// calback for block
 func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	cb := ctx.Update.CallbackQuery
 	split := strings.Split(cb.Data, "|")
-	if len(split) != 2 {
+	if len(split) != 3 {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
 	receiverUUID := split[1]
+	replyMessageID := split[2]
 
-	// create a hash of receiverUUID
-	hashedUUID := fmt.Sprintf("%x", sha256.Sum256([]byte(receiverUUID)))
-
-	// Block the user, add hash of uuid to Blacklist of the user
-	err := r.userRepo.updateBlacklist(r.user.UUID, "append", hashedUUID)
+	err := r.userRepo.updateBlacklist(r.user.UUID, "add", receiverUUID)
 
 	if err != nil {
 		return fmt.Errorf("failed to block user: %w", err)
 	}
 
-	// Send callback answer to telegram
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
 		Text: "User blocked!",
 	})
@@ -445,14 +445,13 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
-	// Update button to unblock
 	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
 						Text:         "Unblock",
-						CallbackData: fmt.Sprintf("ub|%s", receiverUUID),
+						CallbackData: fmt.Sprintf("ub|%s|%s", receiverUUID, replyMessageID),
 					},
 				},
 			},
@@ -461,6 +460,66 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if err != nil {
 		return fmt.Errorf("failed to update message markup: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+	cb := ctx.Update.CallbackQuery
+	split := strings.Split(cb.Data, "|")
+	if len(split) != 3 {
+		return fmt.Errorf("invalid callback data: %s", cb.Data)
+	}
+	receiverUUID := split[1]
+	replyMessageID := split[2]
+
+	err := r.userRepo.updateBlacklist(r.user.UUID, "delete", receiverUUID)
+
+	if err != nil {
+		return fmt.Errorf("failed to unblock user: %w", err)
+	}
+
+	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+		Text: "User unblocked!",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to answer callback: %w", err)
+	}
+
+	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
+		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+				{
+					{
+						Text:         "Reply",
+						CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
+					},
+					{
+						Text:         "Block",
+						CallbackData: fmt.Sprintf("b|%s|%s", receiverUUID, replyMessageID),
+					},
+				},
+			},
+		},
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to update message markup: %w", err)
+	}
+
+	return nil
+}
+
+func (r *RootHandler) unBlockAll(b *gotgbot.Bot, ctx *ext.Context) error {
+	err := r.userRepo.updateBlacklist(r.user.UUID, "clear", "")
+	if err != nil {
+		return fmt.Errorf("failed to unblock all users: %w", err)
+	}
+
+	_, err = ctx.EffectiveMessage.Reply(b, "All users unblocked!", nil)
+	if err != nil {
+		return fmt.Errorf("failed to send bot info: %w", err)
 	}
 
 	return nil
