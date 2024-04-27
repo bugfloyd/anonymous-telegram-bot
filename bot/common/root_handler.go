@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,14 @@ const (
 	CancelUsernameCallback Command = "cancel-username-callback"
 	SetLanguageCallback    Command = "set-language-callback"
 	CancelLanguageCallback Command = "cancel-language-callback"
+)
+
+type Blocked string
+
+const (
+	SameUser  Blocked = "same-user"
+	OtherUser Blocked = "other-user"
+	None            Blocked = "none"
 )
 
 type RootHandler struct {
@@ -173,6 +182,42 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 
+		// Check if they block each other
+		blockedBy, err := r.blockCheck(receiverUser.UUID)
+		if err != nil {
+			return fmt.Errorf("failed to check block status: %w", err)
+		}
+		if blockedBy != None {
+			var reason string
+			var keyboard gotgbot.InlineKeyboardMarkup
+			if blockedBy == SameUser {
+				reason = "You have blocked this user."
+				keyboard = gotgbot.InlineKeyboardMarkup{
+					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+						{
+							{
+								Text:         "Unblock",
+								CallbackData: fmt.Sprintf("ub|%s|%d", receiverUser.UUID, 0),
+							},
+						},
+					},
+				}
+
+			} else if blockedBy == OtherUser {
+				reason = "This user has blocked you."
+			}
+
+			_, err = ctx.EffectiveMessage.Reply(b, reason, &gotgbot.SendMessageOpts{
+				ReplyMarkup: keyboard,
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to send block message: %w", err)
+			}
+
+			return nil
+		}
+
 		// Set user state to sending
 		err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
 			"State":       Sending,
@@ -255,6 +300,32 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	receiver, err := r.userRepo.readUserByUUID(r.user.ContactUUID)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
+	}
+
+	// Check if they block each other
+	blockedBy, err := r.blockCheck(receiver.UUID)
+	if err != nil {
+		return fmt.Errorf("failed to check block status: %w", err)
+	}
+	if blockedBy != None {
+		var reason string
+		if blockedBy == SameUser {
+			reason = "You have blocked this user."
+		} else {
+			reason = "This user has blocked you."
+		}
+		_, err = ctx.EffectiveMessage.Reply(b, reason, nil)
+		if err != nil {
+			return fmt.Errorf("failed to send block message: %w", err)
+		}
+
+		// Reset sender user
+		err = r.userRepo.resetUserState(r.user.UUID)
+		if err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	var replyParameters *gotgbot.ReplyParameters
@@ -396,6 +467,47 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
 
+	// Check if they block each other
+	blockedBy, err := r.blockCheck(receiverUUID)
+	if err != nil {
+		return fmt.Errorf("failed to check block status: %w", err)
+	}
+	if blockedBy != None {
+		var reason string
+		if blockedBy == SameUser {
+			reason = "You have blocked this user."
+			_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
+				ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+						{
+							{
+								Text:         "Unblock",
+								CallbackData: fmt.Sprintf("ub|%s|%d", receiverUUID, messageID),
+							},
+						},
+					},
+				},
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to update message markup: %w", err)
+			}
+
+		} else {
+			reason = "This user has blocked you."
+		}
+
+		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text:      reason,
+			ShowAlert: true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to answer callback: %w", err)
+		}
+
+		return nil
+	}
+
 	// Store the message id in the user and set status to replying
 	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
 		"State":          Sending,
@@ -487,14 +599,24 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
+	var replyMessageKey gotgbot.InlineKeyboardButton
+	if replyMessageID == "0" {
+		replyMessageKey = gotgbot.InlineKeyboardButton{
+			Text:         "Send Message",
+			CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
+		}
+	} else {
+		replyMessageKey = gotgbot.InlineKeyboardButton{
+			Text:         "Reply",
+			CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
+		}
+	}
+
 	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
-					{
-						Text:         "Reply",
-						CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
-					},
+					replyMessageKey,
 					{
 						Text:         "Block",
 						CallbackData: fmt.Sprintf("b|%s|%s", receiverUUID, replyMessageID),
@@ -825,4 +947,24 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 	}
 	return nil
+}
+
+// TODO: move this logic somewhere else and return better values
+func (r *RootHandler) blockCheck(receiverUUID string) (Blocked, error) {
+
+	if slices.Contains(r.user.Blacklist, receiverUUID) {
+		return SameUser, nil
+	} else {
+		// check if receiver is blocked by sender
+		receiver, err := r.userRepo.readUserByUUID(receiverUUID)
+		if err != nil {
+			return None, fmt.Errorf("failed to get receiver: %w", err)
+		}
+
+		if slices.Contains(receiver.Blacklist, r.user.UUID) {
+			return OtherUser, nil
+		}
+	}
+
+	return None, nil
 }
