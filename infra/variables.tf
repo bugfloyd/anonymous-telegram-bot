@@ -3,6 +3,15 @@ variable "aws_region" {
   type        = string
 }
 
+variable "aws_profile" {
+  description = "AWS profile to be used"
+  type = map(string)
+  default = {
+    development = "dev"
+    production  = "prod"
+  }
+}
+
 variable "lambda_bucket" {
   description = "The AWS S3 bucket for storing lambda function codes"
   type        = string
