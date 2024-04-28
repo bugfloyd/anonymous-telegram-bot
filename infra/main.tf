@@ -1,28 +1,15 @@
-locals {
-  workspace_prefixes = {
-    default     = "dev"
-    development = "dev"
-    production  = "prod"
-  }
-}
-
 provider "aws" {
-  region = var.aws_region
-  profile = var.aws_profile[terraform.workspace]
+  region  = var.aws_region
 }
 
 # Lambda
 resource "aws_lambda_function" "anonymous_bot" {
   function_name = "AnonymousBot"
-
-  s3_bucket = "${local.workspace_prefixes[terraform.workspace]}.${var.lambda_bucket}"
+  s3_bucket = var.lambda_bucket
   s3_key    = "lambda_function.zip"
-
   handler = "main"
   runtime = "provided.al2023"
-
   role = aws_iam_role.lambda_exec_role.arn
-
   source_code_hash = filebase64sha256(var.zip_bundle_path)
 
   environment {
