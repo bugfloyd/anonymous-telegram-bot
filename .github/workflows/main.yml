@@ -58,14 +58,11 @@ jobs:
         run: |
           cd infra
           terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }}
-          WEBHOOK_URL=$(terraform output -raw webhook_url)
-          echo $WEBHOOK_URL
-          curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
 
-#      - name: Set webhook URL
-#        shell: bash
-#        run: |
-#          cd infra
-#          WEBHOOK_URL=$(terraform output -raw webhook_url | grep -o 'https://[^ ]*')
-#          echo $WEBHOOK_URL
-#          curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
+      - name: Set webhook URL
+        shell: bash
+        run: |
+          cd infra
+          WEBHOOK_URL=$(terraform output -raw webhook_url | grep -o 'https://[^ ]*')
+          echo "Webhook URL: $WEBHOOK_URL"
+          curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
