@@ -45,7 +45,9 @@ jobs:
         run: aws s3 cp bot/lambda_function.zip s3://${{ vars.S3_LAMBDA_BUCKET }}/lambda_function.zip
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v1
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
       - name: Terraform init
         run: |
@@ -63,6 +65,6 @@ jobs:
         shell: bash
         run: |
           cd infra
-          WEBHOOK_URL=$(terraform output webhook_url | sed 's/"//g')  # Remove double quotes
+          WEBHOOK_URL=$(terraform output -raw webhook_url)
           echo "Webhook URL: $WEBHOOK_URL"
           curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
