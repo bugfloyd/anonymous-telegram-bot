@@ -183,10 +183,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Check if they block each other
-		blockedBy, err := r.blockCheck(receiverUser)
-		if err != nil {
-			return fmt.Errorf("failed to check block status: %w", err)
-		}
+		blockedBy := r.blockCheck(receiverUser)
 		if blockedBy != None {
 			var reason string
 			var keyboard gotgbot.InlineKeyboardMarkup
@@ -303,10 +300,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Check if they block each other
-	blockedBy, err := r.blockCheck(receiver)
-	if err != nil {
-		return fmt.Errorf("failed to check block status: %w", err)
-	}
+	blockedBy := r.blockCheck(receiver)
 	if blockedBy != None {
 		var reason string
 		if blockedBy == SameUser {
@@ -474,10 +468,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Check if they block each other
-	blockedBy, err := r.blockCheck(receiver)
-	if err != nil {
-		return fmt.Errorf("failed to check block status: %w", err)
-	}
+	blockedBy := r.blockCheck(receiver)
 	if blockedBy != None {
 		var reason string
 		if blockedBy == SameUser {
@@ -955,16 +946,16 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 	return nil
 }
 
-func (r *RootHandler) blockCheck(receiver *User) (Blocked, error) {
+func (r *RootHandler) blockCheck(receiver *User) Blocked {
 
 	if slices.Contains(r.user.Blacklist, receiver.UUID) {
-		return SameUser, nil
+		return SameUser
 	} else {
 		// check if receiver is blocked by sender
 		if slices.Contains(receiver.Blacklist, r.user.UUID) {
-			return OtherUser, nil
+			return OtherUser
 		}
 	}
 
-	return None, nil
+	return None
 }
