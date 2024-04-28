@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      - feat/github_actions
-  workflow_dispatch:
 
 jobs:
   build-upload-deploy:
@@ -66,5 +64,4 @@ jobs:
         run: |
           cd infra
           WEBHOOK_URL=$(terraform output -raw webhook_url)
-          echo "Webhook URL: $WEBHOOK_URL"
           curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
