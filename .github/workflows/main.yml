@@ -63,5 +63,7 @@ jobs:
         run: |
           cd infra
           WEBHOOK_URL=$(terraform output -raw webhook_url)
+          echo "Webhook URL length: ${#WEBHOOK_URL}"
+          echo "Webhook URL: ${WEBHOOK_URL}"
           curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook \
             -F "url=$WEBHOOK_URL"
