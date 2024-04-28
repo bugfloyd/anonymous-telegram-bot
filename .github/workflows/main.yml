@@ -33,7 +33,7 @@ jobs:
           cd bot
           zip lambda_function.zip bootstrap
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS credentials to upload bundle
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ vars.AWS_REGION }}
@@ -43,3 +43,15 @@ jobs:
 
       - name: Upload to S3
         run: aws s3 cp bot/lambda_function.zip s3://${{ vars.S3_LAMBDA_BUCKET }}/lambda_function.zip
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}"
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }}
