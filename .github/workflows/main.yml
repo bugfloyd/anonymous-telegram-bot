@@ -63,6 +63,6 @@ jobs:
         shell: bash
         run: |
           cd infra
-          WEBHOOK_URL=$(terraform output -raw webhook_url | grep -o 'https://[^ ]*')
+          WEBHOOK_URL=$(terraform output -raw webhook_url | sed -e 's/::debug::Terraform//g' -e 's/.*\(https:\/\/[^"]*\).*/\1/' | head -1 | tr -d '\n')
           echo "Webhook URL: $WEBHOOK_URL"
           curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
