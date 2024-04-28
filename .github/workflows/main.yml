@@ -67,3 +67,4 @@ jobs:
           echo "Webhook URL: ${WEBHOOK_URL}"
           curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook \
             -F "url=$WEBHOOK_URL"
+        shell: bash
