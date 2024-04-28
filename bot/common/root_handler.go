@@ -40,7 +40,7 @@ type Blocked string
 const (
 	SameUser  Blocked = "same-user"
 	OtherUser Blocked = "other-user"
-	None            Blocked = "none"
+	None      Blocked = "none"
 )
 
 type RootHandler struct {
@@ -183,7 +183,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Check if they block each other
-		blockedBy, err := r.blockCheck(receiverUser.UUID)
+		blockedBy, err := r.blockCheck(receiverUser)
 		if err != nil {
 			return fmt.Errorf("failed to check block status: %w", err)
 		}
@@ -303,7 +303,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Check if they block each other
-	blockedBy, err := r.blockCheck(receiver.UUID)
+	blockedBy, err := r.blockCheck(receiver)
 	if err != nil {
 		return fmt.Errorf("failed to check block status: %w", err)
 	}
@@ -467,8 +467,14 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to parse message ID: %w", err)
 	}
 
+	// Check if receiver exists
+	receiver, err := r.userRepo.readUserByUUID(receiverUUID)
+	if err != nil {
+		return fmt.Errorf("failed to get receiver: %w", err)
+	}
+
 	// Check if they block each other
-	blockedBy, err := r.blockCheck(receiverUUID)
+	blockedBy, err := r.blockCheck(receiver)
 	if err != nil {
 		return fmt.Errorf("failed to check block status: %w", err)
 	}
@@ -949,18 +955,12 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 	return nil
 }
 
-// TODO: move this logic somewhere else and return better values
-func (r *RootHandler) blockCheck(receiverUUID string) (Blocked, error) {
+func (r *RootHandler) blockCheck(receiver *User) (Blocked, error) {
 
-	if slices.Contains(r.user.Blacklist, receiverUUID) {
+	if slices.Contains(r.user.Blacklist, receiver.UUID) {
 		return SameUser, nil
 	} else {
 		// check if receiver is blocked by sender
-		receiver, err := r.userRepo.readUserByUUID(receiverUUID)
-		if err != nil {
-			return None, fmt.Errorf("failed to get receiver: %w", err)
-		}
-
 		if slices.Contains(receiver.Blacklist, r.user.UUID) {
 			return OtherUser, nil
 		}
