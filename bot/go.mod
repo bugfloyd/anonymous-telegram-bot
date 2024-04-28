@@ -1,6 +1,6 @@
 module github.com/bugfloyd/anonymous-telegram-bot
 
-go 1.21.9
+go 1.21
 
 require (
 	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.25

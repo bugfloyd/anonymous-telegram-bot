@@ -1,0 +1,67 @@
+name: Build, Upload and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-upload-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cd bot
+          GOARCH=amd64 GOOS=linux go build -o bootstrap main.go
+
+      - name: Zip
+        run: |
+          cd bot
+          zip lambda_function.zip bootstrap
+
+      - name: Configure AWS credentials to upload bundle
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.PIPELINE_EXEC_ROLE_ARN }}
+          role-session-name: GitHubActions
+          role-duration-seconds: 3600
+
+      - name: Upload to S3
+        run: aws s3 cp bot/lambda_function.zip s3://${{ vars.S3_LAMBDA_BUCKET }}/lambda_function.zip
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          cd infra
+          terraform init \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}"
+
+      - name: Terraform apply
+        run: |
+          cd infra
+          terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }}
+
+      - name: Set webhook URL
+        shell: bash
+        run: |
+          cd infra
+          WEBHOOK_URL=$(terraform output -raw webhook_url)
+          curl https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/setWebhook -F "url=$WEBHOOK_URL"
