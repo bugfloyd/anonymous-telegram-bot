@@ -1,15 +1,15 @@
 provider "aws" {
-  region  = var.aws_region
+  region = var.aws_region
 }
 
 # Lambda
 resource "aws_lambda_function" "anonymous_bot" {
-  function_name = "AnonymousBot"
-  s3_bucket = var.lambda_bucket
-  s3_key    = "lambda_function.zip"
-  handler = "main"
-  runtime = "provided.al2023"
-  role = aws_iam_role.lambda_exec_role.arn
+  function_name    = "AnonymousBot"
+  s3_bucket        = var.lambda_bucket
+  s3_key           = "lambda_function.zip"
+  handler          = "main"
+  runtime          = "provided.al2023"
+  role             = aws_iam_role.lambda_exec_role.arn
   source_code_hash = filebase64sha256(var.zip_bundle_path)
 
   environment {
@@ -80,7 +80,8 @@ resource "aws_apigatewayv2_stage" "default_stage" {
 }
 
 output "webhook_url" {
-  value = "${aws_apigatewayv2_stage.default_stage.invoke_url}anonymous-bot"
+  value     = "${aws_apigatewayv2_stage.default_stage.invoke_url}anonymous-bot"
+  sensitive = true
 }
 
 resource "aws_lambda_permission" "api_gw_lambda" {
