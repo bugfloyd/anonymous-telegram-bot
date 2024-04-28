@@ -1,63 +1,27 @@
-# Anonymous Telegram Chat Bot [UNDER DEVELOPMENT]
+# Anonymous Telegram Chat Bot
 
 ## Deployment
-### Terraform Backend
-First we create a S3 bucket to store Terraform state, a DynamoDB table to persist Terraform state lock and a S3 bucket to deploy Lambda function code bundles. The Terraform state for this init stack is being kept locally.
-```shell
-cd infra/tf_backend
-terraform init # Run once
-```
-
-Create a `terraform.tfvars` file in `infra/init`:
+### Deploy Init Resources
+Now we create and deploy the resources needed for the main stack including a S3 bucket to store Terraform state, a DynamoDB table to persist Terraform state lock and a S3 bucket to deploy Lambda function code bundles. Go to `infra/init` directory and create a file named `terraform.tfvars`:
 ```hcl
-aws_region = <AWS_REGION>
-aws_profile = <AWS_PROFILE>
-terraform_state_bucket = <S3_TERRAFORM_STATE_BUCKET_NAME>
+init_aws_region        = "<AWS_REGION>"
+terraform_state_bucket = "<S3_TERRAFORM_STATE_BUCKET_NAME>"
+init_lambda_bucket     = "<S3_LAMBDA_CODE_BUCKET>"
+github_repo            = "<GITHUB_PROFILE/REPO_NAME>"
 ```
-**Note:** Here `<AWS_PROFILE>` and `<AWS_REGION>` are the profile (and/or account) and the region that we use to store and manage terraform state and lock.  
-
-Now run the plan command:
-```shell
-terraform plan -out tf_backend.tfplan
-```
-
-After planning for the changes, apply the changeset:
-```shell
-terraform apply "tf_backend.tfplan"
-```
-
-### Deploy Initial Resources
-Now we create and deploy the resources needed for the main stack. Go to `infra/init` directory and create a file named `backend_config.hcl`:
-```hcl
-profile        = <AWS_PROFILE>
-bucket         = <S3_TERRAFORM_STATE_BUCKET_NAME>
-region         = <AWS_REGION>
-```
-**Note:** Here `<AWS_PROFILE>` and `<AWS_REGION>` are the profile (and/or account) and the region that we use to store and manage terraform state and lock.
-
-Create a file named `terraform.tfvars`:
-```hcl
-init_aws_region = <AWS_REGION>
-init_aws_profile = {
-  development = <AWS_DEV_PROFILE>
-  production  = <AWS_PROD_PROFILE>
-}
-init_lambda_bucket = <S3_LAMBDA_CODE_BUCKET>
-github_repo        = <GITHUB_PROFILE?REPO_NAME>
-```
-**Note:** Here `<AWS_DEV_PROFILE>`, `<AWS_PROD_PROFILE>` and `<AWS_REGION>` are the profile (and/or account) and the region that we use to deploy the main resources.
+**Note:** The Terraform state for this init stack is being kept locally.
 
 Now plan and apply the changeset:
 ```shell
-terraform init -backend-config backend_config.hcl # Run once
-terraform plan -out init.tfplan
-terraform apply "init.tfplan"
+terraform init # Run once
+AWS_PROFILE=<AWS_PROFILE> terraform plan -out init.tfplan
+AWS_PROFILE=<AWS_PROFILE> terraform apply "init.tfplan"
 ```
 
 ### Build and Bundle
 ```shell
 cd bot
-
+``
 GOARCH=amd64 GOOS=linux go build -o bootstrap main.go
 ```
 **Note:** In order to use the binary as the Lambda handler, it should be named `bootstrap`.
@@ -72,37 +36,28 @@ Upload the build zip bundle to S3:
 ```shell
 aws s3 cp lambda_function.zip s3://<S3_LAMBDA_CODE_BUCKET>/lambda_function.zip --profile <AWS_PROFILE>
 ```
-**Note:** Here `<AWS_PROFILE>` is the profile (and/or account) that we use to deploy the main resources.
 
 ### Deploy Main AWS Resources
 #### Add Terraform Variables File
 Create a file named `infra/terraform.tfvars`:
 ```hcl
-aws_region      = <AWS_REGION>
-aws_profile = {
-    development = <AWS_DEV_PROFILE>
-    production  = <AWS_PROD_PROFILE>
-}
-lambda_bucket   = <S3_LAMBDA_CODE_BUCKET>
-bot_token       = <TELEGRAM_BOT_TOKEN>
+aws_region      = "<AWS_REGION>"
+lambda_bucket   = "<S3_LAMBDA_CODE_BUCKET>"
+bot_token       = "<TELEGRAM_BOT_TOKEN>"
 ```
-**Note:** Here `<AWS_DEV_PROFILE>`, `<AWS_PROD_PROFILE>` and `<AWS_REGION>` are the profile (and/or account) and the region that we use to deploy the main resources.
 
 #### Initialize Terraform
 Create a Terraform backend configuration file named `infra/backend_config.hcl`:
 ```hcl
-region       = <AWS_REGION>
-profile      = <AWS_PROFILE>
-bucket       = <S3_TERRAFORM_STATE_BUCKET_NAME>
+region       = "<AWS_REGION>"
+bucket       = "<S3_TERRAFORM_STATE_BUCKET_NAME>"
 ```
-**Note:** Here `<AWS_PROFILE>` and `<AWS_REGION>` are the profile (and/or account) and the region that we use to store and manage terraform state and lock.
 
 Initialize the main Terraform stack:
 ```shell
 cd infra
-terraform init -backend-config backend_config.hcl # Run once
-terraform workspace new production # Run once - Repeat it for other workspaces
-terraform workspace select production
+
+AWS_PROFILE=<AWS_PROFILE> init -backend-config backend_config.hcl # Run once
 ```
 
 #### Deploy
@@ -110,8 +65,8 @@ Use `terraform plan` to create a changeset and run `terraform apply` command to 
 ```shell
 cd infra
 
-terraform plan -out main.tfplan
-terraform apply "main.tfplan"
+AWS_PROFILE=<AWS_PROFILE> terraform plan -out main.tfplan
+AWS_PROFILE=<AWS_PROFILE> terraform apply "main.tfplan"
 ```
 
 ### Register Bot Webhook
