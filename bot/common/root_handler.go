@@ -35,12 +35,12 @@ const (
 	CancelLanguageCallback Command = "cancel-language-callback"
 )
 
-type Blocked string
+type BlockedBy string
 
 const (
-	SameUser  Blocked = "same-user"
-	OtherUser Blocked = "other-user"
-	None      Blocked = "none"
+	Sender   BlockedBy = "same-user"
+	Receiver BlockedBy = "other-user"
+	None     BlockedBy = "none"
 )
 
 type RootHandler struct {
@@ -183,11 +183,11 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Check if they block each other
-		blockedBy := r.blockCheck(receiverUser)
+		blockedBy := blockCheck(&r.user, receiverUser)
 		if blockedBy != None {
 			var reason string
 			var keyboard gotgbot.InlineKeyboardMarkup
-			if blockedBy == SameUser {
+			if blockedBy == Sender {
 				reason = "You have blocked this user."
 				keyboard = gotgbot.InlineKeyboardMarkup{
 					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
@@ -200,7 +200,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 					},
 				}
 
-			} else if blockedBy == OtherUser {
+			} else if blockedBy == Receiver {
 				reason = "This user has blocked you."
 			}
 
@@ -300,12 +300,12 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Check if they block each other
-	blockedBy := r.blockCheck(receiver)
+	blockedBy := blockCheck(&r.user, receiver)
 	if blockedBy != None {
 		var reason string
-		if blockedBy == SameUser {
+		if blockedBy == Sender {
 			reason = "You have blocked this user."
-		} else {
+		} else if blockedBy == Receiver {
 			reason = "This user has blocked you."
 		}
 		_, err = ctx.EffectiveMessage.Reply(b, reason, nil)
@@ -468,10 +468,10 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Check if they block each other
-	blockedBy := r.blockCheck(receiver)
+	blockedBy := blockCheck(&r.user, receiver)
 	if blockedBy != None {
 		var reason string
-		if blockedBy == SameUser {
+		if blockedBy == Sender {
 			reason = "You have blocked this user."
 			_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
 				ReplyMarkup: gotgbot.InlineKeyboardMarkup{
@@ -490,7 +490,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				return fmt.Errorf("failed to update message markup: %w", err)
 			}
 
-		} else {
+		} else if blockedBy == Receiver {
 			reason = "This user has blocked you."
 		}
 
@@ -946,16 +946,13 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 	return nil
 }
 
-func (r *RootHandler) blockCheck(receiver *User) Blocked {
-
-	if slices.Contains(r.user.Blacklist, receiver.UUID) {
-		return SameUser
+func blockCheck(sender *User, receiver *User) BlockedBy {
+	if slices.Contains(sender.Blacklist, receiver.UUID) {
+		return Sender
 	} else {
-		// check if receiver is blocked by sender
-		if slices.Contains(receiver.Blacklist, r.user.UUID) {
-			return OtherUser
+		if slices.Contains(receiver.Blacklist, sender.UUID) {
+			return Receiver
 		}
 	}
-
 	return None
 }
