@@ -1,4 +1,4 @@
-name: Build and Upload
+name: Build, Upload and Deploy
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-upload:
+  build-upload-deploy:
     runs-on: ubuntu-latest
 
     permissions:
@@ -49,9 +49,12 @@ jobs:
 
       - name: Terraform init
         run: |
+          cd infra
           terraform init \
             -backend-config="region=${{ vars.AWS_REGION }}" \
             -backend-config="bucket=${{ vars.TERRAFORM_STATE_BUCKET }}"
 
       - name: Terraform apply
-        run: terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }}
+        run: |
+          cd infra
+          terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }}
