@@ -98,3 +98,25 @@ func (repo *UserRepository) resetUserState(uuid string) error {
 	}
 	return nil
 }
+
+func (repo *UserRepository) updateBlacklist(uuid string, method string, value string) error {
+	updateBuilder := repo.table.Update("UUID", uuid)
+
+	switch method {
+	case "add":
+		updateBuilder = updateBuilder.AddStringsToSet("Blacklist", value)
+	case "delete":
+		updateBuilder = updateBuilder.DeleteStringsFromSet("Blacklist", value)
+	case "clear":
+		updateBuilder = updateBuilder.Set("Blacklist", nil)
+	default:
+		return fmt.Errorf("invalid method")
+	}
+
+	err := updateBuilder.Run()
+
+	if err != nil {
+		return fmt.Errorf("failed to %s blacklist: %w", method, err)
+	}
+	return nil
+}

@@ -55,12 +55,15 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewCommand(string(LinkCommand), rootHandler.init(LinkCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(UsernameCommand), rootHandler.init(UsernameCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(LanguageCommand), rootHandler.init(LanguageCommand)))
+	dispatcher.AddHandler(handlers.NewCommand(string(UnBlockAllCommand), rootHandler.init(UnBlockAllCommand)))
 
 	// Add handler to process all text messages
 	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
 
 	// Callback queries handlers
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("b|"), rootHandler.init(BlockCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ub|"), rootHandler.init(UnBlockCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("o|"), rootHandler.init(OpenCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("u"), rootHandler.init(SetUsernameCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ru"), rootHandler.init(RemoveUsernameCallback)))
