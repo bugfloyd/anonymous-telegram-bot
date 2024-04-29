@@ -949,10 +949,8 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 func blockCheck(sender *User, receiver *User) BlockedBy {
 	if slices.Contains(sender.Blacklist, receiver.UUID) {
 		return Sender
-	} else {
-		if slices.Contains(receiver.Blacklist, sender.UUID) {
-			return Receiver
-		}
+	} else if slices.Contains(receiver.Blacklist, sender.UUID) {
+		return Receiver
 	}
 	return None
 }
