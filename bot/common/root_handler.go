@@ -15,24 +15,28 @@ import (
 )
 
 type Command string
+type CallbackCommand string
 
 const (
-	StartCommand           Command = "start"
-	InfoCommand            Command = "info"
-	LinkCommand            Command = "link"
-	UsernameCommand        Command = "username"
-	LanguageCommand        Command = "language"
-	UnBlockAllCommand      Command = "unblockall"
-	TextMessage            Command = "text"
-	ReplyCallback          Command = "reply-callback"
-	BlockCallback          Command = "block-callback"
-	UnBlockCallback        Command = "unblock-callback"
-	OpenCallback           Command = "open-callback"
-	SetUsernameCallback    Command = "set-username-callback"
-	RemoveUsernameCallback Command = "remove-username-callback"
-	CancelUsernameCallback Command = "cancel-username-callback"
-	SetLanguageCallback    Command = "set-language-callback"
-	CancelLanguageCallback Command = "cancel-language-callback"
+	StartCommand      Command = "start"
+	InfoCommand       Command = "info"
+	LinkCommand       Command = "link"
+	UsernameCommand   Command = "username"
+	LanguageCommand   Command = "language"
+	UnBlockAllCommand Command = "unblockall"
+	TextMessage       Command = "text"
+)
+
+const (
+	ReplyCallback          CallbackCommand = "reply-callback"
+	BlockCallback          CallbackCommand = "block-callback"
+	UnBlockCallback        CallbackCommand = "unblock-callback"
+	OpenCallback           CallbackCommand = "open-callback"
+	SetUsernameCallback    CallbackCommand = "set-username-callback"
+	RemoveUsernameCallback CallbackCommand = "remove-username-callback"
+	CancelUsernameCallback CallbackCommand = "cancel-username-callback"
+	SetLanguageCallback    CallbackCommand = "set-language-callback"
+	CancelLanguageCallback CallbackCommand = "cancel-language-callback"
 )
 
 type BlockedBy string
@@ -52,13 +56,13 @@ func NewRootHandler() *RootHandler {
 	return &RootHandler{}
 }
 
-func (r *RootHandler) init(commandName Command) handlers.Response {
+func (r *RootHandler) init(commandName interface{}) handlers.Response {
 	return func(b *gotgbot.Bot, ctx *ext.Context) error {
 		return r.runCommand(b, ctx, commandName)
 	}
 }
 
-func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Command) error {
+func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command interface{}) error {
 	// create user repo
 	userRepo, err := NewUserRepository()
 	if err != nil {
@@ -87,40 +91,57 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command Comma
 	}
 	i18n.SetLocale(language)
 
-	// Decide which function to call based on the command
-	switch command {
-	case StartCommand:
-		return r.start(b, ctx)
-	case InfoCommand:
-		return r.info(b, ctx)
-	case LinkCommand:
-		return r.getLink(b, ctx)
-	case UsernameCommand:
-		return r.manageUsername(b, ctx)
-	case LanguageCommand:
-		return r.manageLanguage(b, ctx)
-	case TextMessage:
-		return r.processText(b, ctx)
-	case ReplyCallback:
-		return r.replyCallback(b, ctx)
-	case BlockCallback:
-		return r.blockCallback(b, ctx)
-	case UnBlockCallback:
-		return r.unBlockCallback(b, ctx)
-	case UnBlockAllCommand:
-		return r.unBlockAll(b, ctx)
-	case OpenCallback:
-		return r.openCallback(b, ctx)
-	case SetUsernameCallback:
-		return r.usernameCallback(b, ctx, "SET")
-	case RemoveUsernameCallback:
-		return r.usernameCallback(b, ctx, "REMOVE")
-	case CancelUsernameCallback:
-		return r.usernameCallback(b, ctx, "CANCEL")
-	case SetLanguageCallback:
-		return r.languageCallback(b, ctx, "SET")
-	case CancelLanguageCallback:
-		return r.languageCallback(b, ctx, "CANCEL")
+	switch c := command.(type) {
+	case Command:
+		switch c {
+		case StartCommand:
+			return r.start(b, ctx)
+		case InfoCommand:
+			return r.info(b, ctx)
+		case LinkCommand:
+			return r.getLink(b, ctx)
+		case UsernameCommand:
+			return r.manageUsername(b, ctx)
+		case LanguageCommand:
+			return r.manageLanguage(b, ctx)
+		case TextMessage:
+			return r.processText(b, ctx)
+		case UnBlockAllCommand:
+			return r.unBlockAll(b, ctx)
+		default:
+			return fmt.Errorf("unknown command: %s", c)
+		}
+	case CallbackCommand:
+		// Reset user state if necessary
+		if r.user.State != Idle || r.user.ContactUUID != "" || r.user.ReplyMessageID != 0 {
+			err := r.userRepo.resetUserState(r.user.UUID)
+			if err != nil {
+				return err
+			}
+		}
+
+		switch c {
+		case ReplyCallback:
+			return r.replyCallback(b, ctx)
+		case BlockCallback:
+			return r.blockCallback(b, ctx)
+		case UnBlockCallback:
+			return r.unBlockCallback(b, ctx)
+		case OpenCallback:
+			return r.openCallback(b, ctx)
+		case SetUsernameCallback:
+			return r.usernameCallback(b, ctx, "SET")
+		case RemoveUsernameCallback:
+			return r.usernameCallback(b, ctx, "REMOVE")
+		case CancelUsernameCallback:
+			return r.usernameCallback(b, ctx, "CANCEL")
+		case SetLanguageCallback:
+			return r.languageCallback(b, ctx, "SET")
+		case CancelLanguageCallback:
+			return r.languageCallback(b, ctx, "CANCEL")
+		default:
+			return fmt.Errorf("unknown command: %s", c)
+		}
 	default:
 		return fmt.Errorf("unknown command: %s", command)
 	}
@@ -711,11 +732,6 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
-		// Reset sender user
-		err = r.userRepo.resetUserState(r.user.UUID)
-		if err != nil {
-			return err
-		}
 	} else if action == "SET" {
 		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
 			"State":          SettingUsername,
@@ -895,11 +911,6 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		})
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)
-		}
-		// Reset sender user
-		err = r.userRepo.resetUserState(r.user.UUID)
-		if err != nil {
-			return err
 		}
 	} else if action == "SET" {
 		split := strings.Split(cb.Data, "|")
