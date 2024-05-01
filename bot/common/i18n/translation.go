@@ -8,15 +8,20 @@ import (
 type TextID string
 
 const (
-	StartMessageText             TextID = "StartMessageText"
-	InitialSendMessagePromptText TextID = "InitialSendMessagePromptText"
-	UnblockButtonText            TextID = "UnblockButtonText"
-	SendMessageButtonText        TextID = "SendMessageButtonText"
-	ReplyButtonText              TextID = "ReplyButtonText"
-	BlockButtonText              TextID = "BlockButtonText"
-	UnblockAllUsersResultText    TextID = "UnblockAllUsersResultText"
-	UserBlockedText              TextID = "UserBlockedText"
-	UserUnblockedText            TextID = "UserUnblockedText"
+	StartMessageText                TextID = "StartMessageText"
+	InitialSendMessagePromptText    TextID = "InitialSendMessagePromptText"
+	UnblockButtonText               TextID = "UnblockButtonText"
+	SendMessageButtonText           TextID = "SendMessageButtonText"
+	ReplyButtonText                 TextID = "ReplyButtonText"
+	BlockButtonText                 TextID = "BlockButtonText"
+	UnblockAllUsersResultText       TextID = "UnblockAllUsersResultText"
+	UserBlockedText                 TextID = "UserBlockedText"
+	UserUnblockedText               TextID = "UserUnblockedText"
+	CancelButtonText                TextID = "CancelButtonText"
+	YourLanguageText                TextID = "YourLanguageText"
+	NoPreferredLanguageSetText      TextID = "NoPreferredLanguageSetText"
+	NeverMindButtonText             TextID = "NeverMindButtonText"
+	LanguageUpdatedSuccessfullyText TextID = "LanguageUpdatedSuccessfullyText"
 )
 
 type Language string
