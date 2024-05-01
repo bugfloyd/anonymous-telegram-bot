@@ -6,7 +6,17 @@ import (
 
 // TestCompleteTranslations ensures that each language has all required text IDs translated.
 func TestCompleteTranslations(t *testing.T) {
-	requiredTextIDs := []TextID{StartMessage, InitialSendMessagePrompt}
+	requiredTextIDs := []TextID{
+		StartMessageText,
+		InitialSendMessagePromptText,
+		UnblockButtonText,
+		SendMessageButtonText,
+		ReplyButtonText,
+		BlockButtonText,
+		UnblockAllUsersResultText,
+		UserBlockedText,
+		UserUnblockedText,
+	}
 	languages := []Language{EnUS, FaIR}
 
 	for _, lang := range languages {
