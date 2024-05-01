@@ -11,9 +11,9 @@ import (
 func (r *RootHandler) manageLanguage(b *gotgbot.Bot, ctx *ext.Context) error {
 	var text string
 	if r.user.Language != "" {
-		text = fmt.Sprintf("Your language is: %s", r.user.Language)
+		text = fmt.Sprintf(i18n.T(i18n.YourLanguageText), r.user.Language)
 	} else {
-		text = "You don't have a preferred language yet."
+		text = i18n.T(i18n.NoPreferredLanguageSetText)
 	}
 	_, err := b.SendMessage(ctx.EffectiveChat.Id, text, &gotgbot.SendMessageOpts{
 		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
@@ -24,11 +24,11 @@ func (r *RootHandler) manageLanguage(b *gotgbot.Bot, ctx *ext.Context) error {
 						CallbackData: fmt.Sprintf("l|%s", i18n.EnUS),
 					},
 					{
-						Text:         "Farsi",
+						Text:         "فارسی",
 						CallbackData: fmt.Sprintf("l|%s", i18n.FaIR),
 					},
 					{
-						Text:         "Cancel",
+						Text:         i18n.T(i18n.CancelButtonText),
 						CallbackData: "lc",
 					},
 				},
@@ -36,7 +36,7 @@ func (r *RootHandler) manageLanguage(b *gotgbot.Bot, ctx *ext.Context) error {
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("failed to send lkanguage info: %w", err)
+		return fmt.Errorf("failed to send language info: %w", err)
 	}
 
 	return nil
@@ -54,7 +54,7 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 	if action == "CANCEL" {
 		// Send callback answer to telegram
 		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text: "Never mind!",
+			Text: i18n.T(i18n.NeverMindButtonText),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)
@@ -66,9 +66,11 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 
 		var isLanguageValid = false
+		var language i18n.Language
 		for _, lang := range []i18n.Language{i18n.EnUS, i18n.FaIR} {
 			if split[1] == string(lang) {
 				isLanguageValid = true
+				language = lang
 				break
 			}
 		}
@@ -81,21 +83,23 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			"State":          Idle,
 			"ContactUUID":    nil,
 			"ReplyMessageID": nil,
-			"Language":       split[1],
+			"Language":       language,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update user language: %w", err)
 		}
+		i18n.SetLocale(language)
 
 		// Send update status
-		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Language updated successfully to %s", split[1]), nil)
+		_, err = ctx.EffectiveMessage.Reply(b, i18n.T(i18n.LanguageUpdatedSuccessfullyText), nil)
 		if err != nil {
 			return fmt.Errorf("failed to send language update message: %w", err)
 		}
 
 		// Send callback answer to telegram
 		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text: "Language updated!",
+			Text:      i18n.T(i18n.LanguageUpdatedSuccessfullyText),
+			ShowAlert: false,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)

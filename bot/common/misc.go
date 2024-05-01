@@ -29,7 +29,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return err
 		}
 
-		_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.StartMessage), &gotgbot.SendMessageOpts{})
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.StartMessageText), &gotgbot.SendMessageOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to send bot info: %w", err)
 		}
@@ -114,7 +114,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			identity = receiverUser.UUID
 		}
 
-		_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf(i18n.T(i18n.InitialSendMessagePrompt), identity), &gotgbot.SendMessageOpts{})
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf(i18n.T(i18n.InitialSendMessagePromptText), identity), &gotgbot.SendMessageOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to send bot info: %w", err)
 		}
