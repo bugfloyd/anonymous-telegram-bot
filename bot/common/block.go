@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"slices"
 	"strings"
 )
@@ -24,7 +25,7 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: "User blocked!",
+		Text: i18n.T(i18n.UserBlockedText),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to answer callback: %w", err)
@@ -35,7 +36,7 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
-						Text:         "Unblock",
+						Text:         i18n.T(i18n.UnblockButtonText),
 						CallbackData: fmt.Sprintf("ub|%s|%s", receiverUUID, replyMessageID),
 					},
 				},
@@ -66,7 +67,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: "User unblocked!",
+		Text: i18n.T(i18n.UserUnblockedText),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to answer callback: %w", err)
@@ -75,12 +76,12 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	var replyMessageKey gotgbot.InlineKeyboardButton
 	if replyMessageID == "0" {
 		replyMessageKey = gotgbot.InlineKeyboardButton{
-			Text:         "Send Message",
+			Text:         i18n.T(i18n.SendMessageButtonText),
 			CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
 		}
 	} else {
 		replyMessageKey = gotgbot.InlineKeyboardButton{
-			Text:         "Reply",
+			Text:         i18n.T(i18n.ReplyButtonText),
 			CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
 		}
 	}
@@ -91,7 +92,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				{
 					replyMessageKey,
 					{
-						Text:         "Block",
+						Text:         i18n.T(i18n.BlockButtonText),
 						CallbackData: fmt.Sprintf("b|%s|%s", receiverUUID, replyMessageID),
 					},
 				},
@@ -112,7 +113,7 @@ func (r *RootHandler) unBlockAll(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to unblock all users: %w", err)
 	}
 
-	_, err = ctx.EffectiveMessage.Reply(b, "All users unblocked!", nil)
+	_, err = ctx.EffectiveMessage.Reply(b, i18n.T(i18n.UnblockAllUsersResultText), nil)
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
