@@ -21,6 +21,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Run tests
+        run: |
+          cd bot
+          go test ./... -v
+
       - name: Build
         run: |
           cd bot
