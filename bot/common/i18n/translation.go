@@ -14,7 +14,7 @@ const (
 	SendMessageButtonText        TextID = "SendMessageButtonText"
 	ReplyButtonText              TextID = "ReplyButtonText"
 	BlockButtonText              TextID = "BlockButtonText"
-	UnblockAllUsersResultText    TextID = "BlockAllUsersResultText"
+	UnblockAllUsersResultText    TextID = "UnblockAllUsersResultText"
 	UserBlockedText              TextID = "UserBlockedText"
 	UserUnblockedText            TextID = "UserUnblockedText"
 )
