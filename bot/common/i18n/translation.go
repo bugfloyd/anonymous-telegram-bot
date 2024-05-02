@@ -36,6 +36,19 @@ const (
 	OrText                          TextID = "OrText"
 	InvalidCommandText              TextID = "InvalidCommandText"
 	ErrorText                       TextID = "ErrorText"
+	YourCurrentUsernameText         TextID = "YourCurrentUsernameText"
+	ChangeUsernameButtonText        TextID = "ChangeUsernameButtonText"
+	RemoveUsernameButtonText        TextID = "RemoveUsernameButtonText"
+	YouDontHaveAUsernameText        TextID = "YouDontHaveAUsernameText"
+	SetUsernameButtonText           TextID = "SetUsernameButtonText"
+	UsernameExplanationText         TextID = "UsernameExplanationText"
+	EnterANewUsernameText           TextID = "EnterANewUsernameText"
+	SettingUsernameText             TextID = "SettingUsernameText"
+	UsernameHasBeenRemovedText      TextID = "UsernameHasBeenRemovedText"
+	InvalidUsernameText             TextID = "InvalidUsernameText"
+	UsernameHasBeenSetText          TextID = "UsernameHasBeenSetText"
+	UsernameExistsText              TextID = "UsernameExistsText"
+	SameUsernameText                TextID = "SameUsernameText"
 )
 
 type Language string
