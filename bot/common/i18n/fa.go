@@ -15,4 +15,12 @@ var faLocale = LocaleTexts{
 	NoPreferredLanguageSetText:      "شما زبان ترجیح داده شده‌ای ندارید",
 	NeverMindButtonText:             "بیخیال!",
 	LanguageUpdatedSuccessfullyText: "زبان با موفقیت به فارسی تغییر پیدا کرد.",
+	YouHaveBlockedThisUserText:      "شما این کاربر را بلاک کرده‌اید",
+	ThisUserHasBlockedYouText:       "این کاربر شما را بلاک کرده است",
+	YouHaveANewMessageText:          "شما یک پیغام جدید دارید.",
+	NewReplyToYourMessageText:       "پاسخ جدید به پیغام شما",
+	OpenMessageButtonText:           "پیغام را باز کن",
+	MessageOpenedText:               "پیغام باز شد!",
+	ReplyingToMessageText:           "در حال پاسخ دادن به پیغام...",
+	ReplyToThisMessageText:          "به این پیغام پاسخ بده:",
 }

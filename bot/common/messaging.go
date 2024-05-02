@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"strconv"
 	"strings"
 )
@@ -19,9 +20,9 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	if blockedBy != None {
 		var reason string
 		if blockedBy == Sender {
-			reason = "You have blocked this user."
+			reason = i18n.T(i18n.YouHaveBlockedThisUserText)
 		} else if blockedBy == Receiver {
-			reason = "This user has blocked you."
+			reason = i18n.T(i18n.ThisUserHasBlockedYouText)
 		}
 		_, err = ctx.EffectiveMessage.Reply(b, reason, nil)
 		if err != nil {
@@ -38,14 +39,14 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	var replyParameters *gotgbot.ReplyParameters
-	msgText := "You have a new message."
+	msgText := i18n.T(i18n.YouHaveANewMessageText)
 	if r.user.ReplyMessageID != 0 {
 		replyParameters = &gotgbot.ReplyParameters{
 			MessageId:                r.user.ReplyMessageID,
 			AllowSendingWithoutReply: true,
 		}
 
-		msgText = "New reply to your message."
+		msgText = i18n.T(i18n.NewReplyToYourMessageText)
 	}
 
 	// React with sent emoji to senderMessageID
@@ -67,7 +68,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
-						Text:         "Open Message",
+						Text:         i18n.T(i18n.OpenMessageButtonText),
 						CallbackData: fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
 					},
 				},
@@ -102,7 +103,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	// Send callback answer to telegram
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: "Message opened!",
+		Text: i18n.T(i18n.MessageOpenedText),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to answer callback: %w", err)
@@ -123,11 +124,11 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
-						Text:         "Reply",
+						Text:         i18n.T(i18n.ReplyButtonText),
 						CallbackData: fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID),
 					},
 					{
-						Text:         "Block",
+						Text:         i18n.T(i18n.BlockButtonText),
 						CallbackData: fmt.Sprintf("b|%s|%d", sender.UUID, senderMessageID),
 					},
 				},
@@ -187,13 +188,13 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	if blockedBy != None {
 		var reason string
 		if blockedBy == Sender {
-			reason = "You have blocked this user."
+			reason = i18n.T(i18n.YouHaveBlockedThisUserText)
 			_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
 				ReplyMarkup: gotgbot.InlineKeyboardMarkup{
 					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 						{
 							{
-								Text:         "Unblock",
+								Text:         i18n.T(i18n.UnblockButtonText),
 								CallbackData: fmt.Sprintf("ub|%s|%d", receiverUUID, messageID),
 							},
 						},
@@ -206,7 +207,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			}
 
 		} else if blockedBy == Receiver {
-			reason = "This user has blocked you."
+			reason = i18n.T(i18n.ThisUserHasBlockedYouText)
 		}
 
 		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
@@ -232,14 +233,14 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	// Send callback answer to telegram
 	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: "Replying to message...",
+		Text: i18n.T(i18n.ReplyingToMessageText),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
 	// Send reply instruction
-	_, err = ctx.EffectiveMessage.Reply(b, "Reply to this message:", nil)
+	_, err = ctx.EffectiveMessage.Reply(b, i18n.T(i18n.ReplyToThisMessageText), nil)
 	if err != nil {
 		return fmt.Errorf("failed to send reply message: %w", err)
 	}
