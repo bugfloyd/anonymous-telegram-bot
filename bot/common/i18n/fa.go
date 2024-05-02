@@ -23,4 +23,10 @@ var faLocale = LocaleTexts{
 	MessageOpenedText:               "پیغام باز شد!",
 	ReplyingToMessageText:           "در حال پاسخ دادن به پیغام...",
 	ReplyToThisMessageText:          "به این پیغام پاسخ بده:",
+	UserNotFoundText:                "کاربر پیدا نشد! لینک اشتباهی؟",
+	MessageToYourselfTextText:       "واقعا می‌خواهی با خودت حرف بزنی؟ چه غمگین! لینک خودت رو با دوستات به اشتراک بذار و یا روی شبکه‌های اجتماعی پست کن تا پیغام‌های ناشناس بگیری!",
+	LinkText:                        "افراد دیگر با استفاده از این لینک می‌توانند به شما پیغام ناشناس بفرستند:",
+	OrText:                          "یا:",
+	InvalidCommandText:              "دستور نامعتبر!",
+	ErrorText:                       "خطا: %s",
 }

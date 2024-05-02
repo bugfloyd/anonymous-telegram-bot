@@ -49,7 +49,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		if err != nil || receiverUser == nil {
-			_, err = b.SendMessage(ctx.EffectiveChat.Id, "User not found! Wrong link?", &gotgbot.SendMessageOpts{})
+			_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.UserNotFoundText), &gotgbot.SendMessageOpts{})
 			if err != nil {
 				return fmt.Errorf("failed to send bot info: %w", err)
 			}
@@ -57,7 +57,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		if receiverUser.UUID == r.user.UUID {
-			_, err = b.SendMessage(ctx.EffectiveChat.Id, "Do you really want to talk to yourself? So sad! Share your link with friends or post it on social media to get anonymous messages!", &gotgbot.SendMessageOpts{})
+			_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.MessageToYourselfTextText), &gotgbot.SendMessageOpts{})
 			if err != nil {
 				return fmt.Errorf("failed to send bot info: %w", err)
 			}
@@ -70,12 +70,12 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			var reason string
 			var keyboard gotgbot.InlineKeyboardMarkup
 			if blockedBy == Sender {
-				reason = "You have blocked this user."
+				reason = i18n.T(i18n.YouHaveBlockedThisUserText)
 				keyboard = gotgbot.InlineKeyboardMarkup{
 					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 						{
 							{
-								Text:         "Unblock",
+								Text:         i18n.T(i18n.UnblockButtonText),
 								CallbackData: fmt.Sprintf("ub|%s|%d", receiverUser.UUID, 0),
 							},
 						},
@@ -83,7 +83,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 				}
 
 			} else if blockedBy == Receiver {
-				reason = "This user has blocked you."
+				reason = i18n.T(i18n.ThisUserHasBlockedYouText)
 			}
 
 			_, err = ctx.EffectiveMessage.Reply(b, reason, &gotgbot.SendMessageOpts{
@@ -140,7 +140,7 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	if r.user.Username != "" {
 		usernameLink := fmt.Sprintf("https://t.me/%s?start=_%s", b.User.Username, r.user.Username)
 		uuidLink := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
-		link = fmt.Sprintf("%s\n\nor:\n\n%s", usernameLink, uuidLink)
+		link = fmt.Sprintf("%s\n%s\n\n%s\n\n%s", i18n.T(i18n.LinkText), usernameLink, i18n.T(i18n.OrText), uuidLink)
 	} else {
 		link = fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
 	}
@@ -162,12 +162,12 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	case SettingUsername:
 		return r.setUsername(b, ctx)
 	default:
-		return r.sendError(b, ctx, "Unknown Command!")
+		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
 	}
 }
 
 func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string) error {
-	errorMessage := fmt.Sprintf("Error: %s", message)
+	errorMessage := fmt.Sprintf(i18n.T(i18n.ErrorText), message)
 	_, err := ctx.EffectiveMessage.Reply(b, errorMessage, nil)
 	if err != nil {
 		return fmt.Errorf("failed to send error message: %w", err)
