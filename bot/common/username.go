@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"regexp"
 	"strings"
 )
@@ -13,33 +14,33 @@ func (r *RootHandler) manageUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 	var buttons [][]gotgbot.InlineKeyboardButton
 
 	if r.user.Username != "" {
-		text = fmt.Sprintf("Your current username is: %s", r.user.Username)
+		text = fmt.Sprintf(i18n.T(i18n.YourCurrentUsernameText), r.user.Username)
 		buttons = [][]gotgbot.InlineKeyboardButton{
 			{
 				{
-					Text:         "Change",
+					Text:         i18n.T(i18n.ChangeUsernameButtonText),
 					CallbackData: "u",
 				},
 				{
-					Text:         "Remove",
+					Text:         i18n.T(i18n.RemoveUsernameButtonText),
 					CallbackData: "ru",
 				},
 				{
-					Text:         "Cancel",
+					Text:         i18n.T(i18n.CancelButtonText),
 					CallbackData: "cu",
 				},
 			},
 		}
 	} else {
-		text = "You don't have a username!"
+		text = i18n.T(i18n.YouDontHaveAUsernameText)
 		buttons = [][]gotgbot.InlineKeyboardButton{
 			{
 				{
-					Text:         "Set one",
+					Text:         i18n.T(i18n.SetUsernameButtonText),
 					CallbackData: "u",
 				},
 				{
-					Text:         "Cancel",
+					Text:         i18n.T(i18n.CancelButtonText),
 					CallbackData: "cu",
 				},
 			},
@@ -70,7 +71,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 	if action == "CANCEL" {
 		// Send callback answer to telegram
 		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text: "Never mind!",
+			Text: i18n.T(i18n.NeverMindButtonText),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)
@@ -86,14 +87,14 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 
 		// Send reply instruction
-		_, err = ctx.EffectiveMessage.Reply(b, "Create a username that starts with a letter, includes 3-20 characters, and may contain letters, numbers, or underscores (_). Usernames are automatically converted to lowercase. \n\nEnter new username:", nil)
+		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("%s\n\n%s", i18n.T(i18n.UsernameExplanationText), i18n.T(i18n.EnterANewUsernameText)), nil)
 		if err != nil {
 			return fmt.Errorf("failed to send reply message: %w", err)
 		}
 
 		// Send callback answer to telegram
 		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text: "Setting username...",
+			Text: i18n.T(i18n.SettingUsernameText),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)
@@ -109,14 +110,14 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to remove username: %w", err)
 		}
 
-		_, _, err = cb.Message.EditText(b, "Username has been removed!", &gotgbot.EditMessageTextOpts{})
+		_, _, err = cb.Message.EditText(b, i18n.T(i18n.UsernameHasBeenRemovedText), &gotgbot.EditMessageTextOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to update username message text: %w", err)
 		}
 
 		// Send callback answer to telegram
 		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text: "Username removed!",
+			Text: i18n.T(i18n.UsernameHasBeenRemovedText),
 		})
 		if err != nil {
 			return fmt.Errorf("failed to answer callback: %w", err)
@@ -131,7 +132,7 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	if isValidUsername(username) == false {
 		// Send username instruction
-		_, err := ctx.EffectiveMessage.Reply(b, "The entered username is not valid. Enter another one:", nil)
+		_, err := ctx.EffectiveMessage.Reply(b, i18n.T(i18n.InvalidUsernameText), nil)
 		if err != nil {
 			return fmt.Errorf("failed to send reply message: %w", err)
 		}
@@ -154,16 +155,16 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Send username instruction
-		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Username has been set: %s", username), nil)
+		_, err = ctx.EffectiveMessage.Reply(b, fmt.Sprintf(i18n.T(i18n.UsernameHasBeenSetText), username), nil)
 		if err != nil {
 			return fmt.Errorf("failed to send reply message: %w", err)
 		}
 	} else {
 		var text string
 		if existingUser.UUID != r.user.UUID {
-			text = "The entered username exists. Enter another one:"
+			text = i18n.T(i18n.UsernameExistsText)
 		} else {
-			text = "You already own this username silly! If you want to change it, run the username command once more!"
+			text = i18n.T(i18n.SameUsernameText)
 
 			// Reset sender user
 			err = r.userRepo.resetUserState(r.user.UUID)
