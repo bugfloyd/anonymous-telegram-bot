@@ -22,6 +22,14 @@ const (
 	NoPreferredLanguageSetText      TextID = "NoPreferredLanguageSetText"
 	NeverMindButtonText             TextID = "NeverMindButtonText"
 	LanguageUpdatedSuccessfullyText TextID = "LanguageUpdatedSuccessfullyText"
+	YouHaveBlockedThisUserText      TextID = "YouHaveBlockedThisUserText"
+	ThisUserHasBlockedYouText       TextID = "ThisUserHasBlockedYouText"
+	YouHaveANewMessageText          TextID = "YouHaveANewMessageText"
+	NewReplyToYourMessageText       TextID = "NewReplyToYourMessageText"
+	OpenMessageButtonText           TextID = "OpenMessageButtonText"
+	MessageOpenedText               TextID = "MessageOpenedText"
+	ReplyingToMessageText           TextID = "ReplyingToMessageText"
+	ReplyToThisMessageText          TextID = "ReplyToThisMessageText"
 )
 
 type Language string
