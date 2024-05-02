@@ -30,6 +30,12 @@ const (
 	MessageOpenedText               TextID = "MessageOpenedText"
 	ReplyingToMessageText           TextID = "ReplyingToMessageText"
 	ReplyToThisMessageText          TextID = "ReplyToThisMessageText"
+	UserNotFoundText                TextID = "UserNotFoundText"
+	MessageToYourselfTextText       TextID = "MessageToYourselfTextText"
+	LinkText                        TextID = "LinkText"
+	OrText                          TextID = "OrText"
+	InvalidCommandText              TextID = "InvalidCommandText"
+	ErrorText                       TextID = "ErrorText"
 )
 
 type Language string

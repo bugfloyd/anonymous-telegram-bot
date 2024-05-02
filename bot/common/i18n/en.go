@@ -23,4 +23,10 @@ var enLocale = LocaleTexts{
 	MessageOpenedText:               "Message opened!",
 	ReplyingToMessageText:           "Replying to message...",
 	ReplyToThisMessageText:          "Reply to this message:",
+	UserNotFoundText:                "User not found! Wrong link?",
+	MessageToYourselfTextText:       "Do you really want to talk to yourself? So sad! Share your link with friends or post it on social media to get anonymous messages!",
+	LinkText:                        "Other people can use this link to send you anonymous messages:",
+	OrText:                          "or:",
+	InvalidCommandText:              "Invalid command!",
+	ErrorText:                       "Error: %s",
 }
