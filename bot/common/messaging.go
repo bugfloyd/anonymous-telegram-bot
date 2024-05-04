@@ -16,7 +16,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Check if they block each other
-	blockedBy := blockCheck(&r.user, receiver)
+	blockedBy := blockCheck(r.user, receiver)
 	if blockedBy != None {
 		var reason string
 		if blockedBy == Sender {
@@ -30,7 +30,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		}
 
 		// Reset sender user
-		err = r.userRepo.resetUserState(r.user.UUID)
+		err = r.userRepo.resetUserState(r.user)
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Reset sender user
-	err = r.userRepo.resetUserState(r.user.UUID)
+	err = r.userRepo.resetUserState(r.user)
 	if err != nil {
 		return err
 	}
@@ -184,7 +184,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Check if they block each other
-	blockedBy := blockCheck(&r.user, receiver)
+	blockedBy := blockCheck(r.user, receiver)
 	if blockedBy != None {
 		var reason string
 		if blockedBy == Sender {
@@ -222,7 +222,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Store the message id in the user and set status to replying
-	err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+	err = r.userRepo.updateUser(r.user, map[string]interface{}{
 		"State":          Sending,
 		"ContactUUID":    receiverUUID,
 		"ReplyMessageID": messageID,

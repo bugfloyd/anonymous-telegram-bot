@@ -77,10 +77,10 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
 	} else if action == "SET" {
-		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+		err := r.userRepo.updateUser(r.user, map[string]interface{}{
 			"State":          SettingUsername,
-			"ContactUUID":    nil,
-			"ReplyMessageID": nil,
+			"ContactUUID":    "",
+			"ReplyMessageID": 0,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update user state: %w", err)
@@ -100,11 +100,11 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
 	} else if action == "REMOVE" {
-		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+		err := r.userRepo.updateUser(r.user, map[string]interface{}{
 			"State":          Idle,
-			"Username":       nil,
-			"ContactUUID":    nil,
-			"ReplyMessageID": nil,
+			"Username":       "",
+			"ContactUUID":    "",
+			"ReplyMessageID": 0,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to remove username: %w", err)
@@ -144,11 +144,11 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	existingUser, err := r.userRepo.readUserByUsername(username)
 	if err != nil || existingUser == nil {
-		err := r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+		err := r.userRepo.updateUser(r.user, map[string]interface{}{
 			"Username":       username,
 			"State":          Idle,
-			"ContactUUID":    nil,
-			"ReplyMessageID": nil,
+			"ContactUUID":    "",
+			"ReplyMessageID": 0,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to update username: %w", err)
@@ -167,7 +167,7 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 			text = i18n.T(i18n.SameUsernameText)
 
 			// Reset sender user
-			err = r.userRepo.resetUserState(r.user.UUID)
+			err = r.userRepo.resetUserState(r.user)
 			if err != nil {
 				return err
 			}

@@ -43,7 +43,7 @@ const (
 )
 
 type RootHandler struct {
-	user     User
+	user     *User
 	userRepo UserRepository
 }
 
@@ -68,7 +68,7 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 	if err != nil || user == nil {
 		return fmt.Errorf("failed to process user: %w", err)
 	}
-	r.user = *user
+	r.user = user
 	r.userRepo = *userRepo
 
 	// Load locale
@@ -109,7 +109,7 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 	case CallbackCommand:
 		// Reset user state if necessary
 		if r.user.State != Idle || r.user.ContactUUID != "" || r.user.ReplyMessageID != 0 {
-			err := r.userRepo.resetUserState(r.user.UUID)
+			err := r.userRepo.resetUserState(r.user)
 			if err != nil {
 				return err
 			}
