@@ -2,7 +2,9 @@ package common
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -37,9 +39,11 @@ func NewUserRepository() (*UserRepository, error) {
 
 func (repo *UserRepository) createUser(userId int64) (*User, error) {
 	u := User{
-		UUID:   uuid.New().String(),
-		UserID: userId,
-		State:  Idle,
+		UUID:      uuid.New().String(),
+		UserID:    userId,
+		State:     Idle,
+		LinkKey:   int32(rand.Intn(900000) + 100000),
+		CreatedAt: time.Now(),
 	}
 	err := repo.table.Put(u).Run()
 	if err != nil {
@@ -69,6 +73,15 @@ func (repo *UserRepository) readUserByUserId(userId int64) (*User, error) {
 func (repo *UserRepository) readUserByUsername(username string) (*User, error) {
 	var u User
 	err := repo.table.Get("Username", username).Index("Username-GSI").One(&u)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	return &u, nil
+}
+
+func (repo *UserRepository) readUserByLinkKey(linkKey int32, createdAt int64) (*User, error) {
+	var u User
+	err := repo.table.Get("LinkKey", linkKey).Index("LinkKey-GSI").Range("CreatedAt", dynamo.Equal, createdAt).One(&u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}

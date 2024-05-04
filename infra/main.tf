@@ -14,7 +14,8 @@ resource "aws_lambda_function" "anonymous_bot" {
 
   environment {
     variables = {
-      BOT_TOKEN = var.bot_token
+      BOT_TOKEN      = var.bot_token
+      SQIDS_ALPHABET = var.sqids_alphabet
     }
   }
 }
@@ -112,6 +113,16 @@ resource "aws_dynamodb_table" "main" {
     type = "S"
   }
 
+  attribute {
+    name = "LinkKey"
+    type = "N"
+  }
+
+  attribute {
+    name = "CreatedAt"
+    type = "N"
+  }
+
   global_secondary_index {
     name            = "UserID-GSI"
     hash_key        = "UserID"
@@ -121,6 +132,13 @@ resource "aws_dynamodb_table" "main" {
   global_secondary_index {
     name            = "Username-GSI"
     hash_key        = "Username"
+    projection_type = "ALL"
+  }
+
+  global_secondary_index {
+    name            = "LinkKey-GSI"
+    hash_key        = "LinkKey"
+    range_key       = "CreatedAt"
     projection_type = "ALL"
   }
 
@@ -157,7 +175,8 @@ resource "aws_iam_policy" "lambda_dynamodb_policy" {
         Effect = "Allow",
         Resource = [
           "${aws_dynamodb_table.main.arn}/index/UserID-GSI",
-          "${aws_dynamodb_table.main.arn}/index/Username-GSI"
+          "${aws_dynamodb_table.main.arn}/index/Username-GSI",
+          "${aws_dynamodb_table.main.arn}/index/LinkKey-GSI"
         ]
       }
     ]

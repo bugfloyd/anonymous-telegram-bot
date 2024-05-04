@@ -13,6 +13,11 @@ variable "bot_token" {
   type        = string
 }
 
+variable "sqids_alphabet" {
+  description = "sqids alphabet"
+  type        = string
+}
+
 variable "zip_bundle_path" {
   description = "Local Lambda zip bundle path"
   type        = string
