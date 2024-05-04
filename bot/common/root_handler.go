@@ -70,21 +70,7 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 	}
 	r.user = user
 	r.userRepo = *userRepo
-
-	// Load locale
-	var language i18n.Language
-	if user.Language != "" {
-		language = user.Language
-	} else {
-		if ctx.EffectiveUser.LanguageCode == "fa" {
-			language = i18n.FaIR
-		} else if ctx.EffectiveUser.LanguageCode == "en" {
-			language = i18n.EnUS
-		} else {
-			language = i18n.EnUS
-		}
-	}
-	i18n.SetLocale(language)
+	i18n.SetLocale(user.Language, ctx.EffectiveUser.LanguageCode)
 
 	switch c := command.(type) {
 	case Command:
