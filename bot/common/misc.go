@@ -5,6 +5,8 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/sqids/sqids-go"
+	"os"
 	"strings"
 )
 
@@ -36,7 +38,6 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	if len(args) == 2 && args[0] == "/start" {
-
 		var err error
 		var receiverUser *User
 		var identity string
@@ -44,14 +45,26 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		if strings.HasPrefix(args[1], "_") {
 			username := args[1][1:]
 			receiverUser, err = r.userRepo.readUserByUsername(username)
+			if err != nil {
+				return fmt.Errorf("failed to retrieve the link owner: %w", err)
+			}
+			identity = receiverUser.Username
 		} else {
-			receiverUser, err = r.userRepo.readUserByUUID(args[1])
+			linkKey, createdAt, err := readUserLinkKey(args[1])
+			if err != nil {
+				return fmt.Errorf("failed to read the link key: %w", err)
+			}
+			receiverUser, err = r.userRepo.readUserByLinkKey(linkKey, createdAt)
+			if err != nil {
+				return fmt.Errorf("failed to retrieve the link owner: %w", err)
+			}
+			identity = args[1]
 		}
 
-		if err != nil || receiverUser == nil {
+		if receiverUser == nil {
 			_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.UserNotFoundText), &gotgbot.SendMessageOpts{})
 			if err != nil {
-				return fmt.Errorf("failed to send bot info: %w", err)
+				return fmt.Errorf("failed to send wrong link response: %w", err)
 			}
 			return nil
 		}
@@ -106,14 +119,6 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return fmt.Errorf("failed to update user state: %w", err)
 		}
 
-		if receiverUser.Name != "" {
-			identity = receiverUser.Name
-		} else if receiverUser.Username != "" {
-			identity = receiverUser.Username
-		} else {
-			identity = receiverUser.UUID
-		}
-
 		_, err = b.SendMessage(ctx.EffectiveChat.Id, fmt.Sprintf(i18n.T(i18n.InitialSendMessagePromptText), identity), &gotgbot.SendMessageOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to send bot info: %w", err)
@@ -136,15 +141,24 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
+	alphabet := os.Getenv("SQIDS_ALPHABET")
+	s, _ := sqids.New(sqids.Options{
+		Alphabet: alphabet,
+	})
+	genericLinkKey, err := s.Encode([]uint64{uint64(r.user.LinkKey), uint64(r.user.CreatedAt.Unix())})
+	if err != nil {
+		return err
+	}
+
 	var link string
 	if r.user.Username != "" {
 		usernameLink := fmt.Sprintf("https://t.me/%s?start=_%s", b.User.Username, r.user.Username)
-		uuidLink := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
-		link = fmt.Sprintf("%s\n%s\n\n%s\n\n%s", i18n.T(i18n.LinkText), usernameLink, i18n.T(i18n.OrText), uuidLink)
+		genericLink := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, genericLinkKey)
+		link = fmt.Sprintf("%s\n%s\n\n%s\n\n%s", i18n.T(i18n.LinkText), usernameLink, i18n.T(i18n.OrText), genericLink)
 	} else {
-		link = fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, r.user.UUID)
+		link = fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, genericLinkKey)
 	}
-	_, err := ctx.EffectiveMessage.Reply(b, link, nil)
+	_, err = ctx.EffectiveMessage.Reply(b, link, nil)
 	if err != nil {
 		return err
 	}
@@ -173,4 +187,21 @@ func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string
 		return fmt.Errorf("failed to send error message: %w", err)
 	}
 	return nil
+}
+
+func readUserLinkKey(link string) (int32, int64, error) {
+	alphabet := os.Getenv("SQIDS_ALPHABET")
+	s, err := sqids.New(sqids.Options{
+		Alphabet: alphabet,
+	})
+
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to read user link key: %w", err)
+	}
+
+	numbers := s.Decode(link)
+	if len(numbers) != 2 {
+		return 0, 0, fmt.Errorf("failed to read user link key")
+	}
+	return int32(numbers[0]), int64(numbers[1]), nil
 }

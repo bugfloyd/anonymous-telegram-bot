@@ -27,6 +27,12 @@ func InitBot(request APIRequest) (APIResponse, error) {
 		return APIResponse{StatusCode: 500}, errors.New("TOKEN environment variable is empty")
 	}
 
+	// Get sqids alphabet from the environment variable.
+	alphabet := os.Getenv("SQIDS_ALPHABET")
+	if alphabet == "" {
+		return APIResponse{StatusCode: 500}, errors.New("SQIDS_ALPHABET environment variable is empty")
+	}
+
 	// Create bot from environment value.
 	b, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{

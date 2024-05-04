@@ -57,7 +57,7 @@ Initialize the main Terraform stack:
 ```shell
 cd infra
 
-AWS_PROFILE=<AWS_PROFILE> init -backend-config backend_config.hcl # Run once
+AWS_PROFILE=<AWS_PROFILE> terraform init -backend-config backend_config.hcl # Run once
 ```
 
 #### Deploy

@@ -62,7 +62,7 @@ jobs:
       - name: Terraform apply
         run: |
           cd infra
-          terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }}
+          terraform apply -auto-approve -var aws_region=${{ vars.AWS_REGION }} -var lambda_bucket=${{ vars.S3_LAMBDA_BUCKET }} -var bot_token=${{ secrets.BOT_TOKEN }} -var sqids_alphabet=${{ secrets.SQIDS_ALPHABET }}
 
       - name: Set webhook URL
         shell: bash
