@@ -26,7 +26,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	args := ctx.Args()
 	if len(args) == 1 && args[0] == "/start" {
 		// Reset user state
-		err := r.userRepo.resetUserState(r.user.UUID)
+		err := r.userRepo.resetUserState(r.user)
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Check if they block each other
-		blockedBy := blockCheck(&r.user, receiverUser)
+		blockedBy := blockCheck(r.user, receiverUser)
 		if blockedBy != None {
 			var reason string
 			var keyboard gotgbot.InlineKeyboardMarkup
@@ -111,7 +111,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Set user state to sending
-		err = r.userRepo.updateUser(r.user.UUID, map[string]interface{}{
+		err = r.userRepo.updateUser(r.user, map[string]interface{}{
 			"State":       Sending,
 			"ContactUUID": receiverUser.UUID,
 		})
@@ -133,7 +133,7 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
-	err = r.userRepo.resetUserState(r.user.UUID)
+	err = r.userRepo.resetUserState(r.user)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return err
 	}
-	err = r.userRepo.resetUserState(r.user.UUID)
+	err = r.userRepo.resetUserState(r.user)
 	if err != nil {
 		return err
 	}
