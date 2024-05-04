@@ -18,7 +18,10 @@ func TestCompleteTranslations(t *testing.T) {
 	languages := []Language{EnUS, FaIR}
 
 	for _, lang := range languages {
-		LoadLocale(lang) // Ensure the locale is loaded for testing
+		// Ensure the locale is loaded for testing
+		if _, ok := locales[lang]; !ok {
+			locales[lang] = loadLanguage(lang)
+		}
 
 		texts, ok := locales[lang]
 		if !ok {

@@ -88,7 +88,7 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		if err != nil {
 			return fmt.Errorf("failed to update user language: %w", err)
 		}
-		i18n.SetLocale(language)
+		i18n.SetLocale(r.user.Language, ctx.EffectiveUser.LanguageCode)
 
 		// Send update status
 		_, err = ctx.EffectiveMessage.Reply(b, i18n.T(i18n.LanguageUpdatedSuccessfullyText), nil)

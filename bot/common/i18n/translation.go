@@ -1,9 +1,5 @@
 package i18n
 
-import (
-	"sync"
-)
-
 // TextID represents the keys for internationalized texts
 type TextID string
 
@@ -64,35 +60,27 @@ type LocaleTexts map[TextID]string
 // Locales holds the loaded languages and their texts
 var (
 	locales       = make(map[Language]LocaleTexts)
-	loadLock      sync.Mutex
 	currentLocale Language
 )
 
 // SetLocale sets the current language for the application.
-func SetLocale(lang Language) {
-	loadLock.Lock()
-	defer loadLock.Unlock()
-
-	if _, ok := locales[lang]; !ok {
-		locales[lang] = loadLanguage(lang)
+func SetLocale(userLanguage Language, clientLanguage string) {
+	var language Language
+	if userLanguage != "" {
+		language = userLanguage
+	} else {
+		if clientLanguage == "fa" {
+			language = FaIR
+		} else if clientLanguage == "en" {
+			language = EnUS
+		} else {
+			language = EnUS
+		}
 	}
-	currentLocale = lang
-}
-
-// GetLocale returns the currently set locale.
-func GetLocale() Language {
-	return currentLocale
-}
-
-// LoadLocale loads the locale data for a given language if it hasn't been loaded already.
-func LoadLocale(lang Language) {
-	loadLock.Lock()
-	defer loadLock.Unlock()
-
-	// Check if the locale is already loaded
-	if _, ok := locales[lang]; !ok {
-		locales[lang] = loadLanguage(lang)
+	if _, ok := locales[language]; !ok {
+		locales[language] = loadLanguage(language)
 	}
+	currentLocale = language
 }
 
 // loadLanguage is a helper function that loads translations for a given language.
@@ -108,14 +96,7 @@ func loadLanguage(lang Language) LocaleTexts {
 
 // T retrieves a text based on the given language and text ID.
 func T(textID TextID) string {
-	lang := GetLocale() // Use the globally set locale
-
-	// Ensure the locale is loaded
-	if _, ok := locales[lang]; !ok {
-		LoadLocale(lang)
-	}
-
-	if text, ok := locales[lang][textID]; ok {
+	if text, ok := locales[currentLocale][textID]; ok {
 		return text
 	}
 	return ""
