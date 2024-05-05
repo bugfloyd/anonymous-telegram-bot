@@ -1,5 +1,9 @@
 package i18n
 
+import (
+	"os"
+)
+
 // TextID represents the keys for internationalized texts
 type TextID string
 
@@ -69,12 +73,17 @@ func SetLocale(userLanguage Language, clientLanguage string) {
 	if userLanguage != "" {
 		language = userLanguage
 	} else {
-		if clientLanguage == "fa" {
-			language = FaIR
-		} else if clientLanguage == "en" {
-			language = EnUS
+		defaultLang := os.Getenv("DEFAULT_LANGUAGE")
+		if defaultLang != "" {
+			language = Language(defaultLang)
 		} else {
-			language = EnUS
+			if clientLanguage == "fa" {
+				language = FaIR
+			} else if clientLanguage == "en" {
+				language = EnUS
+			} else {
+				language = EnUS
+			}
 		}
 	}
 	if _, ok := locales[language]; !ok {
@@ -97,6 +106,29 @@ func loadLanguage(lang Language) LocaleTexts {
 // T retrieves a text based on the given language and text ID.
 func T(textID TextID) string {
 	if text, ok := locales[currentLocale][textID]; ok {
+		return text
+	}
+	return ""
+}
+
+// TT retrieves a text based on the text ID and the given language
+func TT(textID TextID, userLanguage Language) string {
+	var language Language
+	if userLanguage != "" {
+		language = userLanguage
+	} else {
+		defaultLang := os.Getenv("DEFAULT_LANGUAGE")
+		if defaultLang != "" {
+			language = Language(defaultLang)
+		} else {
+			language = EnUS
+		}
+	}
+	if _, ok := locales[language]; !ok {
+		locales[language] = loadLanguage(language)
+	}
+
+	if text, ok := locales[language][textID]; ok {
 		return text
 	}
 	return ""

@@ -39,14 +39,14 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	var replyParameters *gotgbot.ReplyParameters
-	msgText := i18n.T(i18n.YouHaveANewMessageText)
+	msgText := i18n.TT(i18n.YouHaveANewMessageText, receiver.Language)
 	if r.user.ReplyMessageID != 0 {
 		replyParameters = &gotgbot.ReplyParameters{
 			MessageId:                r.user.ReplyMessageID,
 			AllowSendingWithoutReply: true,
 		}
 
-		msgText = i18n.T(i18n.NewReplyToYourMessageText)
+		msgText = i18n.TT(i18n.NewReplyToYourMessageText, receiver.Language)
 	}
 
 	// React with sent emoji to senderMessageID
@@ -68,7 +68,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
 				{
 					{
-						Text:         i18n.T(i18n.OpenMessageButtonText),
+						Text:         i18n.TT(i18n.OpenMessageButtonText, receiver.Language),
 						CallbackData: fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
 					},
 				},

@@ -18,6 +18,11 @@ variable "sqids_alphabet" {
   type        = string
 }
 
+variable "default_language" {
+  description = "Default language for bot"
+  type        = string
+}
+
 variable "zip_bundle_path" {
   description = "Local Lambda zip bundle path"
   type        = string
