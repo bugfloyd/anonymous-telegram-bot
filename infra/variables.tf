@@ -21,6 +21,7 @@ variable "sqids_alphabet" {
 variable "default_language" {
   description = "Default language for bot"
   type        = string
+  default     = ""
 }
 
 variable "zip_bundle_path" {
