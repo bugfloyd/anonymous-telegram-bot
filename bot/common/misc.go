@@ -151,12 +151,12 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	var link string
+	genericLink := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, genericLinkKey)
 	if r.user.Username != "" {
 		usernameLink := fmt.Sprintf("https://t.me/%s?start=_%s", b.User.Username, r.user.Username)
-		genericLink := fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, genericLinkKey)
 		link = fmt.Sprintf("%s\n%s\n\n%s\n\n%s", i18n.T(i18n.LinkText), usernameLink, i18n.T(i18n.OrText), genericLink)
 	} else {
-		link = fmt.Sprintf("https://t.me/%s?start=%s", b.User.Username, genericLinkKey)
+		link = fmt.Sprintf("%s\n%s", i18n.T(i18n.LinkText), genericLink)
 	}
 	_, err = ctx.EffectiveMessage.Reply(b, link, nil)
 	if err != nil {
