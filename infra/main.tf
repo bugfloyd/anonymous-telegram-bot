@@ -14,8 +14,9 @@ resource "aws_lambda_function" "anonymous_bot" {
 
   environment {
     variables = {
-      BOT_TOKEN      = var.bot_token
-      SQIDS_ALPHABET = var.sqids_alphabet
+      BOT_TOKEN        = var.bot_token
+      SQIDS_ALPHABET   = var.sqids_alphabet
+      DEFAULT_LANGUAGE = var.default_language
     }
   }
 }
