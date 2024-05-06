@@ -5,12 +5,13 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"strconv"
 	"strings"
 )
 
 func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
-	receiver, err := r.userRepo.readUserByUUID(r.user.ContactUUID)
+	receiver, err := r.userRepo.ReadUserByUUID(r.user.ContactUUID)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
@@ -96,7 +97,7 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
 	uuid := split[1]
-	sender, err := r.userRepo.readUserByUUID(uuid)
+	sender, err := r.userRepo.ReadUserByUUID(uuid)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
@@ -178,7 +179,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Check if receiver exists
-	receiver, err := r.userRepo.readUserByUUID(receiverUUID)
+	receiver, err := r.userRepo.ReadUserByUUID(receiverUUID)
 	if err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
@@ -223,7 +224,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	// Store the message id in the user and set status to replying
 	err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
-		"State":          Sending,
+		"State":          users.Sending,
 		"ContactUUID":    receiverUUID,
 		"ReplyMessageID": messageID,
 	})

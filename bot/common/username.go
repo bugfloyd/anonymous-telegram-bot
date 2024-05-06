@@ -5,6 +5,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"regexp"
 	"strings"
 )
@@ -78,7 +79,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 	} else if action == "SET" {
 		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":          SettingUsername,
+			"State":          users.SettingUsername,
 			"ContactUUID":    "",
 			"ReplyMessageID": 0,
 		})
@@ -101,7 +102,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 	} else if action == "REMOVE" {
 		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":          Idle,
+			"State":          users.Idle,
 			"Username":       "",
 			"ContactUUID":    "",
 			"ReplyMessageID": 0,
@@ -142,11 +143,11 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 	// Convert to lowercase
 	username = strings.ToLower(username)
 
-	existingUser, err := r.userRepo.readUserByUsername(username)
+	existingUser, err := r.userRepo.ReadUserByUsername(username)
 	if err != nil || existingUser == nil {
 		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
 			"Username":       username,
-			"State":          Idle,
+			"State":          users.Idle,
 			"ContactUUID":    "",
 			"ReplyMessageID": 0,
 		})
