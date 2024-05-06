@@ -30,7 +30,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		}
 
 		// Reset sender user
-		err = r.userRepo.resetUserState(r.user)
+		err = r.userRepo.ResetUserState(r.user)
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Reset sender user
-	err = r.userRepo.resetUserState(r.user)
+	err = r.userRepo.ResetUserState(r.user)
 	if err != nil {
 		return err
 	}
@@ -222,7 +222,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Store the message id in the user and set status to replying
-	err = r.userRepo.updateUser(r.user, map[string]interface{}{
+	err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
 		"State":          Sending,
 		"ContactUUID":    receiverUUID,
 		"ReplyMessageID": messageID,

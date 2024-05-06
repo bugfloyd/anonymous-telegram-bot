@@ -77,7 +77,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
 	} else if action == "SET" {
-		err := r.userRepo.updateUser(r.user, map[string]interface{}{
+		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
 			"State":          SettingUsername,
 			"ContactUUID":    "",
 			"ReplyMessageID": 0,
@@ -100,7 +100,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
 	} else if action == "REMOVE" {
-		err := r.userRepo.updateUser(r.user, map[string]interface{}{
+		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
 			"State":          Idle,
 			"Username":       "",
 			"ContactUUID":    "",
@@ -144,7 +144,7 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	existingUser, err := r.userRepo.readUserByUsername(username)
 	if err != nil || existingUser == nil {
-		err := r.userRepo.updateUser(r.user, map[string]interface{}{
+		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
 			"Username":       username,
 			"State":          Idle,
 			"ContactUUID":    "",
@@ -167,7 +167,7 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 			text = i18n.T(i18n.SameUsernameText)
 
 			// Reset sender user
-			err = r.userRepo.resetUserState(r.user)
+			err = r.userRepo.ResetUserState(r.user)
 			if err != nil {
 				return err
 			}

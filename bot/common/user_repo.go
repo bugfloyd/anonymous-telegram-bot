@@ -38,7 +38,7 @@ func NewUserRepository() (*UserRepository, error) {
 	}, nil
 }
 
-func (repo *UserRepository) createUser(userId int64) (*User, error) {
+func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
 	u := User{
 		UUID:      uuid.New().String(),
 		UserID:    userId,
@@ -62,7 +62,7 @@ func (repo *UserRepository) readUserByUUID(uuid string) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) readUserByUserId(userId int64) (*User, error) {
+func (repo *UserRepository) ReadUserByUserId(userId int64) (*User, error) {
 	var u User
 	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(&u)
 	if err != nil {
@@ -89,7 +89,7 @@ func (repo *UserRepository) readUserByLinkKey(linkKey int32, createdAt int64) (*
 	return &u, nil
 }
 
-func (repo *UserRepository) updateUser(user *User, updates map[string]interface{}) error {
+func (repo *UserRepository) UpdateUser(user *User, updates map[string]interface{}) error {
 	updateBuilder := repo.table.Update("UUID", user.UUID)
 	for key, value := range updates {
 		updateBuilder = updateBuilder.Set(key, value)
@@ -116,8 +116,8 @@ func (repo *UserRepository) updateUser(user *User, updates map[string]interface{
 	return nil
 }
 
-func (repo *UserRepository) resetUserState(user *User) error {
-	err := repo.updateUser(user, map[string]interface{}{
+func (repo *UserRepository) ResetUserState(user *User) error {
+	err := repo.UpdateUser(user, map[string]interface{}{
 		"State":          Idle,
 		"ContactUUID":    "",
 		"ReplyMessageID": 0,
