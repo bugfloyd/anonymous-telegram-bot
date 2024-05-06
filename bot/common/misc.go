@@ -5,6 +5,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"github.com/sqids/sqids-go"
 	"os"
@@ -176,6 +177,13 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 		return r.sendAnonymousMessage(b, ctx)
 	case users.SettingUsername:
 		return r.setUsername(b, ctx)
+	case invitations.GeneratingInvitationState:
+		irh := invitations.NewRootHandler()
+		err := irh.RetrieveUser(ctx)
+		if err != nil {
+			return err
+		}
+		return irh.GenerateInvitation(b, ctx)
 	default:
 		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
 	}

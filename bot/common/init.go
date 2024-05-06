@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"log"
 	"net/http"
 	"os"
@@ -53,6 +54,7 @@ func InitBot(request APIRequest) (APIResponse, error) {
 		MaxRoutines: ext.DefaultMaxRoutines,
 	})
 
+	invitations.InitInvitations(dispatcher)
 	rootHandler := NewRootHandler()
 
 	// Commands
