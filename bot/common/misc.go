@@ -5,12 +5,13 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"github.com/sqids/sqids-go"
 	"os"
 	"strings"
 )
 
-func (r *RootHandler) processUser(userRepo *UserRepository, ctx *ext.Context) (*User, error) {
+func (r *RootHandler) processUser(userRepo *users.UserRepository, ctx *ext.Context) (*users.User, error) {
 	user, err := userRepo.ReadUserByUserId(ctx.EffectiveUser.Id)
 	if err != nil {
 		user, err = userRepo.CreateUser(ctx.EffectiveUser.Id)
@@ -39,12 +40,12 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 	if len(args) == 2 && args[0] == "/start" {
 		var err error
-		var receiverUser *User
+		var receiverUser *users.User
 		var identity string
 
 		if strings.HasPrefix(args[1], "_") {
 			username := args[1][1:]
-			receiverUser, err = r.userRepo.readUserByUsername(username)
+			receiverUser, err = r.userRepo.ReadUserByUsername(username)
 			if err != nil {
 				return fmt.Errorf("failed to retrieve the link owner: %w", err)
 			}
@@ -54,7 +55,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			if err != nil {
 				return fmt.Errorf("failed to read the link key: %w", err)
 			}
-			receiverUser, err = r.userRepo.readUserByLinkKey(linkKey, createdAt)
+			receiverUser, err = r.userRepo.ReadUserByLinkKey(linkKey, createdAt)
 			if err != nil {
 				return fmt.Errorf("failed to retrieve the link owner: %w", err)
 			}
@@ -112,7 +113,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 
 		// Set user state to sending
 		err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":       Sending,
+			"State":       users.Sending,
 			"ContactUUID": receiverUser.UUID,
 		})
 		if err != nil {
@@ -171,9 +172,9 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	switch r.user.State {
-	case Sending:
+	case users.Sending:
 		return r.sendAnonymousMessage(b, ctx)
-	case SettingUsername:
+	case users.SettingUsername:
 		return r.setUsername(b, ctx)
 	default:
 		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))

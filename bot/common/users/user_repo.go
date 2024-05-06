@@ -1,4 +1,4 @@
-package common
+package users
 
 import (
 	"fmt"
@@ -53,7 +53,7 @@ func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) readUserByUUID(uuid string) (*User, error) {
+func (repo *UserRepository) ReadUserByUUID(uuid string) (*User, error) {
 	var u User
 	err := repo.table.Get("UUID", uuid).One(&u)
 	if err != nil {
@@ -71,7 +71,7 @@ func (repo *UserRepository) ReadUserByUserId(userId int64) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) readUserByUsername(username string) (*User, error) {
+func (repo *UserRepository) ReadUserByUsername(username string) (*User, error) {
 	var u User
 	err := repo.table.Get("Username", username).Index("Username-GSI").One(&u)
 	if err != nil {
@@ -80,7 +80,7 @@ func (repo *UserRepository) readUserByUsername(username string) (*User, error) {
 	return &u, nil
 }
 
-func (repo *UserRepository) readUserByLinkKey(linkKey int32, createdAt int64) (*User, error) {
+func (repo *UserRepository) ReadUserByLinkKey(linkKey int32, createdAt int64) (*User, error) {
 	var u User
 	err := repo.table.Get("LinkKey", linkKey).Index("LinkKey-GSI").Range("CreatedAt", dynamo.Equal, createdAt).One(&u)
 	if err != nil {
@@ -128,7 +128,7 @@ func (repo *UserRepository) ResetUserState(user *User) error {
 	return nil
 }
 
-func (repo *UserRepository) updateBlacklist(user *User, method string, value string) error {
+func (repo *UserRepository) UpdateBlacklist(user *User, method string, value string) error {
 	updateBuilder := repo.table.Update("UUID", user.UUID)
 
 	switch method {

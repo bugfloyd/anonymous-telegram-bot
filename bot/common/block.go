@@ -5,6 +5,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"slices"
 	"strings"
 )
@@ -18,7 +19,7 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	receiverUUID := split[1]
 	replyMessageID := split[2]
 
-	err := r.userRepo.updateBlacklist(r.user, "add", receiverUUID)
+	err := r.userRepo.UpdateBlacklist(r.user, "add", receiverUUID)
 
 	if err != nil {
 		return fmt.Errorf("failed to block user: %w", err)
@@ -60,7 +61,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	receiverUUID := split[1]
 	replyMessageID := split[2]
 
-	err := r.userRepo.updateBlacklist(r.user, "delete", receiverUUID)
+	err := r.userRepo.UpdateBlacklist(r.user, "delete", receiverUUID)
 
 	if err != nil {
 		return fmt.Errorf("failed to unblock user: %w", err)
@@ -108,7 +109,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) unBlockAll(b *gotgbot.Bot, ctx *ext.Context) error {
-	err := r.userRepo.updateBlacklist(r.user, "clear", "")
+	err := r.userRepo.UpdateBlacklist(r.user, "clear", "")
 	if err != nil {
 		return fmt.Errorf("failed to unblock all users: %w", err)
 	}
@@ -121,7 +122,7 @@ func (r *RootHandler) unBlockAll(b *gotgbot.Bot, ctx *ext.Context) error {
 	return nil
 }
 
-func blockCheck(sender *User, receiver *User) BlockedBy {
+func blockCheck(sender *users.User, receiver *users.User) BlockedBy {
 	if slices.Contains(sender.Blacklist, receiver.UUID) {
 		return Sender
 	} else if slices.Contains(receiver.Blacklist, sender.UUID) {

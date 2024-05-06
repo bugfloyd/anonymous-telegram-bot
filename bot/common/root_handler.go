@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -43,8 +44,8 @@ const (
 )
 
 type RootHandler struct {
-	user     *User
-	userRepo UserRepository
+	user     *users.User
+	userRepo users.UserRepository
 }
 
 func NewRootHandler() *RootHandler {
@@ -59,7 +60,7 @@ func (r *RootHandler) init(commandName interface{}) handlers.Response {
 
 func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command interface{}) error {
 	// create user repo
-	userRepo, err := NewUserRepository()
+	userRepo, err := users.NewUserRepository()
 	if err != nil {
 		return fmt.Errorf("failed to init db repo: %w", err)
 	}
@@ -94,7 +95,7 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 		}
 	case CallbackCommand:
 		// Reset user state if necessary
-		if r.user.State != Idle || r.user.ContactUUID != "" || r.user.ReplyMessageID != 0 {
+		if r.user.State != users.Idle || r.user.ContactUUID != "" || r.user.ReplyMessageID != 0 {
 			err := r.userRepo.ResetUserState(r.user)
 			if err != nil {
 				return err
