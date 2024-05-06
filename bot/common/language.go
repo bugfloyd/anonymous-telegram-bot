@@ -79,7 +79,7 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("invalid language code in callback data: %s", cb.Data)
 		}
 
-		err := r.userRepo.updateUser(r.user, map[string]interface{}{
+		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
 			"State":          Idle,
 			"ContactUUID":    "",
 			"ReplyMessageID": 0,
