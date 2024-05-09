@@ -36,11 +36,15 @@ func (r *RootHandler) HandleUserAndRepos(ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to init db repo: %w", err)
 	}
-	user, err := r.processUser(userRepo, ctx)
 
-	if err != nil || user == nil {
-		return fmt.Errorf("failed to process user: %w", err)
+	user, err := userRepo.ReadUserByUserId(ctx.EffectiveUser.Id)
+	if err != nil {
+		user, err = userRepo.CreateUser(ctx.EffectiveUser.Id)
+		if err != nil || user == nil {
+			return fmt.Errorf("failed to process user: %w", err)
+		}
 	}
+
 	r.user = user
 	r.userRepo = *userRepo
 
@@ -66,8 +70,6 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 			return r.inviteCommandHandler(b, ctx)
 		case RegisterCommand:
 			return r.registerCommandHandler(b, ctx)
-		default:
-			return fmt.Errorf("unknown command: %s", c)
 		}
 	case CallbackCommand:
 		// Reset user state if necessary
@@ -83,24 +85,9 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 			return r.manageInvitation(b, ctx, "GENERATE")
 		case CancelSendingInvitationCodeCallback:
 			return r.invitationCodeCallback(b, ctx, "CANCEL")
-		default:
-			return fmt.Errorf("unknown command: %s", c)
-		}
-	default:
-		return fmt.Errorf("unknown command: %s", command)
-	}
-}
-
-func (r *RootHandler) processUser(userRepo *users.UserRepository, ctx *ext.Context) (*users.User, error) {
-	user, err := userRepo.ReadUserByUserId(ctx.EffectiveUser.Id)
-	if err != nil {
-		user, err = userRepo.CreateUser(ctx.EffectiveUser.Id)
-		if err != nil {
-			return nil, err
 		}
 	}
-
-	return user, nil
+	return nil
 }
 
 func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) error {
