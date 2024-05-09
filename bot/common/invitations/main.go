@@ -8,35 +8,41 @@ import (
 )
 
 type User struct {
-	ItemID          string `dynamo:",hash" index:"UserID-GSI,range"`
-	UserID          string `index:"UserID-GSI,hash"`
+	ItemID          string `dynamo:",hash" index:"UserUUID-GSI,range"`
+	UserUUID        string `index:"UserUUID-GSI,hash"`
 	InvitationsLeft uint32
 	InvitationsUsed uint32
 	Type            string
 }
 
 type Invitation struct {
-	ItemID          string `dynamo:",hash" index:"UserID-GSI,range"`
-	UserID          string `index:"UserID-GSI,hash"`
+	ItemID          string `dynamo:",hash" index:"UserUUID-GSI,range"`
+	UserUUID        string `index:"UserUUID-GSI,hash"`
 	InvitationsLeft uint32
 	InvitationsUsed uint32
 }
 
 const (
-	GeneratingInvitationState users.State = "GENERATING_INVITATION"
+	GeneratingInvitationState  users.State = "GENERATING_INVITATION"
+	SendingInvitationCodeState users.State = "SENDING_INVITATION_CODE"
 )
 
 const (
-	InviteCommand Command = "invite"
+	InviteCommand   Command = "invite"
+	RegisterCommand Command = "register"
 )
 
 const (
-	GenerateInvitationCallback CallbackCommand = "generate-invitation-callback"
+	GenerateInvitationCallback          CallbackCommand = "generate-invitation-callback"
+	CancelSendingInvitationCodeCallback CallbackCommand = "cancel-invitation-code-callback"
 )
 
 func InitInvitations(dispatcher *ext.Dispatcher) {
 	rootHandler := NewRootHandler()
 
 	dispatcher.AddHandler(handlers.NewCommand(string(InviteCommand), rootHandler.init(InviteCommand)))
+	dispatcher.AddHandler(handlers.NewCommand(string(RegisterCommand), rootHandler.init(RegisterCommand)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("inv|g"), rootHandler.init(GenerateInvitationCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("inv|reg|c"), rootHandler.init(CancelSendingInvitationCodeCallback)))
+
 }
