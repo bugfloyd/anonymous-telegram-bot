@@ -47,8 +47,13 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		if strings.HasPrefix(args[1], "_") {
 			username := args[1][1:]
 			receiverUser, err = r.userRepo.ReadUserByUsername(username)
-			if err != nil {
-				return fmt.Errorf("failed to retrieve the link owner: %w", err)
+			if receiverUser == nil || err != nil {
+				fmt.Println("failed to retrieve the link owner:", err)
+				_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.UserNotFoundText), &gotgbot.SendMessageOpts{})
+				if err != nil {
+					return fmt.Errorf("failed to send wrong link response: %w", err)
+				}
+				return nil
 			}
 			identity = receiverUser.Username
 		} else {
@@ -57,18 +62,15 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 				return fmt.Errorf("failed to read the link key: %w", err)
 			}
 			receiverUser, err = r.userRepo.ReadUserByLinkKey(linkKey, createdAt)
-			if err != nil {
-				return fmt.Errorf("failed to retrieve the link owner: %w", err)
+			if receiverUser == nil || err != nil {
+				fmt.Println("failed to retrieve the link owner:", err)
+				_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.UserNotFoundText), &gotgbot.SendMessageOpts{})
+				if err != nil {
+					return fmt.Errorf("failed to send wrong link response: %w", err)
+				}
+				return nil
 			}
 			identity = args[1]
-		}
-
-		if receiverUser == nil {
-			_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.UserNotFoundText), &gotgbot.SendMessageOpts{})
-			if err != nil {
-				return fmt.Errorf("failed to send wrong link response: %w", err)
-			}
-			return nil
 		}
 
 		if receiverUser.UUID == r.user.UUID {
