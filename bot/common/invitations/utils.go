@@ -37,7 +37,13 @@ func getRandomLength(min, max int) (int, error) {
 }
 
 // generateUniqueInvitationCode generates a unique invitation code by ensuring it's not already in DynamoDB.
-func generateUniqueInvitationCode(repo *Repository) (string, error) {
+func generateUniqueInvitationCode() (string, error) {
+	// create invitations repo
+	repo, err := NewRepository()
+	if err != nil {
+		return "", fmt.Errorf("failed to init invitations db repo: %w", err)
+	}
+
 	for {
 		// Get random lengths for both sections
 		section1Len, err := getRandomLength(3, 5)
