@@ -3,6 +3,8 @@ package invitations
 import (
 	"crypto/rand"
 	"fmt"
+	"github.com/PaulSonOfLars/gotgbot/v2"
+	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"math/big"
 	"strings"
 )
@@ -72,4 +74,32 @@ func generateUniqueInvitationCode(repo *Repository) (string, error) {
 		}
 		// Otherwise, keep generating until a unique code is found
 	}
+}
+
+func isInvited(repo *Repository, userUUID string) bool {
+	user, err := repo.readUser(userUUID)
+	if user == nil || err != nil {
+		return false
+	}
+	return true
+}
+
+func CheckUserInvitation(userUUID string, b *gotgbot.Bot, ctx *ext.Context) bool {
+	// create invitations repo
+	repo, err := NewRepository()
+	if err != nil {
+		fmt.Sprintln("failed to init invitations db repo: %w", err)
+		return false
+	}
+
+	isValid := isInvited(repo, userUUID)
+	if !isValid {
+		_, err = ctx.EffectiveMessage.Reply(b, "The bot is not public yet! :(\nIf you have an invitation code, run /register command to activate your account.", nil)
+		if err != nil {
+			fmt.Sprintln("failed to reply: %w", err)
+		}
+		return false
+	}
+
+	return true
 }

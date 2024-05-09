@@ -143,6 +143,9 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
+	if invitations.CheckUserInvitation(r.user.UUID, b, ctx) != true {
+		return nil
+	}
 	alphabet := os.Getenv("SQIDS_ALPHABET")
 	s, _ := sqids.New(sqids.Options{
 		Alphabet: alphabet,
@@ -184,6 +187,13 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 			return err
 		}
 		return irh.GenerateInvitation(b, ctx)
+	case invitations.SendingInvitationCodeState:
+		irh := invitations.NewRootHandler()
+		err := irh.RetrieveUser(ctx)
+		if err != nil {
+			return err
+		}
+		return irh.ValidateCode(b, ctx)
 	default:
 		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
 	}

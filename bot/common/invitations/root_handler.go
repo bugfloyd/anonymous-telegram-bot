@@ -5,6 +5,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"strconv"
 	"strings"
@@ -55,6 +56,8 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 		switch c {
 		case InviteCommand:
 			return r.inviteCommandHandler(b, ctx)
+		case RegisterCommand:
+			return r.registerCommandHandler(b, ctx)
 		default:
 			return fmt.Errorf("unknown command: %s", c)
 		}
@@ -70,6 +73,8 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 		switch c {
 		case GenerateInvitationCallback:
 			return r.manageInvitation(b, ctx, "GENERATE")
+		case CancelSendingInvitationCodeCallback:
+			return r.invitationCodeCallback(b, ctx, "CANCEL")
 		default:
 			return fmt.Errorf("unknown command: %s", c)
 		}
@@ -117,7 +122,7 @@ func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) err
 	var replyMarkup gotgbot.InlineKeyboardMarkup
 
 	if invitationUser.Type == "ZERO" {
-		msg.WriteString(fmt.Sprintf("Total invitations left: *%d*\nTotal invitations used: *%d*", invitationUser.InvitationsLeft, invitationUser.InvitationsUsed))
+		msg.WriteString(fmt.Sprintf("Total invitations available: *%d*\nTotal invitations used: *%d*", invitationUser.InvitationsLeft, invitationUser.InvitationsUsed))
 
 		if len(*invitations) == 0 {
 			msg.WriteString("\n\n" + "You have no generated invitation codes\\.")
@@ -200,7 +205,7 @@ func (r *RootHandler) manageInvitation(b *gotgbot.Bot, ctx *ext.Context, action 
 			return nil
 		}
 
-		// Store the message id in the user and set status to replying
+		// Set user status to generating invitation
 		err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
 			"State":          GeneratingInvitationState,
 			"ContactUUID":    "",
@@ -239,7 +244,7 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 		return fmt.Errorf("failed to init invitations db repo: %w", err)
 	}
 
-	inviter, err := repo.readUser(r.user.UUID)
+	user, err := repo.readUser(r.user.UUID)
 	if err != nil {
 		return err
 	}
@@ -256,8 +261,8 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 	count := uint32(number)
 
 	// Check if the integer is within the range of uint8
-	if count > inviter.InvitationsLeft {
-		_, err := ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Currently you only have *%d* invitations left and cannot generate a code with *%d* usage\\.", inviter.InvitationsLeft, count), &gotgbot.SendMessageOpts{
+	if count > user.InvitationsLeft {
+		_, err := ctx.EffectiveMessage.Reply(b, fmt.Sprintf("Currently you only have *%d* invitations left and cannot generate a code with *%d* usage\\.", user.InvitationsLeft, count), &gotgbot.SendMessageOpts{
 			ParseMode: gotgbot.ParseModeMarkdownV2,
 		})
 		if err != nil {
@@ -271,14 +276,14 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 	if err != nil {
 		return fmt.Errorf("failed to genemrate invitation code: %w", err)
 	}
-	invitation, err := repo.createInvitation("whisper-"+code, inviter.UserID, count)
+	invitation, err := repo.createInvitation("whisper-"+code, user.UserUUID, count)
 	if err != nil {
 		return err
 	}
 
-	// Update inviter
-	err = repo.updateInviter(inviter, map[string]interface{}{
-		"InvitationsLeft": inviter.InvitationsLeft - count,
+	// Update user
+	err = repo.updateUser(user, map[string]interface{}{
+		"InvitationsLeft": user.InvitationsLeft - count,
 	})
 	if err != nil {
 		return err
@@ -297,5 +302,148 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 		return err
 	}
 
+	return nil
+}
+
+func (r *RootHandler) registerCommandHandler(b *gotgbot.Bot, ctx *ext.Context) error {
+	repo, err := NewRepository()
+	if err != nil {
+		return fmt.Errorf("failed to init invitations db repo: %w", err)
+	}
+
+	user, err := repo.readUser(r.user.UUID)
+
+	if user == nil || err != nil {
+		// Set user state to sending invitation code
+		err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
+			"State":          SendingInvitationCodeState,
+			"ContactUUID":    "",
+			"ReplyMessageID": 0,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update user state: %w", err)
+		}
+
+		_, err = ctx.EffectiveMessage.Reply(b, "If you have an invitation code please enter it below.", &gotgbot.SendMessageOpts{
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+					{
+						{
+							Text:         i18n.T(i18n.CancelButtonText),
+							CallbackData: "inv|reg|c",
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to reply with user invitations: %w", err)
+		}
+	} else {
+		_, err = ctx.EffectiveMessage.Reply(b, "You are already registered silly!", nil)
+		if err != nil {
+			return fmt.Errorf("failed to reply with user invitations: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (r *RootHandler) ValidateCode(b *gotgbot.Bot, ctx *ext.Context) error {
+	invitationCode := ctx.EffectiveMessage.Text
+
+	// create invitations repo
+	repo, err := NewRepository()
+	if err != nil {
+		return fmt.Errorf("failed to init invitations db repo: %w", err)
+	}
+
+	invitation, err := repo.readInvitation(invitationCode)
+
+	if err != nil || invitation == nil || invitation.InvitationsLeft == 0 {
+		// Send username instruction
+		_, err = ctx.EffectiveMessage.Reply(b, "The code you entered is not valid or used before. Please check the code and enter again.", &gotgbot.SendMessageOpts{
+			ReplyMarkup: gotgbot.InlineKeyboardMarkup{
+				InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
+					{
+						{
+							Text:         i18n.T(i18n.CancelButtonText),
+							CallbackData: "inv|reg|c",
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+		return nil
+	} else {
+		err := repo.updateInvitation(invitation, map[string]interface{}{
+			"InvitationsLeft": invitation.InvitationsLeft - 1,
+			"InvitationsUsed": invitation.InvitationsUsed + 1,
+		})
+		if err != nil {
+			return err
+		}
+
+		user, err := repo.readUser(invitation.UserUUID)
+
+		if err != nil {
+			return fmt.Errorf("failed to get inviter user: %w", err)
+		}
+
+		err = repo.updateUser(user, map[string]interface{}{
+			"InvitationsUsed": user.InvitationsUsed + 1,
+		})
+		if err != nil {
+			return err
+		}
+
+		_, err = repo.createUser(r.user.UUID)
+		if err != nil {
+			return fmt.Errorf("failed to create user after registration: %w", err)
+		}
+
+		err = r.userRepo.ResetUserState(r.user)
+		if err != nil {
+			return fmt.Errorf("failed to reset user state: %w", err)
+		}
+
+		// Send username instruction
+		_, err = ctx.EffectiveMessage.Reply(b, "You registered successfully! Now you can use /link command to get your own link and start using the bot! :)", nil)
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+		return nil
+	}
+}
+
+func (r *RootHandler) invitationCodeCallback(b *gotgbot.Bot, ctx *ext.Context, action string) error {
+	cb := ctx.Update.CallbackQuery
+
+	// Remove invitation code command buttons
+	_, _, err := cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{})
+	if err != nil {
+		return fmt.Errorf("failed to update invitation code message markup: %w", err)
+	}
+
+	if action == "CANCEL" {
+		// Send callback answer to telegram
+		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
+			Text: i18n.T(i18n.NeverMindButtonText),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to answer callback: %w", err)
+		}
+
+		// Send instruction
+		_, err = ctx.EffectiveMessage.Reply(b, "Okay! You can always use the command /register to enter invitation codes when you get a valid one!", nil)
+		if err != nil {
+			return fmt.Errorf("failed to send reply message: %w", err)
+		}
+	} else if action == "SET" {
+
+	}
 	return nil
 }

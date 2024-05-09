@@ -9,13 +9,13 @@ resource "aws_dynamodb_table" "invitations" {
   }
 
   attribute {
-    name = "UserID"
+    name = "UserUUID"
     type = "S"
   }
 
   global_secondary_index {
-    name            = "UserID-GSI"
-    hash_key        = "UserID"
+    name            = "UserUUID-GSI"
+    hash_key        = "UserUUID"
     range_key       = "ItemID"
     projection_type = "ALL"
   }
@@ -52,7 +52,7 @@ resource "aws_iam_policy" "lambda_dynamodb_invitations_policy" {
         ],
         Effect = "Allow",
         Resource = [
-          "${aws_dynamodb_table.invitations.arn}/index/UserID-GSI"
+          "${aws_dynamodb_table.invitations.arn}/index/UserUUID-GSI"
         ]
       }
     ]
