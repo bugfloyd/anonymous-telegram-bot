@@ -1,6 +1,7 @@
 package invitations
 
 import (
+	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
@@ -40,9 +41,36 @@ const (
 func InitInvitations(dispatcher *ext.Dispatcher) {
 	rootHandler := NewRootHandler()
 
+	// Commands
 	dispatcher.AddHandler(handlers.NewCommand(string(InviteCommand), rootHandler.init(InviteCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(RegisterCommand), rootHandler.init(RegisterCommand)))
+
+	// Callbacks
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("inv|g"), rootHandler.init(GenerateInvitationCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("inv|reg|c"), rootHandler.init(CancelSendingInvitationCodeCallback)))
+}
 
+func ProcessText(b *gotgbot.Bot, ctx *ext.Context) (bool, error) {
+	rh := NewRootHandler()
+	err := rh.HandleUserAndRepos(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	switch rh.user.State {
+	case GeneratingInvitationState:
+		err = rh.GenerateInvitation(b, ctx)
+		if err != nil {
+			return true, err
+		}
+		return true, nil
+	case SendingInvitationCodeState:
+		err = rh.ValidateCode(b, ctx)
+		if err != nil {
+			return true, err
+		}
+		return true, nil
+	default:
+		return false, nil
+	}
 }

@@ -182,22 +182,16 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 		return r.sendAnonymousMessage(b, ctx)
 	case users.SettingUsername:
 		return r.setUsername(b, ctx)
-	case invitations.GeneratingInvitationState:
-		irh := invitations.NewRootHandler()
-		err := irh.HandleUserAndRepos(ctx)
-		if err != nil {
-			return err
-		}
-		return irh.GenerateInvitation(b, ctx)
-	case invitations.SendingInvitationCodeState:
-		irh := invitations.NewRootHandler()
-		err := irh.HandleUserAndRepos(ctx)
-		if err != nil {
-			return err
-		}
-		return irh.ValidateCode(b, ctx)
 	default:
-		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
+		processed, err := invitations.ProcessText(b, ctx)
+		if err != nil {
+			return err
+		}
+		if processed == false {
+			return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
+		} else {
+			return nil
+		}
 	}
 }
 

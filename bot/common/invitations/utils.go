@@ -11,7 +11,7 @@ import (
 
 // generateRandomString generates a random string of a specified length from a predefined charset.
 func generateRandomString(length int) (string, error) {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	const charset = "abcdefghijkmnpqrstuvwxyz123456789"
 
 	result := make([]byte, length)
 	for i := range result {
