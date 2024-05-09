@@ -7,17 +7,17 @@ import (
 	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 )
 
-type Inviter struct {
-	ItemID          string `dynamo:",hash"`
-	Inviter         string `index:"Inviter-GSI,hash"`
+type User struct {
+	ItemID          string `dynamo:",hash" index:"UserID-GSI,range"`
+	UserID          string `index:"UserID-GSI,hash"`
 	InvitationsLeft uint32
 	InvitationsUsed uint32
-	Level           uint8
+	Type            string
 }
 
 type Invitation struct {
-	ItemID          string `dynamo:",hash"`
-	Inviter         string `index:"Inviter-GSI,hash"`
+	ItemID          string `dynamo:",hash" index:"UserID-GSI,range"`
+	UserID          string `index:"UserID-GSI,hash"`
 	InvitationsLeft uint32
 	InvitationsUsed uint32
 }
