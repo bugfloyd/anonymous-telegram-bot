@@ -97,7 +97,7 @@ func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to init invitations db repo: %w", err)
 	}
 
-	invitationUser, err := repo.readInviter(r.user.UUID)
+	invitationUser, err := repo.readUser(r.user.UUID)
 	if err != nil && strings.Contains(err.Error(), "dynamo: no item found") {
 		_, err = ctx.EffectiveMessage.Reply(b, "You don't have any invitations!", nil)
 		if err != nil {
@@ -108,7 +108,7 @@ func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) err
 		return err
 	}
 
-	invitations, err := repo.readInvitationsByInviter(r.user.UUID)
+	invitations, err := repo.readInvitationsByUser(r.user.UUID)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) err
 	var msg strings.Builder
 	var replyMarkup gotgbot.InlineKeyboardMarkup
 
-	if invitationUser.Level == 1 {
+	if invitationUser.Type == "ZERO" {
 		msg.WriteString(fmt.Sprintf("Total invitations left: *%d*\nTotal invitations used: *%d*", invitationUser.InvitationsLeft, invitationUser.InvitationsUsed))
 
 		if len(*invitations) == 0 {
@@ -178,7 +178,7 @@ func (r *RootHandler) manageInvitation(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to init invitations db repo: %w", err)
 		}
 
-		inviter, err := repo.readInviter(r.user.UUID)
+		inviter, err := repo.readUser(r.user.UUID)
 		if err != nil {
 			return err
 		}
@@ -239,7 +239,7 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 		return fmt.Errorf("failed to init invitations db repo: %w", err)
 	}
 
-	inviter, err := repo.readInviter(r.user.UUID)
+	inviter, err := repo.readUser(r.user.UUID)
 	if err != nil {
 		return err
 	}
@@ -271,7 +271,7 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 	if err != nil {
 		return fmt.Errorf("failed to genemrate invitation code: %w", err)
 	}
-	invitation, err := repo.createInvitation("whisper-"+code, inviter.Inviter, count)
+	invitation, err := repo.createInvitation("whisper-"+code, inviter.UserID, count)
 	if err != nil {
 		return err
 	}

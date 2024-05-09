@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/google/uuid"
 	"github.com/guregu/dynamo"
 	"os"
 	"reflect"
@@ -35,24 +34,25 @@ func NewRepository() (*Repository, error) {
 	}, nil
 }
 
-func (repo *Repository) createInviter(inviter string, count uint32) (*Inviter, error) {
-	i := Inviter{
-		ItemID:          "INVITER#" + uuid.New().String(),
-		Inviter:         inviter,
-		InvitationsLeft: count,
+func (repo *Repository) createUser(userID string) (*User, error) {
+	i := User{
+		ItemID:          "USER#" + userID,
+		UserID:          userID,
+		InvitationsLeft: 0,
 		InvitationsUsed: 0,
+		Type:            "NORMAL",
 	}
 	err := repo.table.Put(i).Run()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create inviter: %w", err)
+		return nil, fmt.Errorf("invitations: failed to create user: %w", err)
 	}
 	return &i, nil
 }
 
-func (repo *Repository) createInvitation(code string, inviter string, count uint32) (*Invitation, error) {
+func (repo *Repository) createInvitation(code string, userID string, count uint32) (*Invitation, error) {
 	i := Invitation{
 		ItemID:          "INVITATION#" + code,
-		Inviter:         inviter,
+		UserID:          userID,
 		InvitationsLeft: count,
 		InvitationsUsed: 0,
 	}
@@ -63,45 +63,45 @@ func (repo *Repository) createInvitation(code string, inviter string, count uint
 	return &i, nil
 }
 
-func (repo *Repository) readInviter(uuid string) (*Inviter, error) {
-	var u Inviter
-	err := repo.table.Get("ItemID", fmt.Sprintf("INVITER#%s", uuid)).One(&u)
+func (repo *Repository) readUser(userId string) (*User, error) {
+	var u User
+	err := repo.table.Get("ItemID", "USER#"+userId).One(&u)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get inviter: %w", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 	return &u, nil
 }
 
 func (repo *Repository) readInvitation(code string) (*Invitation, error) {
 	var u Invitation
-	err := repo.table.Get("ItemID", fmt.Sprintf("INVITATION#%s", code)).One(&u)
+	err := repo.table.Get("ItemID", "INVITATION#"+code).One(&u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get invitation by id: %w", err)
 	}
 	return &u, nil
 }
 
-func (repo *Repository) readInvitationsByInviter(uuid string) (*[]Invitation, error) {
+func (repo *Repository) readInvitationsByUser(userID string) (*[]Invitation, error) {
 	var invitation []Invitation
-	err := repo.table.Get("Inviter", uuid).Index("Inviter-GSI").Range("ItemID", dynamo.BeginsWith, "INVITATION").All(&invitation)
+	err := repo.table.Get("UserID", userID).Index("UserID-GSI").Range("ItemID", dynamo.BeginsWith, "INVITATION").All(&invitation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get invitations by inviter: %w", err)
+		return nil, fmt.Errorf("failed to get invitations by user: %w", err)
 	}
 	return &invitation, nil
 }
 
-func (repo *Repository) updateInviter(inviter *Inviter, updates map[string]interface{}) error {
-	updateBuilder := repo.table.Update("ItemID", inviter.ItemID)
+func (repo *Repository) updateInviter(user *User, updates map[string]interface{}) error {
+	updateBuilder := repo.table.Update("ItemID", user.ItemID)
 	for key, value := range updates {
 		updateBuilder = updateBuilder.Set(key, value)
 	}
 	err := updateBuilder.Run()
 	if err != nil {
-		return fmt.Errorf("failed to update inviter: %w", err)
+		return fmt.Errorf("failed to update user: %w", err)
 	}
 
 	// Reflecting on user to update fields based on updates map
-	val := reflect.ValueOf(inviter).Elem() // We use .Elem() to dereference the pointer to user
+	val := reflect.ValueOf(user).Elem() // We use .Elem() to dereference the pointer to user
 	for key, value := range updates {
 		fieldVal := val.FieldByName(key)
 		if fieldVal.IsValid() && fieldVal.CanSet() {
