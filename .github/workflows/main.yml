@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - feat/invitations
 
 jobs:
   build-upload-deploy:
