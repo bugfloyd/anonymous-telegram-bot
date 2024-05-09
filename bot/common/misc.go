@@ -184,14 +184,14 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 		return r.setUsername(b, ctx)
 	case invitations.GeneratingInvitationState:
 		irh := invitations.NewRootHandler()
-		err := irh.RetrieveUser(ctx)
+		err := irh.HandleUserAndRepos(ctx)
 		if err != nil {
 			return err
 		}
 		return irh.GenerateInvitation(b, ctx)
 	case invitations.SendingInvitationCodeState:
 		irh := invitations.NewRootHandler()
-		err := irh.RetrieveUser(ctx)
+		err := irh.HandleUserAndRepos(ctx)
 		if err != nil {
 			return err
 		}

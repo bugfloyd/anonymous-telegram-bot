@@ -12,8 +12,9 @@ import (
 )
 
 type RootHandler struct {
-	user     *users.User
-	userRepo users.UserRepository
+	user            *users.User
+	userRepo        users.UserRepository
+	invitationsRepo Repository
 }
 
 type Command string
@@ -29,7 +30,7 @@ func (r *RootHandler) init(commandName interface{}) handlers.Response {
 	}
 }
 
-func (r *RootHandler) RetrieveUser(ctx *ext.Context) error {
+func (r *RootHandler) HandleUserAndRepos(ctx *ext.Context) error {
 	// create user repo
 	userRepo, err := users.NewUserRepository()
 	if err != nil {
@@ -42,11 +43,18 @@ func (r *RootHandler) RetrieveUser(ctx *ext.Context) error {
 	}
 	r.user = user
 	r.userRepo = *userRepo
+
+	// create invitations repo
+	invitationsRepo, err := NewRepository()
+	if err != nil {
+		return fmt.Errorf("failed to init invitations db repo: %w", err)
+	}
+	r.invitationsRepo = *invitationsRepo
 	return nil
 }
 
 func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command interface{}) error {
-	err := r.RetrieveUser(ctx)
+	err := r.HandleUserAndRepos(ctx)
 	if err != nil {
 		return err
 	}
@@ -96,13 +104,7 @@ func (r *RootHandler) processUser(userRepo *users.UserRepository, ctx *ext.Conte
 }
 
 func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) error {
-	// create invitations repo
-	repo, err := NewRepository()
-	if err != nil {
-		return fmt.Errorf("failed to init invitations db repo: %w", err)
-	}
-
-	invitationUser, err := repo.readUser(r.user.UUID)
+	invitationUser, err := r.invitationsRepo.readUser(r.user.UUID)
 	if err != nil && strings.Contains(err.Error(), "dynamo: no item found") {
 		_, err = ctx.EffectiveMessage.Reply(b, "You don't have any invitations!", nil)
 		if err != nil {
@@ -113,7 +115,7 @@ func (r *RootHandler) inviteCommandHandler(b *gotgbot.Bot, ctx *ext.Context) err
 		return err
 	}
 
-	invitations, err := repo.readInvitationsByUser(r.user.UUID)
+	invitations, err := r.invitationsRepo.readInvitationsByUser(r.user.UUID)
 	if err != nil {
 		return err
 	}
@@ -178,12 +180,7 @@ func (r *RootHandler) manageInvitation(b *gotgbot.Bot, ctx *ext.Context, action 
 	}
 
 	if action == "GENERATE" {
-		repo, err := NewRepository()
-		if err != nil {
-			return fmt.Errorf("failed to init invitations db repo: %w", err)
-		}
-
-		inviter, err := repo.readUser(r.user.UUID)
+		inviter, err := r.invitationsRepo.readUser(r.user.UUID)
 		if err != nil {
 			return err
 		}
@@ -238,13 +235,7 @@ func (r *RootHandler) manageInvitation(b *gotgbot.Bot, ctx *ext.Context, action 
 func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error {
 	invitationCount := ctx.EffectiveMessage.Text
 
-	// create invitations repo
-	repo, err := NewRepository()
-	if err != nil {
-		return fmt.Errorf("failed to init invitations db repo: %w", err)
-	}
-
-	user, err := repo.readUser(r.user.UUID)
+	user, err := r.invitationsRepo.readUser(r.user.UUID)
 	if err != nil {
 		return err
 	}
@@ -272,17 +263,17 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 	}
 
 	// Generate a unique invitation code
-	code, err := generateUniqueInvitationCode(repo)
+	code, err := generateUniqueInvitationCode()
 	if err != nil {
 		return fmt.Errorf("failed to genemrate invitation code: %w", err)
 	}
-	invitation, err := repo.createInvitation("whisper-"+code, user.UserUUID, count)
+	invitation, err := r.invitationsRepo.createInvitation("whisper-"+code, user.UserUUID, count)
 	if err != nil {
 		return err
 	}
 
 	// Update user
-	err = repo.updateUser(user, map[string]interface{}{
+	err = r.invitationsRepo.updateUser(user, map[string]interface{}{
 		"InvitationsLeft": user.InvitationsLeft - count,
 	})
 	if err != nil {
@@ -306,12 +297,7 @@ func (r *RootHandler) GenerateInvitation(b *gotgbot.Bot, ctx *ext.Context) error
 }
 
 func (r *RootHandler) registerCommandHandler(b *gotgbot.Bot, ctx *ext.Context) error {
-	repo, err := NewRepository()
-	if err != nil {
-		return fmt.Errorf("failed to init invitations db repo: %w", err)
-	}
-
-	user, err := repo.readUser(r.user.UUID)
+	user, err := r.invitationsRepo.readUser(r.user.UUID)
 
 	if user == nil || err != nil {
 		// Set user state to sending invitation code
@@ -352,13 +338,7 @@ func (r *RootHandler) registerCommandHandler(b *gotgbot.Bot, ctx *ext.Context) e
 func (r *RootHandler) ValidateCode(b *gotgbot.Bot, ctx *ext.Context) error {
 	invitationCode := ctx.EffectiveMessage.Text
 
-	// create invitations repo
-	repo, err := NewRepository()
-	if err != nil {
-		return fmt.Errorf("failed to init invitations db repo: %w", err)
-	}
-
-	invitation, err := repo.readInvitation(invitationCode)
+	invitation, err := r.invitationsRepo.readInvitation(invitationCode)
 
 	if err != nil || invitation == nil || invitation.InvitationsLeft == 0 {
 		// Send username instruction
@@ -379,7 +359,7 @@ func (r *RootHandler) ValidateCode(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 		return nil
 	} else {
-		err := repo.updateInvitation(invitation, map[string]interface{}{
+		err := r.invitationsRepo.updateInvitation(invitation, map[string]interface{}{
 			"InvitationsLeft": invitation.InvitationsLeft - 1,
 			"InvitationsUsed": invitation.InvitationsUsed + 1,
 		})
@@ -387,20 +367,20 @@ func (r *RootHandler) ValidateCode(b *gotgbot.Bot, ctx *ext.Context) error {
 			return err
 		}
 
-		user, err := repo.readUser(invitation.UserUUID)
+		user, err := r.invitationsRepo.readUser(invitation.UserUUID)
 
 		if err != nil {
 			return fmt.Errorf("failed to get inviter user: %w", err)
 		}
 
-		err = repo.updateUser(user, map[string]interface{}{
+		err = r.invitationsRepo.updateUser(user, map[string]interface{}{
 			"InvitationsUsed": user.InvitationsUsed + 1,
 		})
 		if err != nil {
 			return err
 		}
 
-		_, err = repo.createUser(r.user.UUID)
+		_, err = r.invitationsRepo.createUser(r.user.UUID)
 		if err != nil {
 			return fmt.Errorf("failed to create user after registration: %w", err)
 		}
