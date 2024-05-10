@@ -2,7 +2,6 @@ package common
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"log"
@@ -15,6 +14,9 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
+	"log"
+	"net/http"
 )
 
 type APIResponse events.APIGatewayProxyResponse
@@ -22,20 +24,8 @@ type APIRequest events.APIGatewayProxyRequest
 
 // InitBot is our lambda handler invoked by the `lambda.Start` function call
 func InitBot(request APIRequest) (APIResponse, error) {
-	// Get token from the environment variable.
-	token := os.Getenv("BOT_TOKEN")
-	if token == "" {
-		return APIResponse{StatusCode: 500}, errors.New("TOKEN environment variable is empty")
-	}
-
-	// Get sqids alphabet from the environment variable.
-	alphabet := os.Getenv("SQIDS_ALPHABET")
-	if alphabet == "" {
-		return APIResponse{StatusCode: 500}, errors.New("SQIDS_ALPHABET environment variable is empty")
-	}
-
 	// Create bot from environment value.
-	b, err := gotgbot.NewBot(token, &gotgbot.BotOpts{
+	b, err := gotgbot.NewBot(secrets.BotToken, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
 			Client: http.Client{},
 		},
