@@ -7,8 +7,8 @@ import (
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
+	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
 	"github.com/sqids/sqids-go"
-	"os"
 	"strings"
 )
 
@@ -148,9 +148,8 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	if invitations.CheckUserInvitation(r.user.UUID, b, ctx) != true {
 		return nil
 	}
-	alphabet := os.Getenv("SQIDS_ALPHABET")
 	s, _ := sqids.New(sqids.Options{
-		Alphabet: alphabet,
+		Alphabet: secrets.SqidsAlphabet,
 	})
 	genericLinkKey, err := s.Encode([]uint64{uint64(r.user.LinkKey), uint64(r.user.CreatedAt.Unix())})
 	if err != nil {
@@ -205,9 +204,8 @@ func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string
 }
 
 func readUserLinkKey(link string) (int32, int64, error) {
-	alphabet := os.Getenv("SQIDS_ALPHABET")
 	s, err := sqids.New(sqids.Options{
-		Alphabet: alphabet,
+		Alphabet: secrets.SqidsAlphabet,
 	})
 
 	if err != nil {
