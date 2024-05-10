@@ -5,6 +5,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
 	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
 	"github.com/sqids/sqids-go"
@@ -144,6 +145,9 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
+	if invitations.CheckUserInvitation(r.user.UUID, b, ctx) != true {
+		return nil
+	}
 	s, _ := sqids.New(sqids.Options{
 		Alphabet: secrets.SqidsAlphabet,
 	})
@@ -178,7 +182,15 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	case users.SettingUsername:
 		return r.setUsername(b, ctx)
 	default:
-		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
+		processed, err := invitations.ProcessText(b, ctx)
+		if err != nil {
+			return err
+		}
+		if processed == false {
+			return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
+		} else {
+			return nil
+		}
 	}
 }
 

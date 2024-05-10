@@ -9,6 +9,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
 	"log"
 	"net/http"
@@ -39,6 +40,7 @@ func InitBot(request APIRequest) (APIResponse, error) {
 		MaxRoutines: ext.DefaultMaxRoutines,
 	})
 
+	invitations.InitInvitations(dispatcher)
 	rootHandler := NewRootHandler()
 
 	// Commands
