@@ -3,17 +3,13 @@ package common
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
-	"log"
-	"net/http"
-	"os"
-
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/invitations"
 	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
 	"log"
 	"net/http"
