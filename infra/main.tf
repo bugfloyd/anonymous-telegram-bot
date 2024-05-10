@@ -14,8 +14,6 @@ resource "aws_lambda_function" "anonymous_bot" {
 
   environment {
     variables = {
-      BOT_TOKEN        = var.bot_token
-      SQIDS_ALPHABET   = var.sqids_alphabet
       DEFAULT_LANGUAGE = var.default_language
     }
   }
@@ -184,7 +182,40 @@ resource "aws_iam_policy" "lambda_dynamodb_policy" {
   })
 }
 
+resource "aws_iam_policy" "lambda_secrets_policy" {
+  name        = "LambdaSecretsAccessPolicy"
+  description = "Policy to allow Lambda to access bot secrets"
+  policy      = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.bot_secrets.arn
+      }
+    ]
+  })
+}
+
 resource "aws_iam_role_policy_attachment" "rest_backend_lambda_dynamodb_policy_attachment" {
   role       = aws_iam_role.lambda_exec_role.name
   policy_arn = aws_iam_policy.lambda_dynamodb_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_secrets_policy_attachment" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = aws_iam_policy.lambda_secrets_policy.arn
+}
+
+resource "aws_secretsmanager_secret" "bot_secrets" {
+  name = "anonymous-bot-secrets"
+}
+
+resource "aws_secretsmanager_secret_version" "bot_secrets_version" {
+  secret_id = aws_secretsmanager_secret.bot_secrets.id
+
+  secret_string = jsonencode({
+    bot_token = var.bot_token
+    alphabet  = var.sqids_alphabet
+  })
 }
