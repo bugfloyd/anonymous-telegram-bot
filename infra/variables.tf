@@ -8,6 +8,11 @@ variable "lambda_bucket" {
   type        = string
 }
 
+variable "cloudtrail_bucket" {
+  description = "The AWS S3 bucket for storing cloudtrail data"
+  type        = string
+}
+
 variable "bot_token" {
   description = "Telegram bot token"
   type        = string

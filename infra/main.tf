@@ -2,6 +2,9 @@ provider "aws" {
   region = var.aws_region
 }
 
+# Fetch the AWS account ID dynamically
+data "aws_caller_identity" "current" {}
+
 # Lambda
 resource "aws_lambda_function" "anonymous_bot" {
   function_name    = "AnonymousBot"
