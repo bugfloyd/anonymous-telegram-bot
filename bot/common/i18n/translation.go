@@ -51,6 +51,7 @@ const (
 	SameUsernameText                TextID = "SameUsernameText"
 	MessageNotSentText              TextID = "MessageNotSentText"
 	OpenedNotificationText          TextID = "OpenedNotificationText"
+	ChangeLanguageHintText          TextID = "ChangeLanguageHintText"
 	InviteOnlyText                  TextID = "InviteOnlyText"
 	EnterInvitationCodeText         TextID = "EnterInvitationCodeText"
 	RegisteredText                  TextID = "RegisteredText"

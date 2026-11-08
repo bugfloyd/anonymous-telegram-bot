@@ -58,6 +58,7 @@ var faLocale = LocaleTexts{
 	InvalidUsesText:                 "عددی بین 1 تا %d بفرستید.",
 	InvitationCreatedText:           "دعوت‌نامه ساخته شد (ظرفیت: %d نفر).\n\nاین لینک را به اشتراک بگذارید:\n%s\n\nیا کد: %s",
 	NoInvitationsToGiveText:         "فعلاً دعوت‌نامه‌ای برای دادن ندارید.",
+	ChangeLanguageHintText:          "🌐 تغییر زبان · Change language: /language",
 	OpenedNotificationText:          "پیام باز شد ⤵️",
 	MessageNotSentText:              "این پیام برای کسی ارسال نشد.\n\nبرای پاسخ به پیامی که دریافت کرده‌اید، دکمه «%s» زیر آن را بزنید.\nبرای ارسال پیام ناشناس جدید، لینک آن شخص را باز کنید.\nبرای دریافت پیام ناشناس، لینک خودتان را به اشتراک بگذارید: /link",
 }
