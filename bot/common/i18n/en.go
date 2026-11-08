@@ -2,7 +2,7 @@ package i18n
 
 var enLocale = LocaleTexts{
 	StartMessageText:                "Welcome! Use /link command to get you link!",
-	InitialSendMessagePromptText:    "You are sending message to:\n%s\n\nEnter your message:",
+	InitialSendMessagePromptText:    "You are sending message to:\n%s\n\nYou can send several messages in a row.\nEnter your message:",
 	UnblockButtonText:               "Unblock",
 	SendMessageButtonText:           "Send message",
 	ReplyButtonText:                 "Reply",
@@ -22,7 +22,7 @@ var enLocale = LocaleTexts{
 	OpenMessageButtonText:           "Open Message",
 	MessageOpenedText:               "Message opened!",
 	ReplyingToMessageText:           "Replying to message...",
-	ReplyToThisMessageText:          "Reply to this message:",
+	ReplyToThisMessageText:          "You can send several messages in a row.\nReply to this message:",
 	UserNotFoundText:                "User not found! Wrong link?",
 	MessageToYourselfTextText:       "Do you really want to talk to yourself? So sad! Share your link with friends or post it on social media to get anonymous messages!",
 	LinkText:                        "Other people can use this link to send you anonymous messages:",

@@ -6,6 +6,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/botinfo"
+	"github.com/bugfloyd/telegram-incognito-bot/common/conversation"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 	"github.com/bugfloyd/telegram-incognito-bot/secrets"
@@ -175,6 +176,16 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	switch r.user.State {
 	case users.Sending:
 		return r.sendAnonymousMessage(b, ctx)
+	case users.Continuing:
+		if conversation.CanFollowUp(r.user.LastSentAt, messageTime(ctx.EffectiveMessage)) {
+			return r.sendAnonymousMessage(b, ctx)
+		}
+		// Too long since their last message: close the conversation instead
+		// of guessing that this message is meant for the same person.
+		if err := r.userRepo.ResetState(r.user); err != nil {
+			return err
+		}
+		return r.sendMessageNotSent(b, ctx)
 	case users.SettingUsername:
 		return r.setUsername(b, ctx)
 	default:
@@ -182,14 +193,18 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 		if strings.HasPrefix(ctx.EffectiveMessage.Text, "/") {
 			return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
 		}
-		// Anything else is a message without a recipient: explain how to
-		// send one instead of reporting an error.
-		hint := fmt.Sprintf(i18n.T(i18n.MessageNotSentText), i18n.T(i18n.ReplyButtonText))
-		if _, err := ctx.EffectiveMessage.Reply(b, hint, nil); err != nil {
-			return fmt.Errorf("failed to send message-not-sent hint: %w", err)
-		}
-		return nil
+		return r.sendMessageNotSent(b, ctx)
 	}
+}
+
+// sendMessageNotSent tells the user their message went nowhere and how to
+// send one, instead of reporting an error.
+func (r *RootHandler) sendMessageNotSent(b *gotgbot.Bot, ctx *ext.Context) error {
+	hint := fmt.Sprintf(i18n.T(i18n.MessageNotSentText), i18n.T(i18n.ReplyButtonText))
+	if _, err := ctx.EffectiveMessage.Reply(b, hint, nil); err != nil {
+		return fmt.Errorf("failed to send message-not-sent hint: %w", err)
+	}
+	return nil
 }
 
 func (r *RootHandler) sendError(b *gotgbot.Bot, ctx *ext.Context, message string) error {

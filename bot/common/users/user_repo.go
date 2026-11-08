@@ -189,7 +189,7 @@ func (repo *UserRepository) ResetState(u *User) error {
 	if err := repo.update(u, idle()); err != nil {
 		return fmt.Errorf("failed to reset user state: %w", err)
 	}
-	u.State, u.ContactUUID, u.ReplyMessageID = Idle, "", 0
+	u.setIdle()
 	return nil
 }
 
@@ -197,7 +197,8 @@ func (repo *UserRepository) ResetState(u *User) error {
 // replyToMessageID when it isn't 0.
 func (repo *UserRepository) StartSending(u *User, contactUUID string, replyToMessageID int64) error {
 	upd := expression.Set(expression.Name("State"), expression.Value(Sending)).
-		Set(expression.Name("ContactUUID"), expression.Value(contactUUID))
+		Set(expression.Name("ContactUUID"), expression.Value(contactUUID)).
+		Remove(expression.Name("LastSentAt"))
 	if replyToMessageID != 0 {
 		upd = upd.Set(expression.Name("ReplyMessageID"), expression.Value(replyToMessageID))
 	} else {
@@ -206,7 +207,7 @@ func (repo *UserRepository) StartSending(u *User, contactUUID string, replyToMes
 	if err := repo.update(u, upd); err != nil {
 		return fmt.Errorf("failed to start sending: %w", err)
 	}
-	u.State, u.ContactUUID, u.ReplyMessageID = Sending, contactUUID, replyToMessageID
+	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = Sending, contactUUID, replyToMessageID, 0
 	return nil
 }
 
@@ -214,11 +215,12 @@ func (repo *UserRepository) StartSending(u *User, contactUUID string, replyToMes
 func (repo *UserRepository) StartSettingUsername(u *User) error {
 	upd := expression.Set(expression.Name("State"), expression.Value(SettingUsername)).
 		Remove(expression.Name("ContactUUID")).
-		Remove(expression.Name("ReplyMessageID"))
+		Remove(expression.Name("ReplyMessageID")).
+		Remove(expression.Name("LastSentAt"))
 	if err := repo.update(u, upd); err != nil {
 		return fmt.Errorf("failed to start setting username: %w", err)
 	}
-	u.State, u.ContactUUID, u.ReplyMessageID = SettingUsername, "", 0
+	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = SettingUsername, "", 0, 0
 	return nil
 }
 
@@ -231,7 +233,7 @@ func (repo *UserRepository) SetUsername(u *User, username string) error {
 		return fmt.Errorf("failed to set username: %w", err)
 	}
 	u.Username = username
-	u.State, u.ContactUUID, u.ReplyMessageID = Idle, "", 0
+	u.setIdle()
 	return nil
 }
 
@@ -242,7 +244,7 @@ func (repo *UserRepository) RemoveUsername(u *User) error {
 		return fmt.Errorf("failed to remove username: %w", err)
 	}
 	u.Username = ""
-	u.State, u.ContactUUID, u.ReplyMessageID = Idle, "", 0
+	u.setIdle()
 	return nil
 }
 
@@ -252,8 +254,42 @@ func (repo *UserRepository) SetLanguage(u *User, language i18n.Language) error {
 		return fmt.Errorf("failed to set language: %w", err)
 	}
 	u.Language = language
-	u.State, u.ContactUUID, u.ReplyMessageID = Idle, "", 0
+	u.setIdle()
 	return nil
+}
+
+// ContinueConversation keeps the conversation open after a message was
+// delivered at sentAt: the user's follow-ups go to the same person, threaded
+// the same way, until InterruptFollowUps or the follow-up window ends it.
+func (repo *UserRepository) ContinueConversation(u *User, sentAt time.Time) error {
+	upd := expression.Set(expression.Name("State"), expression.Value(Continuing)).
+		Set(expression.Name("LastSentAt"), expression.Value(sentAt.Unix()))
+	if err := repo.update(u, upd); err != nil {
+		return fmt.Errorf("failed to continue conversation: %w", err)
+	}
+	u.State, u.LastSentAt = Continuing, sentAt.Unix()
+	return nil
+}
+
+// InterruptFollowUps ends a user's follow-ups because the bot is showing them
+// something from fromUUID. It only acts when the user is Continuing a
+// conversation with someone else: a message from the same person doesn't
+// interrupt, and explicitly chosen states (e.g. after pressing Reply) are left
+// alone. The check and the write are one conditional update, so concurrent
+// changes can't slip in between. Reports whether follow-ups were ended.
+func (repo *UserRepository) InterruptFollowUps(userUUID, fromUUID string) (bool, error) {
+	cond := expression.AttributeExists(expression.Name("UUID")).
+		And(expression.Name("State").Equal(expression.Value(Continuing))).
+		And(expression.Name("ContactUUID").NotEqual(expression.Value(fromUUID)))
+	err := repo.updateWhere(userUUID, idle(), cond)
+	var failed *types.ConditionalCheckFailedException
+	if errors.As(err, &failed) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to interrupt follow-ups: %w", err)
+	}
+	return true, nil
 }
 
 // Block adds another user's UUID to this user's blacklist.
@@ -291,16 +327,24 @@ func (repo *UserRepository) UnblockAll(u *User) error {
 func idle() expression.UpdateBuilder {
 	return expression.Set(expression.Name("State"), expression.Value(Idle)).
 		Remove(expression.Name("ContactUUID")).
-		Remove(expression.Name("ReplyMessageID"))
+		Remove(expression.Name("ReplyMessageID")).
+		Remove(expression.Name("LastSentAt"))
+}
+
+// setIdle mirrors idle() on the in-memory user.
+func (u *User) setIdle() {
+	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = Idle, "", 0, 0
 }
 
 // update applies upd to the user's item. The item must already exist, so an
 // update never creates a partial user.
 func (repo *UserRepository) update(u *User, upd expression.UpdateBuilder) error {
-	expr, err := expression.NewBuilder().
-		WithUpdate(upd).
-		WithCondition(expression.AttributeExists(expression.Name("UUID"))).
-		Build()
+	return repo.updateWhere(u.UUID, upd, expression.AttributeExists(expression.Name("UUID")))
+}
+
+// updateWhere applies upd to a user's item only if cond holds.
+func (repo *UserRepository) updateWhere(userUUID string, upd expression.UpdateBuilder, cond expression.ConditionBuilder) error {
+	expr, err := expression.NewBuilder().WithUpdate(upd).WithCondition(cond).Build()
 	if err != nil {
 		return fmt.Errorf("failed to build update: %w", err)
 	}
@@ -309,7 +353,7 @@ func (repo *UserRepository) update(u *User, upd expression.UpdateBuilder) error 
 	defer cancel()
 	_, err = repo.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 &repo.table,
-		Key:                       itemKey(u.UUID),
+		Key:                       itemKey(userUUID),
 		UpdateExpression:          expr.Update(),
 		ConditionExpression:       expr.Condition(),
 		ExpressionAttributeNames:  expr.Names(),

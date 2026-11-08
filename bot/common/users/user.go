@@ -21,12 +21,20 @@ type User struct {
 	Language       i18n.Language `dynamodbav:"Language,omitempty"`
 	LinkKey        int32         `dynamodbav:"LinkKey"`
 	CreatedAt      time.Time     `dynamodbav:"CreatedAt,unixtime"`
+	// LastSentAt is when the user's last message in the current conversation
+	// was delivered (unix seconds), while State is Continuing.
+	LastSentAt int64 `dynamodbav:"LastSentAt,omitempty"`
 }
 
 type State string
 
 const (
-	Idle            State = "IDLE"
-	Sending         State = "SENDING"
+	Idle State = "IDLE"
+	// Sending: the user chose a recipient (opened a link or pressed Reply);
+	// their next message goes there.
+	Sending State = "SENDING"
+	// Continuing: a message was delivered; follow-ups still go to the same
+	// person until something else interrupts (see the conversation package).
+	Continuing      State = "CONTINUING"
 	SettingUsername State = "SETTING_USERNAME"
 )

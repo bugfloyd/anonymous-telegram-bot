@@ -75,6 +75,14 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 
 	switch c := command.(type) {
 	case Command:
+		// The bot answers every command, which ends an open conversation.
+		// (Plain messages are routed through TextMessage and decide in
+		// processText; buttons reset the state below.)
+		if c != TextMessage && r.user.State == users.Continuing {
+			if err := r.userRepo.ResetState(r.user); err != nil {
+				return err
+			}
+		}
 		switch c {
 		case StartCommand:
 			return r.start(b, ctx)
