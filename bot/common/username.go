@@ -12,7 +12,7 @@ import (
 )
 
 func (r *RootHandler) manageUsername(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ok, err := r.mayOwnLink(b, ctx); !ok {
+	if ok, err := r.mayOwnLink(b, ctx, false); !ok {
 		return err
 	}
 	var text string
@@ -83,7 +83,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 		}
 	} else if action == "SET" {
 		// A username is a link, so the invite-only gate applies here too.
-		if ok, err := r.mayOwnLink(b, ctx); !ok {
+		if ok, err := r.mayOwnLink(b, ctx, false); !ok {
 			if err == nil {
 				_, err = cb.Answer(b, nil)
 			}

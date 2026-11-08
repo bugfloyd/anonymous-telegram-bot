@@ -37,7 +37,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return err
 		}
 
-		_, err = b.SendMessage(ctx.EffectiveChat.Id, i18n.T(i18n.StartMessageText), &gotgbot.SendMessageOpts{})
+		_, err = b.SendMessage(ctx.EffectiveChat.Id, withLanguageHint(i18n.T(i18n.StartMessageText)), &gotgbot.SendMessageOpts{})
 		if err != nil {
 			return fmt.Errorf("failed to send bot info: %w", err)
 		}
@@ -137,7 +137,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := b.SendMessage(ctx.EffectiveChat.Id, botinfo.Text(b.User), &gotgbot.SendMessageOpts{})
+	_, err := b.SendMessage(ctx.EffectiveChat.Id, withLanguageHint(botinfo.Text(b.User)), &gotgbot.SendMessageOpts{})
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
@@ -149,7 +149,7 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
-	if ok, err := r.mayOwnLink(b, ctx); !ok {
+	if ok, err := r.mayOwnLink(b, ctx, true); !ok {
 		return err
 	}
 	s, _ := sqids.New(sqids.Options{
@@ -168,7 +168,7 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	} else {
 		link = fmt.Sprintf("%s\n%s", i18n.T(i18n.LinkText), genericLink)
 	}
-	_, err = ctx.EffectiveMessage.Reply(b, link, nil)
+	_, err = ctx.EffectiveMessage.Reply(b, withLanguageHint(link), nil)
 	if err != nil {
 		return err
 	}

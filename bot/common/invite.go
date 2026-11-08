@@ -37,12 +37,17 @@ func (r *RootHandler) isAdmin(ctx *ext.Context) bool {
 }
 
 // mayOwnLink checks whether the user may have their own link (and so receive
-// messages). If not, it explains that the bot is invite-only.
-func (r *RootHandler) mayOwnLink(b *gotgbot.Bot, ctx *ext.Context) (bool, error) {
+// messages). If not, it explains that the bot is invite-only, optionally with
+// the "change language" line.
+func (r *RootHandler) mayOwnLink(b *gotgbot.Bot, ctx *ext.Context, languageHint bool) (bool, error) {
 	if invitations.CanOwnLink(r.user.Registered(), ctx.EffectiveUser.Id) {
 		return true, nil
 	}
-	if _, err := ctx.EffectiveMessage.Reply(b, i18n.T(i18n.InviteOnlyText), nil); err != nil {
+	notice := i18n.T(i18n.InviteOnlyText)
+	if languageHint {
+		notice = withLanguageHint(notice)
+	}
+	if _, err := ctx.EffectiveMessage.Reply(b, notice, nil); err != nil {
 		return false, fmt.Errorf("failed to send invite-only notice: %w", err)
 	}
 	return false, nil

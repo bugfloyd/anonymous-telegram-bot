@@ -1,7 +1,7 @@
 package i18n
 
 var enLocale = LocaleTexts{
-	StartMessageText:                "Welcome! Use /link command to get you link!",
+	StartMessageText:                "Welcome! Use /link to get your link!",
 	InitialSendMessagePromptText:    "You are sending message to:\n%s\n\nYou can send several messages in a row.\nEnter your message:",
 	UnblockButtonText:               "Unblock",
 	SendMessageButtonText:           "Send message",
@@ -58,6 +58,7 @@ var enLocale = LocaleTexts{
 	InvalidUsesText:                 "Send a number from 1 to %d.",
 	InvitationCreatedText:           "Invitation created (uses: %d).\n\nShare this link:\n%s\n\nOr the code: %s",
 	NoInvitationsToGiveText:         "You don't have any invitations to give right now.",
+	ChangeLanguageHintText:          "🌐 Change language · تغییر زبان: /language",
 	OpenedNotificationText:          "Message opened ⤵️",
 	MessageNotSentText:              "This message wasn't sent to anyone.\n\nTo answer a message you received, tap the \"%s\" button under it.\nTo send a new anonymous message, open that person's link.\nTo receive anonymous messages, share your own link: /link",
 }

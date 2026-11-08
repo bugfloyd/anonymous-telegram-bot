@@ -102,3 +102,9 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 	}
 	return nil
 }
+
+// withLanguageHint adds the bilingual "how to change the language" line to a
+// message.
+func withLanguageHint(text string) string {
+	return text + "\n\n" + i18n.T(i18n.ChangeLanguageHintText)
+}
