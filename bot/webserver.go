@@ -20,8 +20,15 @@ func main() {
 		}
 
 		// Create a Request object that mimics API Gateway
+		headers := make(map[string]string, len(r.Header))
+		for name, values := range r.Header {
+			if len(values) > 0 {
+				headers[name] = values[0]
+			}
+		}
 		req := common.APIRequest{
-			Body: string(body),
+			Body:    string(body),
+			Headers: headers,
 		}
 
 		// Invoke the Lambda handler from your main package

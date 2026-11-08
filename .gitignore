@@ -1,1 +1,4 @@
 docker/
+
+# IDE settings (run configs contain local AWS profiles / bucket names)
+.idea/

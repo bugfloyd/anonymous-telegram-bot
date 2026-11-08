@@ -1,8 +1,45 @@
+# Bootstrap stack: everything CI/CD needs before it can deploy the app stack
+# (../). It's applied by an account admin via scripts/bootstrap.sh, never by CI,
+# so the pipeline can't widen its own permissions.
+
 provider "aws" {
-  region = var.init_aws_region
+  region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project   = "anonymous-telegram-bot"
+      Stack     = "bootstrap"
+      ManagedBy = "terraform"
+    }
+  }
 }
 
-# S3 bucket to store lambda function codes
-resource "aws_s3_bucket" "lambda_bucket" {
-  bucket = var.init_lambda_bucket
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
+
+locals {
+  account_id = data.aws_caller_identity.current.account_id
+  partition  = data.aws_partition.current.partition
+  region     = var.aws_region
+
+  # Names of the resources managed by the app stack (../main.tf). The deploy
+  # role may only touch these, so keep both stacks in sync.
+  app = {
+    function_name    = "AnonymousBot"
+    table_name       = "AnonymousBot"
+    secret_name      = "anonymous-bot-secrets"
+    lambda_role_name = "anonymous-bot-lambda"
+    lambda_log_group = "/aws/lambda/AnonymousBot"
+    api_log_group    = "/aws/apigateway/anonymous-bot"
+  }
+
+  arns = {
+    function     = "arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${local.app.function_name}"
+    table        = "arn:${local.partition}:dynamodb:${local.region}:${local.account_id}:table/${local.app.table_name}"
+    secret       = "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.app.secret_name}-*"
+    lambda_role  = "arn:${local.partition}:iam::${local.account_id}:role/${local.app.lambda_role_name}"
+    log_group    = "arn:${local.partition}:logs:${local.region}:${local.account_id}:log-group"
+    apigateway   = "arn:${local.partition}:apigateway:${local.region}::"
+    state_bucket = aws_s3_bucket.state.arn
+  }
 }

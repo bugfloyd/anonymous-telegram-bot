@@ -9,6 +9,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/webhook"
 	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
 	"log"
 	"net/http"
@@ -19,6 +20,12 @@ type APIRequest events.APIGatewayProxyRequest
 
 // InitBot is our lambda handler invoked by the `lambda.Start` function call
 func InitBot(request APIRequest) (APIResponse, error) {
+	// Reject requests that don't come from Telegram before doing any work.
+	if !webhook.ValidRequest(request.Headers, secrets.WebhookSecret) {
+		log.Println("rejected request: missing or invalid webhook secret token")
+		return APIResponse{StatusCode: http.StatusUnauthorized, Body: "unauthorized"}, nil
+	}
+
 	// Create bot from environment value.
 	b, err := gotgbot.NewBot(secrets.BotToken, &gotgbot.BotOpts{
 		BotClient: &gotgbot.BaseBotClient{
