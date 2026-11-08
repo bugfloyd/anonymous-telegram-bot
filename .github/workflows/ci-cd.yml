@@ -166,6 +166,18 @@ jobs:
           -backend-config="bucket=${TF_STATE_BUCKET}"
           -backend-config="region=${AWS_REGION}"
 
+      # Workflow logs are public. Hide identifiers that reveal the webhook
+      # endpoint before Terraform prints them (no output on the first deploy).
+      - name: Mask resource identifiers
+        working-directory: infra
+        run: |
+          api_id=$(terraform state show -no-color aws_apigatewayv2_api.bot 2>/dev/null |
+            awk -F'"' '/^ *id *=/ { print $2; exit }' || true)
+          if [ -n "$api_id" ]; then
+            echo "::add-mask::${api_id}"
+            echo "API ID masked"
+          fi
+
       - name: Terraform plan
         working-directory: infra
         env:

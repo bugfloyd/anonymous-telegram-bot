@@ -110,6 +110,9 @@ data "aws_iam_policy_document" "deploy" {
       "apigateway:PUT",
       "apigateway:PATCH",
       "apigateway:DELETE",
+      # Checked separately when resources (e.g. stages) are created with tags.
+      "apigateway:TagResource",
+      "apigateway:UntagResource",
     ]
     resources = [
       "${local.arns.apigateway}/apis",
