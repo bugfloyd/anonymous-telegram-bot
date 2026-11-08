@@ -56,3 +56,21 @@ variable "api_throttle_burst_limit" {
   type        = number
   default     = 20
 }
+
+variable "invite_only" {
+  description = "Whether users need an invitation to get their own link. Set to false to open the bot to everyone."
+  type        = bool
+  default     = true
+}
+
+variable "admin_telegram_ids" {
+  description = "Comma-separated Telegram user IDs of admins (can invite without limit and use /levels, /setlevel, /grant)"
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^[0-9]*(,[0-9]+)*$", replace(var.admin_telegram_ids, " ", "")))
+    error_message = "admin_telegram_ids must be comma-separated numeric Telegram user IDs."
+  }
+}

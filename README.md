@@ -67,6 +67,13 @@ Optional `production` environment variables:
 |---|---|---|
 | `DEFAULT_LANGUAGE` | *(empty: detect from client)* | `en_US` or `fa_IR` |
 | `BOT_SECRET_VERSION` | `1` | Increase after changing `BOT_TOKEN` so the new token is written to Secrets Manager |
+| `INVITE_ONLY` | `true` | Set to `false` to open the bot to everyone (see [Invitations](#invitations)) |
+
+Optional `production` environment secret:
+
+| Secret | Purpose |
+|---|---|
+| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs of admins (see [Invitations](#invitations)) |
 
 ### Rotating the bot token
 
@@ -78,6 +85,27 @@ Optional `production` environment variables:
 ### Tearing down
 
 The DynamoDB table has deletion protection and the state bucket has `prevent_destroy`. Turn those off deliberately before running `terraform destroy`.
+
+## Invitations
+
+The bot is **invite-only** by default. Anyone can send messages to registered users through their links, but getting your own link or username requires an invitation.
+
+- **Joining:** open an invitation link (`t.me/<bot>?start=inv-<code>`), or send `/register` and enter the code.
+- **Levels:** people invited by an admin are level 1, their invitees level 2, and so on. Only the level number is stored, never who invited whom.
+- **Inviting:** `/invite` shows how many invitations you can give and your codes, and lets you create a code for a number of people. Your budget is your level's allowance plus any personal grants, minus what you've already put into codes. It's enforced atomically, so it can't be overspent.
+- **Admins** (Telegram user IDs in the `ADMIN_TELEGRAM_IDS` secret) can invite without limit and use:
+
+  | Command | What it does |
+  |---|---|
+  | `/levels` | Show each level's allowance |
+  | `/setlevel <level> <invitations>` | Set a level's allowance; applies right away to existing and new users at that level (unset levels: 0) |
+  | `/grant <@username or link> <invitations>` | Give one user extra invitations on top of their level's allowance |
+
+  To make yourself an admin, find your Telegram user ID (e.g. with a user-info bot) and run `gh secret set ADMIN_TELEGRAM_IDS --env production`, then redeploy.
+
+**Opening the bot to everyone:** set the `INVITE_ONLY` variable to `false` and run the workflow on `main`. No code change is needed, and invitation commands then reply that no invitation is required.
+
+**Removing the system entirely:** delete `bot/common/invitations/`, `bot/common/invite.go` and the hooks that call them (`start`, `getLink`, the username flow, `processText`, and the command/callback registrations), the `aws_dynamodb_table.invitations` resource with its IAM entries, and the invitation texts.
 
 ## Local development
 

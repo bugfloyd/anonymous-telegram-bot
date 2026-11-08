@@ -8,6 +8,7 @@ import (
 	"github.com/bugfloyd/telegram-incognito-bot/common/botinfo"
 	"github.com/bugfloyd/telegram-incognito-bot/common/conversation"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
+	"github.com/bugfloyd/telegram-incognito-bot/common/invitations"
 	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 	"github.com/bugfloyd/telegram-incognito-bot/secrets"
 	"github.com/sqids/sqids-go"
@@ -43,6 +44,9 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		return nil
 	}
 	if len(args) == 2 && args[0] == "/start" {
+		if code, ok := invitations.CodeFromPayload(args[1]); ok {
+			return r.startWithInvitation(b, ctx, code)
+		}
 		var err error
 		var receiverUser *users.User
 		var identity string
@@ -145,6 +149,9 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
+	if ok, err := r.mayOwnLink(b, ctx); !ok {
+		return err
+	}
 	s, _ := sqids.New(sqids.Options{
 		Alphabet: secrets.SqidsAlphabet,
 	})
@@ -188,6 +195,10 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 		return r.sendMessageNotSent(b, ctx)
 	case users.SettingUsername:
 		return r.setUsername(b, ctx)
+	case users.EnteringInvitationCode:
+		return r.redeemInvitation(b, ctx, ctx.EffectiveMessage.Text)
+	case users.CreatingInvitation:
+		return r.createInvitation(b, ctx)
 	default:
 		// Only something that looks like a command is an invalid command.
 		if strings.HasPrefix(ctx.EffectiveMessage.Text, "/") {

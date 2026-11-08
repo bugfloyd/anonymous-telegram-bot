@@ -21,6 +21,13 @@ const (
 	LanguageCommand   Command = "language"
 	UnBlockAllCommand Command = "unblockall"
 	TextMessage       Command = "text"
+
+	// Invitations (see invite.go)
+	RegisterCommand Command = "register"
+	InviteCommand   Command = "invite"
+	LevelsCommand   Command = "levels"
+	SetLevelCommand Command = "setlevel"
+	GrantCommand    Command = "grant"
 )
 
 const (
@@ -33,6 +40,10 @@ const (
 	CancelUsernameCallback CallbackCommand = "cancel-username-callback"
 	SetLanguageCallback    CallbackCommand = "set-language-callback"
 	CancelLanguageCallback CallbackCommand = "cancel-language-callback"
+
+	// Invitations (see invite.go)
+	CreateInvitationCallback CallbackCommand = "create-invitation-callback"
+	CancelInvitationCallback CallbackCommand = "cancel-invitation-callback"
 )
 
 type BlockedBy string
@@ -98,6 +109,16 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 			return r.processText(b, ctx)
 		case UnBlockAllCommand:
 			return r.unBlockAll(b, ctx)
+		case RegisterCommand:
+			return r.register(b, ctx)
+		case InviteCommand:
+			return r.invite(b, ctx)
+		case LevelsCommand:
+			return r.levels(b, ctx)
+		case SetLevelCommand:
+			return r.setLevel(b, ctx)
+		case GrantCommand:
+			return r.grant(b, ctx)
 		default:
 			return fmt.Errorf("unknown command: %s", c)
 		}
@@ -129,6 +150,10 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 			return r.languageCallback(b, ctx, "SET")
 		case CancelLanguageCallback:
 			return r.languageCallback(b, ctx, "CANCEL")
+		case CreateInvitationCallback:
+			return r.createInvitationCallback(b, ctx)
+		case CancelInvitationCallback:
+			return r.cancelInvitationCallback(b, ctx)
 		default:
 			return fmt.Errorf("unknown command: %s", c)
 		}

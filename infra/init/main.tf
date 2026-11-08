@@ -27,6 +27,7 @@ locals {
   app = {
     function_name    = "IncognitoChatBot"
     table_name       = "IncognitoChatBot"
+    invitations_name = "IncognitoChatBot-Invitations"
     secret_name      = "incognito-chat-bot-secrets"
     lambda_role_name = "incognito-chat-bot-lambda"
     lambda_log_group = "/aws/lambda/IncognitoChatBot"
@@ -36,6 +37,7 @@ locals {
   arns = {
     function     = "arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${local.app.function_name}"
     table        = "arn:${local.partition}:dynamodb:${local.region}:${local.account_id}:table/${local.app.table_name}"
+    invitations  = "arn:${local.partition}:dynamodb:${local.region}:${local.account_id}:table/${local.app.invitations_name}"
     secret       = "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.app.secret_name}-*"
     lambda_role  = "arn:${local.partition}:iam::${local.account_id}:role/${local.app.lambda_role_name}"
     log_group    = "arn:${local.partition}:logs:${local.region}:${local.account_id}:log-group"
