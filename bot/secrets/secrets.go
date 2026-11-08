@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/webhook"
+	"github.com/bugfloyd/telegram-incognito-bot/common/webhook"
 )
 
 // SecretStruct represents the structure of the JSON-encoded secret string
@@ -25,7 +25,7 @@ var SqidsAlphabet string
 var WebhookSecret string
 
 func init() {
-	secretName := "anonymous-bot-secrets"
+	secretName := "incognito-chat-bot-secrets"
 	awsRegion := os.Getenv("AWS_REGION")
 
 	token := os.Getenv("BOT_TOKEN")

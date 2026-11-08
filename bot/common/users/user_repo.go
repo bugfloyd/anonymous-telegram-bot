@@ -34,7 +34,7 @@ func NewUserRepository() (*UserRepository, error) {
 	db := dynamo.New(sess)
 
 	return &UserRepository{
-		table: db.Table("AnonymousBot"),
+		table: db.Table("IncognitoChatBot"),
 	}, nil
 }
 

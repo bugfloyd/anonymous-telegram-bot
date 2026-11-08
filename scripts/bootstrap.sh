@@ -25,7 +25,7 @@ init_dir="$root/infra/init"
 
 repo=${GITHUB_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
 account_id=$(aws sts get-caller-identity --query Account --output text)
-state_bucket="anonymous-bot-tfstate-${account_id}-${region}"
+state_bucket="incognito-chat-bot-tfstate-${account_id}-${region}"
 
 echo "Bootstrapping ${repo} (environment: ${environment}) in AWS ${region}"
 

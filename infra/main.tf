@@ -3,7 +3,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project   = "anonymous-telegram-bot"
+      Project   = "telegram-incognito-bot"
       Stack     = "app"
       ManagedBy = "terraform"
     }
@@ -16,16 +16,16 @@ data "aws_partition" "current" {}
 locals {
   # These names are referenced by the bootstrap stack's deploy-role policy
   # (init/main.tf) and some by the bot code. Keep them in sync.
-  function_name    = "AnonymousBot"
-  table_name       = "AnonymousBot"          # bot/common/users/user_repo.go
-  secret_name      = "anonymous-bot-secrets" # bot/secrets/secrets.go
-  lambda_role_name = "anonymous-bot-lambda"
-  api_name         = "anonymous-bot"
+  function_name    = "IncognitoChatBot"
+  table_name       = "IncognitoChatBot"           # bot/common/users/user_repo.go
+  secret_name      = "incognito-chat-bot-secrets" # bot/secrets/secrets.go
+  lambda_role_name = "incognito-chat-bot-lambda"
+  api_name         = "incognito-chat-bot"
   webhook_path     = "/webhook"
 
   # Created by the bootstrap stack. The deploy role may only create the
   # Lambda role with this boundary attached.
-  lambda_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/anonymous-bot-lambda-boundary"
+  lambda_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/incognito-chat-bot-lambda-boundary"
 }
 
 # ---------------------------------------------------------------------------
@@ -184,7 +184,7 @@ resource "aws_iam_role_policy" "lambda" {
 
 resource "aws_lambda_function" "bot" {
   function_name    = local.function_name
-  description      = "Anonymous Telegram bot webhook handler"
+  description      = "Incognito chat bot Telegram webhook handler"
   role             = aws_iam_role.lambda.arn
   filename         = var.lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda_zip_path)

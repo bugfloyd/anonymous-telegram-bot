@@ -1,4 +1,4 @@
-module github.com/bugfloyd/anonymous-telegram-bot
+module github.com/bugfloyd/telegram-incognito-bot
 
 go 1.26
 

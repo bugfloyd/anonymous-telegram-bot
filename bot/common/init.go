@@ -9,8 +9,8 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/callbackquery"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext/handlers/filters/message"
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/webhook"
-	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
+	"github.com/bugfloyd/telegram-incognito-bot/common/webhook"
+	"github.com/bugfloyd/telegram-incognito-bot/secrets"
 	"log"
 	"net/http"
 )

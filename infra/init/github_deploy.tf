@@ -30,7 +30,7 @@ data "aws_iam_policy_document" "deploy_trust" {
 }
 
 resource "aws_iam_role" "deploy" {
-  name                 = "anonymous-bot-github-deploy"
+  name                 = "incognito-chat-bot-github-deploy"
   description          = "Assumed by GitHub Actions (${var.github_environment} environment) to deploy the app stack"
   assume_role_policy   = data.aws_iam_policy_document.deploy_trust.json
   max_session_duration = 3600
@@ -183,8 +183,8 @@ data "aws_iam_policy_document" "deploy" {
 }
 
 resource "aws_iam_policy" "deploy" {
-  name        = "anonymous-bot-github-deploy"
-  description = "Least-privilege permissions for deploying the anonymous bot app stack"
+  name        = "incognito-chat-bot-github-deploy"
+  description = "Least-privilege permissions for deploying the incognito chat bot app stack"
   policy      = data.aws_iam_policy_document.deploy.json
 }
 
@@ -210,7 +210,7 @@ data "aws_iam_policy_document" "lambda_boundary" {
 }
 
 resource "aws_iam_policy" "lambda_boundary" {
-  name        = "anonymous-bot-lambda-boundary"
-  description = "Permissions boundary for the anonymous bot Lambda execution role"
+  name        = "incognito-chat-bot-lambda-boundary"
+  description = "Permissions boundary for the incognito chat bot Lambda execution role"
   policy      = data.aws_iam_policy_document.lambda_boundary.json
 }
