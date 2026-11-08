@@ -17,8 +17,9 @@ locals {
   # These names are referenced by the bootstrap stack's deploy-role policy
   # (init/main.tf) and some by the bot code. Keep them in sync.
   function_name    = "IncognitoChatBot"
-  table_name       = "IncognitoChatBot"           # bot/common/users/user_repo.go
-  secret_name      = "incognito-chat-bot-secrets" # bot/secrets/secrets.go
+  table_name       = "IncognitoChatBot"             # bot/common/users/user_repo.go
+  invitations_name = "IncognitoChatBot-Invitations" # bot/common/invitations/repository.go
+  secret_name      = "incognito-chat-bot-secrets"   # bot/secrets/secrets.go
   lambda_role_name = "incognito-chat-bot-lambda"
   api_name         = "incognito-chat-bot"
   webhook_path     = "/webhook"
@@ -130,6 +131,50 @@ resource "aws_dynamodb_table" "main" {
   }
 }
 
+# Invite-only access: invitation codes and per-level allowances
+# (bot/common/invitations). Delete this table together with that package to
+# remove the invitation system.
+resource "aws_dynamodb_table" "invitations" {
+  name                        = local.invitations_name
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "ID"
+  deletion_protection_enabled = true
+
+  point_in_time_recovery {
+    enabled = true
+  }
+
+  attribute {
+    name = "ID"
+    type = "S"
+  }
+
+  attribute {
+    name = "OwnerUUID"
+    type = "S"
+  }
+
+  attribute {
+    name = "CreatedAt"
+    type = "N"
+  }
+
+  global_secondary_index {
+    name            = "OwnerUUID-GSI"
+    projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "OwnerUUID"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "CreatedAt"
+      key_type       = "RANGE"
+    }
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Lambda
 # ---------------------------------------------------------------------------
@@ -164,9 +209,14 @@ data "aws_iam_policy_document" "lambda" {
   }
 
   statement {
-    sid       = "DynamoDB"
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
-    resources = [aws_dynamodb_table.main.arn, "${aws_dynamodb_table.main.arn}/index/*"]
+    sid     = "DynamoDB"
+    actions = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+    resources = [
+      aws_dynamodb_table.main.arn,
+      "${aws_dynamodb_table.main.arn}/index/*",
+      aws_dynamodb_table.invitations.arn,
+      "${aws_dynamodb_table.invitations.arn}/index/*",
+    ]
   }
 
   statement {
@@ -200,6 +250,8 @@ resource "aws_lambda_function" "bot" {
       # The bot reads its secret once per execution environment. Changing this
       # value replaces those environments, so a rotated token takes effect.
       BOT_SECRET_VERSION = tostring(var.bot_secret_version)
+      INVITE_ONLY        = tostring(var.invite_only)
+      ADMIN_TELEGRAM_IDS = var.admin_telegram_ids
     }
   }
 

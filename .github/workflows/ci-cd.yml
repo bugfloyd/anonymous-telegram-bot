@@ -201,6 +201,8 @@ jobs:
           TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
           TF_VAR_bot_secret_version: ${{ vars.BOT_SECRET_VERSION || '1' }}
           TF_VAR_default_language: ${{ vars.DEFAULT_LANGUAGE }}
+          TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
+          TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
         run: terraform plan -out=tfplan
 
       - name: Terraform apply

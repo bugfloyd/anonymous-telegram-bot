@@ -55,6 +55,9 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewCommand(string(UsernameCommand), rootHandler.init(UsernameCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(LanguageCommand), rootHandler.init(LanguageCommand)))
 	dispatcher.AddHandler(handlers.NewCommand(string(UnBlockAllCommand), rootHandler.init(UnBlockAllCommand)))
+	for _, c := range []Command{RegisterCommand, InviteCommand, LevelsCommand, SetLevelCommand, GrantCommand} {
+		dispatcher.AddHandler(handlers.NewCommand(string(c), rootHandler.init(c)))
+	}
 
 	// Add handler to process all text messages
 	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
@@ -69,6 +72,8 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cu"), rootHandler.init(CancelUsernameCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("l|"), rootHandler.init(SetLanguageCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("lc"), rootHandler.init(CancelLanguageCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Equal(createInvitationCallbackData), rootHandler.init(CreateInvitationCallback)))
+	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Equal(cancelInvitationCallbackData), rootHandler.init(CancelInvitationCallback)))
 
 	var update gotgbot.Update
 	if err := json.Unmarshal([]byte(request.Body), &update); err != nil {

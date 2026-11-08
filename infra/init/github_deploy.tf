@@ -63,9 +63,12 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
-    sid       = "DynamoDB"
-    actions   = ["dynamodb:*"]
-    resources = [local.arns.table, "${local.arns.table}/*"]
+    sid     = "DynamoDB"
+    actions = ["dynamodb:*"]
+    resources = [
+      local.arns.table, "${local.arns.table}/*",
+      local.arns.invitations, "${local.arns.invitations}/*",
+    ]
   }
 
   statement {
@@ -197,9 +200,12 @@ data "aws_iam_policy_document" "lambda_boundary" {
   }
 
   statement {
-    sid       = "DynamoDB"
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
-    resources = [local.arns.table, "${local.arns.table}/index/*"]
+    sid     = "DynamoDB"
+    actions = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+    resources = [
+      local.arns.table, "${local.arns.table}/index/*",
+      local.arns.invitations, "${local.arns.invitations}/index/*",
+    ]
   }
 
   statement {

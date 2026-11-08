@@ -1,21 +1,18 @@
 package users
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/bugfloyd/telegram-incognito-bot/common/db"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"github.com/google/uuid"
 )
@@ -30,9 +27,6 @@ const (
 	linkKeyIndex  = "LinkKey-GSI"
 )
 
-// opTimeout bounds every DynamoDB call so a slow request can't hang the handler.
-const opTimeout = 5 * time.Second
-
 // ErrNotFound is returned when no user matches a lookup.
 var ErrNotFound = errors.New("user not found")
 
@@ -41,35 +35,21 @@ type UserRepository struct {
 	table  string
 }
 
-// loadClient creates the DynamoDB client once per process (Lambda execution
-// environment) and reuses it for every update. DYNAMODB_ENDPOINT points it
-// at a local DynamoDB for development and tests.
-var loadClient = sync.OnceValues(func() (*dynamodb.Client, error) {
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-	return dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
-		if endpoint := os.Getenv("DYNAMODB_ENDPOINT"); endpoint != "" {
-			o.BaseEndpoint = aws.String(endpoint)
-		}
-	}), nil
-})
-
 func NewUserRepository() (*UserRepository, error) {
 	return newUserRepository(TableName)
 }
 
 func newUserRepository(table string) (*UserRepository, error) {
-	client, err := loadClient()
+	client, err := db.Client()
 	if err != nil {
 		return nil, err
 	}
 	return &UserRepository{client: client, table: table}, nil
 }
 
-func opContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), opTimeout)
+// Key is the primary key of a user's item (used by other packages' transactions).
+func Key(userUUID string) map[string]types.AttributeValue {
+	return itemKey(userUUID)
 }
 
 func itemKey(userUUID string) map[string]types.AttributeValue {
@@ -96,7 +76,7 @@ func (repo *UserRepository) CreateUser(userID int64) (*User, error) {
 		return nil, fmt.Errorf("failed to encode user: %w", err)
 	}
 
-	ctx, cancel := opContext()
+	ctx, cancel := db.OpContext()
 	defer cancel()
 	_, err = repo.client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName:                &repo.table,
@@ -114,7 +94,7 @@ func (repo *UserRepository) ReadUserByUUID(userUUID string) (*User, error) {
 	if userUUID == "" {
 		return nil, ErrNotFound
 	}
-	ctx, cancel := opContext()
+	ctx, cancel := db.OpContext()
 	defer cancel()
 	out, err := repo.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: &repo.table,
@@ -152,7 +132,7 @@ func (repo *UserRepository) queryOne(index string, key expression.KeyConditionBu
 		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
 
-	ctx, cancel := opContext()
+	ctx, cancel := db.OpContext()
 	defer cancel()
 	out, err := repo.client.Query(ctx, &dynamodb.QueryInput{
 		TableName:                 &repo.table,
@@ -224,6 +204,31 @@ func (repo *UserRepository) StartSettingUsername(u *User) error {
 	return nil
 }
 
+// StartEnteringInvitationCode makes the user's next message an invitation code.
+func (repo *UserRepository) StartEnteringInvitationCode(u *User) error {
+	return repo.startPrompt(u, EnteringInvitationCode)
+}
+
+// StartCreatingInvitation makes the user's next message the number of uses for
+// a new invitation code.
+func (repo *UserRepository) StartCreatingInvitation(u *User) error {
+	return repo.startPrompt(u, CreatingInvitation)
+}
+
+// startPrompt puts the user in a state where their next message answers a
+// question from the bot, with no conversation open.
+func (repo *UserRepository) startPrompt(u *User, state State) error {
+	upd := expression.Set(expression.Name("State"), expression.Value(state)).
+		Remove(expression.Name("ContactUUID")).
+		Remove(expression.Name("ReplyMessageID")).
+		Remove(expression.Name("LastSentAt"))
+	if err := repo.update(u, upd); err != nil {
+		return fmt.Errorf("failed to set state %s: %w", state, err)
+	}
+	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = state, "", 0, 0
+	return nil
+}
+
 // SetUsername stores a username and returns the user to Idle.
 func (repo *UserRepository) SetUsername(u *User, username string) error {
 	if username == "" {
@@ -282,8 +287,7 @@ func (repo *UserRepository) InterruptFollowUps(userUUID, fromUUID string) (bool,
 		And(expression.Name("State").Equal(expression.Value(Continuing))).
 		And(expression.Name("ContactUUID").NotEqual(expression.Value(fromUUID)))
 	err := repo.updateWhere(userUUID, idle(), cond)
-	var failed *types.ConditionalCheckFailedException
-	if errors.As(err, &failed) {
+	if db.IsConditionFailed(err) {
 		return false, nil
 	}
 	if err != nil {
@@ -349,7 +353,7 @@ func (repo *UserRepository) updateWhere(userUUID string, upd expression.UpdateBu
 		return fmt.Errorf("failed to build update: %w", err)
 	}
 
-	ctx, cancel := opContext()
+	ctx, cancel := db.OpContext()
 	defer cancel()
 	_, err = repo.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 &repo.table,

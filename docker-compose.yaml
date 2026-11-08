@@ -25,6 +25,8 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - SQIDS_ALPHABET=${SQIDS_ALPHABET}
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-}
+      - INVITE_ONLY=${INVITE_ONLY:-true}
+      - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS:-}
       - DYNAMODB_ENDPOINT=http://dynamodb-local:8000
       - AWS_REGION=local
       - AWS_ACCESS_KEY_ID=dummy

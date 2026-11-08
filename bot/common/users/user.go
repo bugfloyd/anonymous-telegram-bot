@@ -24,6 +24,22 @@ type User struct {
 	// LastSentAt is when the user's last message in the current conversation
 	// was delivered (unix seconds), while State is Continuing.
 	LastSentAt int64 `dynamodbav:"LastSentAt,omitempty"`
+
+	// Invitations (see the invitations package).
+	// Level is how far the user is from an admin in the invitation tree:
+	// 1 = invited by an admin, 2 = invited by a level-1 user, and so on.
+	// 0 means not registered. Who invited whom is deliberately not stored.
+	Level int `dynamodbav:"Level,omitempty"`
+	// InvitesGranted are extra invitations given to this user by an admin,
+	// on top of their level's allowance.
+	InvitesGranted int `dynamodbav:"InvitesGranted,omitempty"`
+	// InvitesAllocated is how many invitation uses this user has put into codes.
+	InvitesAllocated int `dynamodbav:"InvitesAllocated,omitempty"`
+}
+
+// Registered reports whether the user joined with an invitation.
+func (u *User) Registered() bool {
+	return u.Level > 0
 }
 
 type State string
@@ -37,4 +53,9 @@ const (
 	// person until something else interrupts (see the conversation package).
 	Continuing      State = "CONTINUING"
 	SettingUsername State = "SETTING_USERNAME"
+	// EnteringInvitationCode: the user's next message is an invitation code.
+	EnteringInvitationCode State = "ENTERING_INVITATION_CODE"
+	// CreatingInvitation: the user's next message is the number of uses for a
+	// new invitation code.
+	CreatingInvitation State = "CREATING_INVITATION"
 )

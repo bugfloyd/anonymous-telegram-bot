@@ -51,6 +51,22 @@ const (
 	SameUsernameText                TextID = "SameUsernameText"
 	MessageNotSentText              TextID = "MessageNotSentText"
 	OpenedNotificationText          TextID = "OpenedNotificationText"
+	InviteOnlyText                  TextID = "InviteOnlyText"
+	EnterInvitationCodeText         TextID = "EnterInvitationCodeText"
+	RegisteredText                  TextID = "RegisteredText"
+	AlreadyRegisteredText           TextID = "AlreadyRegisteredText"
+	InvitationNotNeededText         TextID = "InvitationNotNeededText"
+	InvalidInvitationCodeText       TextID = "InvalidInvitationCodeText"
+	InvitationUsedUpText            TextID = "InvitationUsedUpText"
+	InvitationsLeftText             TextID = "InvitationsLeftText"
+	UnlimitedInvitationsText        TextID = "UnlimitedInvitationsText"
+	YourInvitationsText             TextID = "YourInvitationsText"
+	InvitationLineText              TextID = "InvitationLineText"
+	CreateInvitationButtonText      TextID = "CreateInvitationButtonText"
+	HowManyUsesText                 TextID = "HowManyUsesText"
+	InvalidUsesText                 TextID = "InvalidUsesText"
+	InvitationCreatedText           TextID = "InvitationCreatedText"
+	NoInvitationsToGiveText         TextID = "NoInvitationsToGiveText"
 )
 
 type Language string
