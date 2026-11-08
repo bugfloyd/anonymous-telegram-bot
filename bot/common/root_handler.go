@@ -96,7 +96,7 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 	case CallbackCommand:
 		// Reset user state if necessary
 		if r.user.State != users.Idle || r.user.ContactUUID != "" || r.user.ReplyMessageID != 0 {
-			err := r.userRepo.ResetUserState(r.user)
+			err := r.userRepo.ResetState(r.user)
 			if err != nil {
 				return err
 			}

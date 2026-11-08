@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -14,13 +15,14 @@ import (
 
 func (r *RootHandler) processUser(userRepo *users.UserRepository, ctx *ext.Context) (*users.User, error) {
 	user, err := userRepo.ReadUserByUserId(ctx.EffectiveUser.Id)
-	if err != nil {
+	if errors.Is(err, users.ErrNotFound) {
+		// First contact: create the user. Any other error is returned, so a
+		// transient failure never creates a duplicate user.
 		user, err = userRepo.CreateUser(ctx.EffectiveUser.Id)
-		if err != nil {
-			return nil, err
-		}
 	}
-
+	if err != nil {
+		return nil, err
+	}
 	return user, nil
 }
 
@@ -28,7 +30,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 	args := ctx.Args()
 	if len(args) == 1 && args[0] == "/start" {
 		// Reset user state
-		err := r.userRepo.ResetUserState(r.user)
+		err := r.userRepo.ResetState(r.user)
 		if err != nil {
 			return err
 		}
@@ -115,10 +117,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 
 		// Set user state to sending
-		err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":       users.Sending,
-			"ContactUUID": receiverUser.UUID,
-		})
+		err = r.userRepo.StartSending(r.user, receiverUser.UUID, 0)
 		if err != nil {
 			return fmt.Errorf("failed to update user state: %w", err)
 		}
@@ -137,7 +136,7 @@ func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}
-	err = r.userRepo.ResetUserState(r.user)
+	err = r.userRepo.ResetState(r.user)
 	if err != nil {
 		return err
 	}
@@ -165,7 +164,7 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 	if err != nil {
 		return err
 	}
-	err = r.userRepo.ResetUserState(r.user)
+	err = r.userRepo.ResetState(r.user)
 	if err != nil {
 		return err
 	}

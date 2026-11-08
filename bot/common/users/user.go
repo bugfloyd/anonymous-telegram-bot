@@ -1,21 +1,26 @@
 package users
 
 import (
-	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"time"
+
+	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 )
 
+// User is stored as one DynamoDB item. The attribute names and types must
+// stay compatible with existing data; see TestReadsExistingItemFormat.
 type User struct {
-	UUID           string `dynamo:",hash"`
-	UserID         int64  `index:"UserID-GSI,hash"`
-	Username       string `index:"Username-GSI,hash"`
-	State          State
-	Blacklist      []string      `dynamo:",set,omitempty,omitemptyelem"`
-	ContactUUID    string        `dynamo:",omitempty"`
-	ReplyMessageID int64         `dynamo:",omitempty"`
-	Language       i18n.Language `dynamo:",omitempty"`
-	LinkKey        int32         `index:"LinkKey-GSI,hash"`
-	CreatedAt      time.Time     `dynamo:",unixtime" index:"LinkKey-GSI,range"`
+	UUID   string `dynamodbav:"UUID"`
+	UserID int64  `dynamodbav:"UserID"`
+	// Username is a GSI key, and DynamoDB rejects empty strings in index
+	// keys: an unset username must be absent from the item, never "".
+	Username       string        `dynamodbav:"Username,omitempty"`
+	State          State         `dynamodbav:"State"`
+	Blacklist      []string      `dynamodbav:"Blacklist,stringset,omitempty"`
+	ContactUUID    string        `dynamodbav:"ContactUUID,omitempty"`
+	ReplyMessageID int64         `dynamodbav:"ReplyMessageID,omitempty"`
+	Language       i18n.Language `dynamodbav:"Language,omitempty"`
+	LinkKey        int32         `dynamodbav:"LinkKey"`
+	CreatedAt      time.Time     `dynamodbav:"CreatedAt,unixtime"`
 }
 
 type State string

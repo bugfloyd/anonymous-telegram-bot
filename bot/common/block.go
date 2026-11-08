@@ -19,7 +19,7 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	receiverUUID := split[1]
 	replyMessageID := split[2]
 
-	err := r.userRepo.UpdateBlacklist(r.user, "add", receiverUUID)
+	err := r.userRepo.Block(r.user, receiverUUID)
 
 	if err != nil {
 		return fmt.Errorf("failed to block user: %w", err)
@@ -61,7 +61,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	receiverUUID := split[1]
 	replyMessageID := split[2]
 
-	err := r.userRepo.UpdateBlacklist(r.user, "delete", receiverUUID)
+	err := r.userRepo.Unblock(r.user, receiverUUID)
 
 	if err != nil {
 		return fmt.Errorf("failed to unblock user: %w", err)
@@ -109,7 +109,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) unBlockAll(b *gotgbot.Bot, ctx *ext.Context) error {
-	err := r.userRepo.UpdateBlacklist(r.user, "clear", "")
+	err := r.userRepo.UnblockAll(r.user)
 	if err != nil {
 		return fmt.Errorf("failed to unblock all users: %w", err)
 	}

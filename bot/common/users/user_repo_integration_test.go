@@ -2,14 +2,17 @@ package users
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
-	"github.com/guregu/dynamo/v2"
 )
 
 // These tests run against DynamoDB Local when DYNAMODB_ENDPOINT is set (CI
@@ -27,36 +30,74 @@ func newTestRepo(t *testing.T) *UserRepository {
 		}
 		t.Skip("DYNAMODB_ENDPOINT not set; skipping DynamoDB integration tests")
 	}
-	db, err := loadDB()
-	if err != nil {
-		t.Fatalf("load db: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	// Same shape as infra/main.tf: on-demand, three GSIs projecting ALL.
-	name := fmt.Sprintf("%s-test-%d", TableName, time.Now().UnixNano())
-	err = db.CreateTable(name, User{}).
-		OnDemand(true).
-		Project("UserID-GSI", dynamo.AllProjection).
-		Project("Username-GSI", dynamo.AllProjection).
-		Project("LinkKey-GSI", dynamo.AllProjection).
-		Wait(ctx)
-	if err != nil {
-		t.Fatalf("create table: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := db.Table(name).DeleteTable().Run(context.Background()); err != nil {
-			t.Errorf("delete table: %v", err)
-		}
-	})
-
-	repo, err := newUserRepository(name)
+	repo, err := newUserRepository(fmt.Sprintf("%s-test-%d", TableName, time.Now().UnixNano()))
 	if err != nil {
 		t.Fatalf("new repository: %v", err)
 	}
+	createTable(t, repo)
 	return repo
+}
+
+// createTable creates a table shaped like the one in infra/main.tf:
+// on-demand, keyed by UUID, with three GSIs projecting all attributes.
+func createTable(t *testing.T, repo *UserRepository) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	attr := func(name string, typ types.ScalarAttributeType) types.AttributeDefinition {
+		return types.AttributeDefinition{AttributeName: aws.String(name), AttributeType: typ}
+	}
+	key := func(name string, typ types.KeyType) types.KeySchemaElement {
+		return types.KeySchemaElement{AttributeName: aws.String(name), KeyType: typ}
+	}
+	gsi := func(name string, keys ...types.KeySchemaElement) types.GlobalSecondaryIndex {
+		return types.GlobalSecondaryIndex{
+			IndexName:  aws.String(name),
+			KeySchema:  keys,
+			Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll},
+		}
+	}
+	_, err := repo.client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName:   &repo.table,
+		BillingMode: types.BillingModePayPerRequest,
+		AttributeDefinitions: []types.AttributeDefinition{
+			attr("UUID", types.ScalarAttributeTypeS),
+			attr("UserID", types.ScalarAttributeTypeN),
+			attr("Username", types.ScalarAttributeTypeS),
+			attr("LinkKey", types.ScalarAttributeTypeN),
+			attr("CreatedAt", types.ScalarAttributeTypeN),
+		},
+		KeySchema: []types.KeySchemaElement{key("UUID", types.KeyTypeHash)},
+		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
+			gsi(userIDIndex, key("UserID", types.KeyTypeHash)),
+			gsi(usernameIndex, key("Username", types.KeyTypeHash)),
+			gsi(linkKeyIndex, key("LinkKey", types.KeyTypeHash), key("CreatedAt", types.KeyTypeRange)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	waiter := dynamodb.NewTableExistsWaiter(repo.client)
+	if err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{TableName: &repo.table}, time.Minute); err != nil {
+		t.Fatalf("wait for table: %v", err)
+	}
+	t.Cleanup(func() {
+		_, err := repo.client.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: &repo.table})
+		if err != nil {
+			t.Errorf("delete table: %v", err)
+		}
+	})
+}
+
+// rawItem reads the stored item without the repository's decoding.
+func rawItem(t *testing.T, repo *UserRepository, userUUID string) map[string]types.AttributeValue {
+	t.Helper()
+	out, err := repo.client.GetItem(context.Background(), &dynamodb.GetItemInput{TableName: &repo.table, Key: itemKey(userUUID)})
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	return out.Item
 }
 
 func TestUserLifecycle(t *testing.T) {
@@ -73,13 +114,35 @@ func TestUserLifecycle(t *testing.T) {
 		t.Errorf("LinkKey %d is not a 6-digit number", u.LinkKey)
 	}
 
+	t.Run("stored in the existing item format", func(t *testing.T) {
+		item := rawItem(t, repo, u.UUID)
+		want := map[string]string{"UUID": "S", "UserID": "N", "State": "S", "LinkKey": "N", "CreatedAt": "N"}
+		for name, typ := range want {
+			if got := attrType(item[name]); got != typ {
+				t.Errorf("%s stored as %q, want %q", name, got, typ)
+			}
+		}
+		// Empty fields must be absent; an empty Username would break its index.
+		for _, name := range []string{"Username", "ContactUUID", "ReplyMessageID", "Language", "Blacklist"} {
+			if _, ok := item[name]; ok {
+				t.Errorf("%s should not be stored for a new user", name)
+			}
+		}
+		if n := item["CreatedAt"].(*types.AttributeValueMemberN).Value; n != fmt.Sprint(u.CreatedAt.Unix()) {
+			t.Errorf("CreatedAt stored as %s, want unix seconds %d", n, u.CreatedAt.Unix())
+		}
+	})
+
 	t.Run("read by UUID", func(t *testing.T) {
 		got, err := repo.ReadUserByUUID(u.UUID)
 		if err != nil {
 			t.Fatalf("ReadUserByUUID: %v", err)
 		}
-		if got.UserID != 42 || got.LinkKey != u.LinkKey || got.CreatedAt.Unix() != u.CreatedAt.Unix() {
+		if got.UserID != 42 || got.LinkKey != u.LinkKey || !got.CreatedAt.Equal(u.CreatedAt) || got.State != Idle {
 			t.Errorf("got %+v, want %+v", got, u)
+		}
+		if _, err := repo.ReadUserByUUID("no-such-uuid"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("unknown UUID: err = %v, want ErrNotFound", err)
 		}
 	})
 
@@ -88,10 +151,9 @@ func TestUserLifecycle(t *testing.T) {
 		if err != nil || got.UUID != u.UUID {
 			t.Fatalf("ReadUserByUserId: %+v, %v", got, err)
 		}
-		// The bot creates a new user when this lookup fails, so an unknown
-		// ID must return an error.
-		if _, err := repo.ReadUserByUserId(43); err == nil {
-			t.Error("expected an error for an unknown user ID")
+		// The bot creates a user only on ErrNotFound.
+		if _, err := repo.ReadUserByUserId(43); !errors.Is(err, ErrNotFound) {
+			t.Errorf("unknown user ID: err = %v, want ErrNotFound", err)
 		}
 	})
 
@@ -100,99 +162,199 @@ func TestUserLifecycle(t *testing.T) {
 		if err != nil || got.UUID != u.UUID {
 			t.Fatalf("ReadUserByLinkKey: %+v, %v", got, err)
 		}
-		if _, err := repo.ReadUserByLinkKey(u.LinkKey, u.CreatedAt.Unix()+1); err == nil {
-			t.Error("expected an error for a wrong creation time")
+		if _, err := repo.ReadUserByLinkKey(u.LinkKey, u.CreatedAt.Unix()+1); !errors.Is(err, ErrNotFound) {
+			t.Errorf("wrong creation time: err = %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("update persists and mirrors in memory", func(t *testing.T) {
-		err := repo.UpdateUser(u, map[string]interface{}{
-			"Username": "alice",
-			"State":    SettingUsername,
-			"Language": i18n.FaIR,
+	t.Run("sending a new message, then a reply, then reset", func(t *testing.T) {
+		if err := repo.StartSending(u, "contact-uuid", 0); err != nil {
+			t.Fatalf("StartSending: %v", err)
+		}
+		assertStored(t, repo, u, func(got *User) bool {
+			return got.State == Sending && got.ContactUUID == "contact-uuid" && got.ReplyMessageID == 0
 		})
-		if err != nil {
-			t.Fatalf("UpdateUser: %v", err)
+		if _, ok := rawItem(t, repo, u.UUID)["ReplyMessageID"]; ok {
+			t.Error("ReplyMessageID should be absent for a new message")
 		}
-		if u.Username != "alice" || u.State != SettingUsername || u.Language != i18n.FaIR {
-			t.Errorf("in-memory user not updated: %+v", u)
+
+		if err := repo.StartSending(u, "contact-uuid", 7); err != nil {
+			t.Fatalf("StartSending reply: %v", err)
 		}
+		assertStored(t, repo, u, func(got *User) bool {
+			return got.State == Sending && got.ContactUUID == "contact-uuid" && got.ReplyMessageID == 7
+		})
+
+		if err := repo.ResetState(u); err != nil {
+			t.Fatalf("ResetState: %v", err)
+		}
+		assertStored(t, repo, u, func(got *User) bool {
+			return got.State == Idle && got.ContactUUID == "" && got.ReplyMessageID == 0
+		})
+	})
+
+	t.Run("username: start, set, find, remove", func(t *testing.T) {
+		if err := repo.StartSettingUsername(u); err != nil {
+			t.Fatalf("StartSettingUsername: %v", err)
+		}
+		assertStored(t, repo, u, func(got *User) bool { return got.State == SettingUsername })
+
+		if err := repo.SetUsername(u, "alice"); err != nil {
+			t.Fatalf("SetUsername: %v", err)
+		}
+		assertStored(t, repo, u, func(got *User) bool { return got.Username == "alice" && got.State == Idle })
 		got, err := repo.ReadUserByUsername("alice")
-		if err != nil || got.UUID != u.UUID || got.State != SettingUsername || got.Language != i18n.FaIR {
+		if err != nil || got.UUID != u.UUID {
 			t.Fatalf("ReadUserByUsername: %+v, %v", got, err)
 		}
+
+		if err := repo.SetUsername(u, ""); err == nil {
+			t.Error("SetUsername should reject an empty username")
+		}
+
+		if err := repo.RemoveUsername(u); err != nil {
+			t.Fatalf("RemoveUsername: %v", err)
+		}
+		assertStored(t, repo, u, func(got *User) bool { return got.Username == "" && got.State == Idle })
+		if _, ok := rawItem(t, repo, u.UUID)["Username"]; ok {
+			t.Error("Username attribute should be removed, not emptied")
+		}
+		if _, err := repo.ReadUserByUsername("alice"); !errors.Is(err, ErrNotFound) {
+			t.Errorf("removed username still resolves: %v", err)
+		}
+		if _, err := repo.ReadUserByUsername(""); !errors.Is(err, ErrNotFound) {
+			t.Errorf("empty username: err = %v, want ErrNotFound", err)
+		}
 	})
 
-	t.Run("removing the username", func(t *testing.T) {
-		if err := repo.UpdateUser(u, map[string]interface{}{"Username": ""}); err != nil {
-			t.Fatalf("UpdateUser: %v", err)
+	t.Run("language", func(t *testing.T) {
+		if err := repo.StartSending(u, "contact-uuid", 3); err != nil {
+			t.Fatalf("StartSending: %v", err)
 		}
-		if _, err := repo.ReadUserByUsername("alice"); err == nil {
-			t.Error("username should no longer resolve")
+		if err := repo.SetLanguage(u, i18n.FaIR); err != nil {
+			t.Fatalf("SetLanguage: %v", err)
 		}
-	})
-
-	t.Run("sending state and reset", func(t *testing.T) {
-		err := repo.UpdateUser(u, map[string]interface{}{
-			"State":          Sending,
-			"ContactUUID":    "contact-uuid",
-			"ReplyMessageID": int64(7),
+		assertStored(t, repo, u, func(got *User) bool {
+			return got.Language == i18n.FaIR && got.State == Idle && got.ContactUUID == "" && got.ReplyMessageID == 0
 		})
-		if err != nil {
-			t.Fatalf("UpdateUser: %v", err)
-		}
-		got, _ := repo.ReadUserByUUID(u.UUID)
-		if got.State != Sending || got.ContactUUID != "contact-uuid" || got.ReplyMessageID != 7 {
-			t.Fatalf("state not persisted: %+v", got)
-		}
-
-		if err := repo.ResetUserState(u); err != nil {
-			t.Fatalf("ResetUserState: %v", err)
-		}
-		got, _ = repo.ReadUserByUUID(u.UUID)
-		for _, user := range []*User{u, got} {
-			if user.State != Idle || user.ContactUUID != "" || user.ReplyMessageID != 0 {
-				t.Errorf("state not reset: %+v", user)
-			}
-		}
 	})
 
 	t.Run("blacklist", func(t *testing.T) {
-		for _, step := range []struct{ method, value string }{{"add", "a"}, {"add", "b"}, {"add", "a"}} {
-			if err := repo.UpdateBlacklist(u, step.method, step.value); err != nil {
-				t.Fatalf("UpdateBlacklist(%s, %s): %v", step.method, step.value, err)
+		for _, id := range []string{"a", "b", "a"} {
+			if err := repo.Block(u, id); err != nil {
+				t.Fatalf("Block(%s): %v", id, err)
 			}
 		}
 		assertBlacklist(t, repo, u, "a", "b")
+		if typ := attrType(rawItem(t, repo, u.UUID)["Blacklist"]); typ != "SS" {
+			t.Errorf("Blacklist stored as %q, want a string set", typ)
+		}
 
-		if err := repo.UpdateBlacklist(u, "delete", "a"); err != nil {
-			t.Fatalf("delete: %v", err)
+		if err := repo.Unblock(u, "a"); err != nil {
+			t.Fatalf("Unblock: %v", err)
 		}
 		assertBlacklist(t, repo, u, "b")
 
-		if err := repo.UpdateBlacklist(u, "clear", ""); err != nil {
-			t.Fatalf("clear: %v", err)
+		if err := repo.UnblockAll(u); err != nil {
+			t.Fatalf("UnblockAll: %v", err)
 		}
 		assertBlacklist(t, repo, u)
+	})
 
-		if err := repo.UpdateBlacklist(u, "bogus", "x"); err == nil {
-			t.Error("expected an error for an invalid method")
+	t.Run("updates never create a user", func(t *testing.T) {
+		ghost := &User{UUID: "does-not-exist"}
+		if err := repo.ResetState(ghost); err == nil {
+			t.Error("updating a missing user should fail")
+		}
+		if item := rawItem(t, repo, ghost.UUID); item != nil {
+			t.Errorf("update created an item: %v", item)
 		}
 	})
 }
 
-// assertBlacklist checks both the in-memory user and the stored item.
-func assertBlacklist(t *testing.T, repo *UserRepository, u *User, want ...string) {
+// TestReadsExistingItemFormat checks that items stored by the previous
+// implementation (the format currently in production) still decode.
+func TestReadsExistingItemFormat(t *testing.T) {
+	repo := newTestRepo(t)
+	created := time.Unix(1762600000, 0)
+	item := map[string]types.AttributeValue{
+		"UUID":           &types.AttributeValueMemberS{Value: "legacy-uuid"},
+		"UserID":         &types.AttributeValueMemberN{Value: "1001"},
+		"State":          &types.AttributeValueMemberS{Value: "IDLE"},
+		"LinkKey":        &types.AttributeValueMemberN{Value: "123456"},
+		"CreatedAt":      &types.AttributeValueMemberN{Value: fmt.Sprint(created.Unix())},
+		"ReplyMessageID": &types.AttributeValueMemberN{Value: "0"},
+		"Username":       &types.AttributeValueMemberS{Value: "legacy"},
+		"Language":       &types.AttributeValueMemberS{Value: "fa_IR"},
+		"Blacklist":      &types.AttributeValueMemberSS{Value: []string{"x", "y"}},
+	}
+	if _, err := repo.client.PutItem(context.Background(), &dynamodb.PutItemInput{TableName: &repo.table, Item: item}); err != nil {
+		t.Fatalf("PutItem: %v", err)
+	}
+
+	for name, read := range map[string]func() (*User, error){
+		"by UUID":     func() (*User, error) { return repo.ReadUserByUUID("legacy-uuid") },
+		"by user ID":  func() (*User, error) { return repo.ReadUserByUserId(1001) },
+		"by username": func() (*User, error) { return repo.ReadUserByUsername("legacy") },
+		"by link key": func() (*User, error) { return repo.ReadUserByLinkKey(123456, created.Unix()) },
+	} {
+		got, err := read()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.UUID != "legacy-uuid" || got.UserID != 1001 || got.State != Idle || got.LinkKey != 123456 ||
+			!got.CreatedAt.Equal(created) || got.ReplyMessageID != 0 || got.Username != "legacy" ||
+			got.Language != i18n.FaIR || !slices.Equal(sorted(got.Blacklist), []string{"x", "y"}) {
+			t.Errorf("%s: decoded %+v", name, got)
+		}
+	}
+}
+
+// assertStored checks a condition on both the in-memory user and the stored item.
+func assertStored(t *testing.T, repo *UserRepository, u *User, ok func(*User) bool) {
 	t.Helper()
-	got, err := repo.ReadUserByUUID(u.UUID)
+	stored, err := repo.ReadUserByUUID(u.UUID)
 	if err != nil {
 		t.Fatalf("ReadUserByUUID: %v", err)
 	}
-	for _, list := range [][]string{u.Blacklist, got.Blacklist} {
-		sorted := slices.Clone(list)
-		slices.Sort(sorted)
-		if !slices.Equal(sorted, want) && !(len(sorted) == 0 && len(want) == 0) {
-			t.Errorf("blacklist = %v, want %v", sorted, want)
+	if !ok(u) {
+		t.Errorf("in-memory user: %+v", u)
+	}
+	if !ok(stored) {
+		t.Errorf("stored user: %+v", stored)
+	}
+}
+
+func assertBlacklist(t *testing.T, repo *UserRepository, u *User, want ...string) {
+	t.Helper()
+	stored, err := repo.ReadUserByUUID(u.UUID)
+	if err != nil {
+		t.Fatalf("ReadUserByUUID: %v", err)
+	}
+	for label, list := range map[string][]string{"in-memory": u.Blacklist, "stored": stored.Blacklist} {
+		if got := sorted(list); !slices.Equal(got, want) && !(len(got) == 0 && len(want) == 0) {
+			t.Errorf("%s blacklist = %v, want %v", label, got, want)
 		}
+	}
+}
+
+func sorted(s []string) []string {
+	s = slices.Clone(s)
+	slices.Sort(s)
+	return s
+}
+
+func attrType(av types.AttributeValue) string {
+	switch av.(type) {
+	case *types.AttributeValueMemberS:
+		return "S"
+	case *types.AttributeValueMemberN:
+		return "N"
+	case *types.AttributeValueMemberSS:
+		return "SS"
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%T", av)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
-	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 	"strings"
 )
 
@@ -80,12 +79,7 @@ func (r *RootHandler) languageCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("invalid language code in callback data: %s", cb.Data)
 		}
 
-		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":          users.Idle,
-			"ContactUUID":    "",
-			"ReplyMessageID": 0,
-			"Language":       language,
-		})
+		err := r.userRepo.SetLanguage(r.user, language)
 		if err != nil {
 			return fmt.Errorf("failed to update user language: %w", err)
 		}
