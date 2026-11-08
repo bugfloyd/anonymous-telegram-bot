@@ -24,6 +24,10 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 init_dir="$root/infra/init"
 
 repo=${GITHUB_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner)}
+# The exact "sub" claim prefix GitHub puts in this repo's OIDC tokens. It
+# differs when immutable subjects (owner/repo IDs) are enabled, e.g. after
+# a rename, so ask GitHub instead of assuming a format.
+oidc_subject_prefix=$(gh api "repos/${repo}/actions/oidc/customization/sub" --jq .sub_claim_prefix)
 account_id=$(aws sts get-caller-identity --query Account --output text)
 state_bucket="incognito-chat-bot-tfstate-${account_id}-${region}"
 
@@ -34,7 +38,7 @@ backend_args=(-backend-config="bucket=${state_bucket}" -backend-config="region=$
 tf_vars=(
   -var "aws_region=${region}"
   -var "state_bucket_name=${state_bucket}"
-  -var "github_repo=${repo}"
+  -var "github_oidc_subject_prefix=${oidc_subject_prefix}"
   -var "github_environment=${environment}"
 )
 apply_args=(-input=false "${tf_vars[@]}")

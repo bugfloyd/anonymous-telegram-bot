@@ -8,13 +8,18 @@ variable "state_bucket_name" {
   type        = string
 }
 
-variable "github_repo" {
-  description = "GitHub repository allowed to deploy, in the form <owner>/<repo>"
+variable "github_oidc_subject_prefix" {
+  description = <<-EOT
+    Prefix of the OIDC "sub" claim GitHub issues for this repository, as reported by
+    GET /repos/<owner>/<repo>/actions/oidc/customization/sub (sub_claim_prefix):
+    "repo:<owner>/<repo>", or with immutable subjects "repo:<owner>@<owner-id>/<repo>@<repo-id>".
+    scripts/bootstrap.sh looks it up so it always matches what GitHub actually sends.
+  EOT
   type        = string
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repo))
-    error_message = "github_repo must look like <owner>/<repo>."
+    condition     = can(regex("^repo:[^:]+/[^:]+$", var.github_oidc_subject_prefix))
+    error_message = "github_oidc_subject_prefix must look like repo:<owner>/<repo> (optionally with @<id> suffixes)."
   }
 }
 
