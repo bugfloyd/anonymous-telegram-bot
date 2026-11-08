@@ -26,3 +26,9 @@ updates:
     groups:
       terraform-providers:
         patterns: ["*"]
+
+  # Local development images (golang, DynamoDB Local).
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

@@ -111,6 +111,17 @@ BOT_TOKEN=<BOT_TOKEN> scripts/set-webhook.sh <NGROK_FORWARDING_URL>
 
 You can see the incoming update requests sent by Telegram on ngrok's web interface: `http://127.0.0.1:4040`.
 
+### Tests
+
+Unit tests run anywhere with `go test ./...`. The DynamoDB repository tests need DynamoDB Local; without it they are skipped (CI always runs them):
+
+```shell
+docker run --rm -d -p 8000:8000 amazon/dynamodb-local:3.3.2
+cd bot
+DYNAMODB_ENDPOINT=http://localhost:8000 AWS_REGION=local \
+AWS_ACCESS_KEY_ID=dummy AWS_SECRET_ACCESS_KEY=dummy go test -race ./...
+```
+
 ### Building the Lambda bundle manually
 
 CI does this for you. To reproduce it locally:

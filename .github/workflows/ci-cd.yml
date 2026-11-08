@@ -30,6 +30,12 @@ jobs:
     defaults:
       run:
         working-directory: bot
+    # Local DynamoDB for the repository integration tests (no cloud access).
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:3.3.2
+        ports:
+          - 8000:8000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,6 +60,11 @@ jobs:
           go vet -tags manual webserver.go
 
       - name: Test
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+          AWS_REGION: local
+          AWS_ACCESS_KEY_ID: dummy
+          AWS_SECRET_ACCESS_KEY: dummy
         run: go test -race ./...
 
       - name: Scan for known vulnerabilities

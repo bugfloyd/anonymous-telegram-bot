@@ -1,13 +1,15 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
+	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/secretsmanager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/bugfloyd/telegram-incognito-bot/common/webhook"
 )
 
@@ -25,30 +27,25 @@ var SqidsAlphabet string
 var WebhookSecret string
 
 func init() {
-	secretName := "incognito-chat-bot-secrets"
-	awsRegion := os.Getenv("AWS_REGION")
+	secretName := "incognito-chat-bot-secrets" // must match infra/main.tf
 
 	token := os.Getenv("BOT_TOKEN")
 	alphabet := os.Getenv("SQIDS_ALPHABET")
 
 	if token == "" || alphabet == "" {
-		// Create an AWS session
-		sess, err := session.NewSession(&aws.Config{
-			Region: aws.String(awsRegion),
-		})
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Region and credentials come from the environment (AWS_REGION and the
+		// Lambda execution role).
+		cfg, err := config.LoadDefaultConfig(ctx)
 		if err != nil {
-			log.Fatalf("Failed to create session: %v", err)
+			log.Fatalf("Failed to load AWS config: %v", err)
 		}
 
-		// Create a Secrets Manager client
-		svc := secretsmanager.New(sess)
-
-		// Retrieve the secret value
-		input := &secretsmanager.GetSecretValueInput{
+		result, err := secretsmanager.NewFromConfig(cfg).GetSecretValue(ctx, &secretsmanager.GetSecretValueInput{
 			SecretId: aws.String(secretName),
-		}
-
-		result, err := svc.GetSecretValue(input)
+		})
 		if err != nil {
 			log.Fatalf("Failed to get secret: %v", err)
 		}
