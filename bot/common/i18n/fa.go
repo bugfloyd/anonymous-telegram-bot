@@ -2,7 +2,7 @@ package i18n
 
 var faLocale = LocaleTexts{
 	StartMessageText:                "خوش اومدی! از دستور /link برای دریافت لینک ناشناس خودت استفاده بکن",
-	InitialSendMessagePromptText:    "در حال ارسال پیام ناشناس به %s هستید.\n\n پیغام خود را بنویسید:",
+	InitialSendMessagePromptText:    "در حال ارسال پیام ناشناس به %s هستید.\n\nمی‌توانید چند پیام پشت سر هم بفرستید.\nپیغام خود را بنویسید:",
 	UnblockButtonText:               "آنبلاک",
 	SendMessageButtonText:           "ارسال پیغام",
 	ReplyButtonText:                 "پاسخ بده",
@@ -22,7 +22,7 @@ var faLocale = LocaleTexts{
 	OpenMessageButtonText:           "پیغام را باز کن",
 	MessageOpenedText:               "پیغام باز شد!",
 	ReplyingToMessageText:           "در حال پاسخ دادن به پیغام...",
-	ReplyToThisMessageText:          "به این پیغام پاسخ بده:",
+	ReplyToThisMessageText:          "می‌تونی چند پیام پشت سر هم بفرستی.\nبه این پیغام پاسخ بده:",
 	UserNotFoundText:                "کاربر پیدا نشد! لینک اشتباهی؟",
 	MessageToYourselfTextText:       "واقعا می‌خواهی با خودت حرف بزنی؟ چه غمگین! لینک خودت رو با دوستات به اشتراک بذار و یا روی شبکه‌های اجتماعی پست کن تا پیغام‌های ناشناس بگیری!",
 	LinkText:                        "افراد دیگر با استفاده از این لینک می‌توانند به شما پیغام ناشناس بفرستند:",

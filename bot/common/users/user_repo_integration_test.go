@@ -123,7 +123,7 @@ func TestUserLifecycle(t *testing.T) {
 			}
 		}
 		// Empty fields must be absent; an empty Username would break its index.
-		for _, name := range []string{"Username", "ContactUUID", "ReplyMessageID", "Language", "Blacklist"} {
+		for _, name := range []string{"Username", "ContactUUID", "ReplyMessageID", "Language", "Blacklist", "LastSentAt"} {
 			if _, ok := item[name]; ok {
 				t.Errorf("%s should not be stored for a new user", name)
 			}
@@ -268,6 +268,125 @@ func TestUserLifecycle(t *testing.T) {
 		}
 		if item := rawItem(t, repo, ghost.UUID); item != nil {
 			t.Errorf("update created an item: %v", item)
+		}
+	})
+}
+
+// TestFollowUps covers the rules that decide whether a user's next message
+// still goes to the same person (see the conversation package).
+func TestFollowUps(t *testing.T) {
+	repo := newTestRepo(t)
+	u, err := repo.CreateUser(7)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	sentAt := time.Unix(1762600000, 0)
+	stored := func(t *testing.T) *User {
+		t.Helper()
+		got, err := repo.ReadUserByUUID(u.UUID)
+		if err != nil {
+			t.Fatalf("ReadUserByUUID: %v", err)
+		}
+		return got
+	}
+	interrupt := func(t *testing.T, from string) bool {
+		t.Helper()
+		ended, err := repo.InterruptFollowUps(u.UUID, from)
+		if err != nil {
+			t.Fatalf("InterruptFollowUps: %v", err)
+		}
+		return ended
+	}
+
+	t.Run("continuing keeps the recipient and the thread", func(t *testing.T) {
+		if err := repo.StartSending(u, "contact-a", 9); err != nil {
+			t.Fatalf("StartSending: %v", err)
+		}
+		if err := repo.ContinueConversation(u, sentAt); err != nil {
+			t.Fatalf("ContinueConversation: %v", err)
+		}
+		assertStored(t, repo, u, func(got *User) bool {
+			return got.State == Continuing && got.ContactUUID == "contact-a" &&
+				got.ReplyMessageID == 9 && got.LastSentAt == sentAt.Unix()
+		})
+		if typ := attrType(rawItem(t, repo, u.UUID)["LastSentAt"]); typ != "N" {
+			t.Errorf("LastSentAt stored as %q, want N", typ)
+		}
+	})
+
+	t.Run("a message from the same person doesn't interrupt", func(t *testing.T) {
+		if interrupt(t, "contact-a") {
+			t.Error("follow-ups ended by a message from the same person")
+		}
+		if got := stored(t); got.State != Continuing || got.ContactUUID != "contact-a" {
+			t.Errorf("stored user changed: %+v", got)
+		}
+	})
+
+	t.Run("a message from someone else interrupts", func(t *testing.T) {
+		if !interrupt(t, "contact-b") {
+			t.Error("follow-ups not ended by a message from someone else")
+		}
+		got := stored(t)
+		if got.State != Idle || got.ContactUUID != "" || got.ReplyMessageID != 0 || got.LastSentAt != 0 {
+			t.Errorf("not reset: %+v", got)
+		}
+		if _, ok := rawItem(t, repo, u.UUID)["LastSentAt"]; ok {
+			t.Error("LastSentAt should be removed")
+		}
+	})
+
+	t.Run("an explicit reply in progress isn't interrupted", func(t *testing.T) {
+		if err := repo.StartSending(u, "contact-a", 5); err != nil {
+			t.Fatalf("StartSending: %v", err)
+		}
+		if interrupt(t, "contact-b") {
+			t.Error("explicit Sending state was interrupted")
+		}
+		if got := stored(t); got.State != Sending || got.ContactUUID != "contact-a" || got.ReplyMessageID != 5 {
+			t.Errorf("stored user changed: %+v", got)
+		}
+	})
+
+	t.Run("idle and username states aren't affected", func(t *testing.T) {
+		if err := repo.ResetState(u); err != nil {
+			t.Fatalf("ResetState: %v", err)
+		}
+		if interrupt(t, "contact-b") {
+			t.Error("idle user reported as interrupted")
+		}
+		if err := repo.StartSettingUsername(u); err != nil {
+			t.Fatalf("StartSettingUsername: %v", err)
+		}
+		if interrupt(t, "contact-b") || stored(t).State != SettingUsername {
+			t.Error("setting-username state was interrupted")
+		}
+	})
+
+	t.Run("explicit states and resets clear the follow-up timestamp", func(t *testing.T) {
+		for name, next := range map[string]func() error{
+			"StartSending": func() error { return repo.StartSending(u, "contact-c", 0) },
+			"ResetState":   func() error { return repo.ResetState(u) },
+		} {
+			if err := repo.ContinueConversation(u, sentAt); err != nil {
+				t.Fatalf("ContinueConversation: %v", err)
+			}
+			if err := next(); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			if u.LastSentAt != 0 || stored(t).LastSentAt != 0 {
+				t.Errorf("%s left LastSentAt set", name)
+			}
+		}
+	})
+
+	t.Run("unknown user", func(t *testing.T) {
+		ended, err := repo.InterruptFollowUps("no-such-uuid", "contact-b")
+		if err != nil || ended {
+			t.Errorf("InterruptFollowUps(unknown) = %v, %v; want false, nil", ended, err)
+		}
+		if item := rawItem(t, repo, "no-such-uuid"); item != nil {
+			t.Errorf("created an item: %v", item)
 		}
 	})
 }

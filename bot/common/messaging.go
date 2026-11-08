@@ -2,11 +2,14 @@ package common
 
 import (
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
-	"strconv"
-	"strings"
 )
 
 func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -80,13 +83,21 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	// Reset sender user
-	err = r.userRepo.ResetState(r.user)
-	if err != nil {
-		return err
+	// The receiver just got a message from this sender, so their own
+	// follow-ups to someone else (if any) end here. Delivery already
+	// succeeded, so a failure is only logged.
+	if _, err := r.userRepo.InterruptFollowUps(receiver.UUID, r.user.UUID); err != nil {
+		log.Println("failed to interrupt receiver's follow-ups:", err)
 	}
 
-	return nil
+	// Keep the conversation open: the sender's next messages go to the same
+	// person until something else happens in their chat.
+	return r.userRepo.ContinueConversation(r.user, messageTime(ctx.EffectiveMessage))
+}
+
+// messageTime is when Telegram says the user sent the message.
+func messageTime(msg *gotgbot.Message) time.Time {
+	return time.Unix(msg.Date, 0)
 }
 
 func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
