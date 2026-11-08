@@ -1,7 +1,7 @@
 package users
 
 import (
-	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
+	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"time"
 )
 

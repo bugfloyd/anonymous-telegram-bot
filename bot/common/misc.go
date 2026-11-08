@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
-	"github.com/bugfloyd/anonymous-telegram-bot/secrets"
+	"github.com/bugfloyd/telegram-incognito-bot/common/botinfo"
+	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
+	"github.com/bugfloyd/telegram-incognito-bot/common/users"
+	"github.com/bugfloyd/telegram-incognito-bot/secrets"
 	"github.com/sqids/sqids-go"
 	"strings"
 )
@@ -132,7 +133,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 }
 
 func (r *RootHandler) info(b *gotgbot.Bot, ctx *ext.Context) error {
-	_, err := b.SendMessage(ctx.EffectiveChat.Id, "Bugfloyd Anonymous bot\n\nSource code:\nhttps://github.com/bugfloyd/anonymous-telegram-bot", &gotgbot.SendMessageOpts{})
+	_, err := b.SendMessage(ctx.EffectiveChat.Id, botinfo.Text(b.User), &gotgbot.SendMessageOpts{})
 	if err != nil {
 		return fmt.Errorf("failed to send bot info: %w", err)
 	}

@@ -7,7 +7,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project   = "anonymous-telegram-bot"
+      Project   = "telegram-incognito-bot"
       Stack     = "bootstrap"
       ManagedBy = "terraform"
     }
@@ -25,12 +25,12 @@ locals {
   # Names of the resources managed by the app stack (../main.tf). The deploy
   # role may only touch these, so keep both stacks in sync.
   app = {
-    function_name    = "AnonymousBot"
-    table_name       = "AnonymousBot"
-    secret_name      = "anonymous-bot-secrets"
-    lambda_role_name = "anonymous-bot-lambda"
-    lambda_log_group = "/aws/lambda/AnonymousBot"
-    api_log_group    = "/aws/apigateway/anonymous-bot"
+    function_name    = "IncognitoChatBot"
+    table_name       = "IncognitoChatBot"
+    secret_name      = "incognito-chat-bot-secrets"
+    lambda_role_name = "incognito-chat-bot-lambda"
+    lambda_log_group = "/aws/lambda/IncognitoChatBot"
+    api_log_group    = "/aws/apigateway/incognito-chat-bot"
   }
 
   arns = {

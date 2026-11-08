@@ -1,4 +1,4 @@
-# Anonymous Telegram Chat Bot
+# Telegram Incognito Bot
 
 A Telegram bot for receiving anonymous messages. Each user gets a personal link. Anyone who opens it can send them a message (any media type) without revealing who they are, and the recipient can open, reply to, or block the sender. Message content is never stored: it is copied from the sender's chat when the recipient opens it.
 
@@ -89,7 +89,7 @@ export SQIDS_ALPHABET=<SHUFFLED_ALPHABET> # e.g. a shuffled a-zA-Z0-9
 docker compose up -d
 ```
 
-The local DynamoDB starts empty. Create an `AnonymousBot` table with the same keys and indexes as `infra/main.tf` (for example with `aws dynamodb create-table --endpoint-url http://localhost:8000 ...`).
+The local DynamoDB starts empty. Create an `IncognitoChatBot` table with the same keys and indexes as `infra/main.tf` (for example with `aws dynamodb create-table --endpoint-url http://localhost:8000 ...`).
 
 After changing the bot code, restart the bot container:
 

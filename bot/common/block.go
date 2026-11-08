@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/i18n"
-	"github.com/bugfloyd/anonymous-telegram-bot/common/users"
+	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
+	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 	"slices"
 	"strings"
 )

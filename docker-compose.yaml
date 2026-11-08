@@ -13,7 +13,7 @@ services:
 
   bot:
     image: golang:1.26-bookworm
-    container_name: anonymous-bot
+    container_name: incognito-chat-bot
     working_dir: /app
     volumes:
       - ./bot:/app

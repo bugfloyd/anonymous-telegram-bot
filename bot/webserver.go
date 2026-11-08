@@ -4,7 +4,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/bugfloyd/anonymous-telegram-bot/common"
+	"github.com/bugfloyd/telegram-incognito-bot/common"
 	"io"
 	"log"
 	"net/http"
