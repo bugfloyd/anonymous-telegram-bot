@@ -5,7 +5,6 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
-	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 	"strconv"
 	"strings"
 )
@@ -31,7 +30,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		}
 
 		// Reset sender user
-		err = r.userRepo.ResetUserState(r.user)
+		err = r.userRepo.ResetState(r.user)
 		if err != nil {
 			return err
 		}
@@ -82,7 +81,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	}
 
 	// Reset sender user
-	err = r.userRepo.ResetUserState(r.user)
+	err = r.userRepo.ResetState(r.user)
 	if err != nil {
 		return err
 	}
@@ -223,11 +222,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Store the message id in the user and set status to replying
-	err = r.userRepo.UpdateUser(r.user, map[string]interface{}{
-		"State":          users.Sending,
-		"ContactUUID":    receiverUUID,
-		"ReplyMessageID": messageID,
-	})
+	err = r.userRepo.StartSending(r.user, receiverUUID, messageID)
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
 	}

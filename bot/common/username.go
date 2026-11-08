@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
@@ -78,11 +79,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
 	} else if action == "SET" {
-		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":          users.SettingUsername,
-			"ContactUUID":    "",
-			"ReplyMessageID": 0,
-		})
+		err := r.userRepo.StartSettingUsername(r.user)
 		if err != nil {
 			return fmt.Errorf("failed to update user state: %w", err)
 		}
@@ -101,12 +98,7 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to answer callback: %w", err)
 		}
 	} else if action == "REMOVE" {
-		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"State":          users.Idle,
-			"Username":       "",
-			"ContactUUID":    "",
-			"ReplyMessageID": 0,
-		})
+		err := r.userRepo.RemoveUsername(r.user)
 		if err != nil {
 			return fmt.Errorf("failed to remove username: %w", err)
 		}
@@ -146,13 +138,12 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 	username = strings.ToLower(username)
 
 	existingUser, err := r.userRepo.ReadUserByUsername(username)
-	if err != nil || existingUser == nil {
-		err := r.userRepo.UpdateUser(r.user, map[string]interface{}{
-			"Username":       username,
-			"State":          users.Idle,
-			"ContactUUID":    "",
-			"ReplyMessageID": 0,
-		})
+	if err != nil && !errors.Is(err, users.ErrNotFound) {
+		// Don't treat a failed lookup as "username is free".
+		return fmt.Errorf("failed to check username: %w", err)
+	}
+	if errors.Is(err, users.ErrNotFound) {
+		err := r.userRepo.SetUsername(r.user, username)
 		if err != nil {
 			return fmt.Errorf("failed to update username: %w", err)
 		}
@@ -170,7 +161,7 @@ func (r *RootHandler) setUsername(b *gotgbot.Bot, ctx *ext.Context) error {
 			text = i18n.T(i18n.SameUsernameText)
 
 			// Reset sender user
-			err = r.userRepo.ResetUserState(r.user)
+			err = r.userRepo.ResetState(r.user)
 			if err != nil {
 				return err
 			}
