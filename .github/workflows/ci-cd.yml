@@ -130,6 +130,11 @@ jobs:
               missing=1
             fi
           done
+          # Catch a mis-pasted secret before anything is written to AWS.
+          if [ -n "$BOT_TOKEN" ] && ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::BOT_TOKEN doesn't look like a Telegram bot token (<digits>:<letters, digits, _ or ->). Set it again with: gh secret set BOT_TOKEN --env production"
+            missing=1
+          fi
           exit "$missing"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -9,6 +9,11 @@ variable "bot_token" {
   sensitive   = true
   ephemeral   = true
   nullable    = false
+
+  validation {
+    condition     = can(regex("^[0-9]+:[A-Za-z0-9_-]+$", var.bot_token))
+    error_message = "bot_token doesn't look like a Telegram bot token (<digits>:<letters, digits, _ or ->)."
+  }
 }
 
 variable "bot_secret_version" {

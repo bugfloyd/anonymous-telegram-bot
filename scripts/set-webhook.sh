@@ -10,6 +10,10 @@ set -euo pipefail
 
 webhook_url=${1:?usage: BOT_TOKEN=<token> $0 <webhook-url>}
 : "${BOT_TOKEN:?BOT_TOKEN must be set}"
+if ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+  echo "BOT_TOKEN doesn't look like a Telegram bot token (<digits>:<letters, digits, _ or ->)" >&2
+  exit 1
+fi
 export BOT_TOKEN
 
 # Must match webhook.DeriveSecret in bot/common/webhook/webhook.go.
