@@ -42,4 +42,5 @@ var enLocale = LocaleTexts{
 	UsernameHasBeenSetText:          "Username has been set: %s",
 	UsernameExistsText:              "The entered username exists. Enter another one:",
 	SameUsernameText:                "You already own this username silly! If you want to change it, run the username command once more!",
+	MessageNotSentText:              "This message wasn't sent to anyone.\n\nTo answer a message you received, tap the \"%s\" button under it.\nTo send a new anonymous message, open that person's link.\nTo receive anonymous messages, share your own link: /link",
 }
