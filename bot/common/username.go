@@ -111,7 +111,9 @@ func (r *RootHandler) usernameCallback(b *gotgbot.Bot, ctx *ext.Context, action 
 			return fmt.Errorf("failed to remove username: %w", err)
 		}
 
-		_, _, err = cb.Message.EditText(b, i18n.T(i18n.UsernameHasBeenRemovedText), &gotgbot.EditMessageTextOpts{})
+		_, _, err = cb.Message.EditText(b, &gotgbot.EditMessageTextOpts{
+			Text: i18n.T(i18n.UsernameHasBeenRemovedText),
+		})
 		if err != nil {
 			return fmt.Errorf("failed to update username message text: %w", err)
 		}

@@ -3,11 +3,11 @@ module github.com/bugfloyd/telegram-incognito-bot
 go 1.26
 
 require (
-	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.25
-	github.com/aws/aws-lambda-go v1.47.0
-	github.com/aws/aws-sdk-go v1.51.25
+	github.com/PaulSonOfLars/gotgbot/v2 v2.0.0-rc.37
+	github.com/aws/aws-lambda-go v1.55.1
+	github.com/aws/aws-sdk-go v1.55.8
 	github.com/google/uuid v1.6.0
-	github.com/guregu/dynamo v1.22.1
+	github.com/guregu/dynamo v1.23.0
 	github.com/sqids/sqids-go v0.4.1
 )
 
