@@ -49,6 +49,7 @@ const (
 	UsernameHasBeenSetText          TextID = "UsernameHasBeenSetText"
 	UsernameExistsText              TextID = "UsernameExistsText"
 	SameUsernameText                TextID = "SameUsernameText"
+	MessageNotSentText              TextID = "MessageNotSentText"
 )
 
 type Language string

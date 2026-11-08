@@ -178,7 +178,17 @@ func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	case users.SettingUsername:
 		return r.setUsername(b, ctx)
 	default:
-		return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
+		// Only something that looks like a command is an invalid command.
+		if strings.HasPrefix(ctx.EffectiveMessage.Text, "/") {
+			return r.sendError(b, ctx, i18n.T(i18n.InvalidCommandText))
+		}
+		// Anything else is a message without a recipient: explain how to
+		// send one instead of reporting an error.
+		hint := fmt.Sprintf(i18n.T(i18n.MessageNotSentText), i18n.T(i18n.ReplyButtonText))
+		if _, err := ctx.EffectiveMessage.Reply(b, hint, nil); err != nil {
+			return fmt.Errorf("failed to send message-not-sent hint: %w", err)
+		}
+		return nil
 	}
 }
 
