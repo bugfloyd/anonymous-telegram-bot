@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   dynamodb:
-    image: "amazon/dynamodb-local:latest"
+    image: "amazon/dynamodb-local:3.3.2"
     command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
     container_name: dynamodb-local
     ports:
@@ -12,7 +12,7 @@ services:
     working_dir: /home/dynamodblocal
 
   bot:
-    image: golang:1.26-bookworm
+    image: golang:1.27-bookworm
     container_name: incognito-chat-bot
     working_dir: /app
     volumes:
@@ -26,7 +26,7 @@ services:
       - SQIDS_ALPHABET=${SQIDS_ALPHABET}
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-}
       - DYNAMODB_ENDPOINT=http://dynamodb-local:8000
-      - AWS_REGION=eu-central-1
+      - AWS_REGION=local
       - AWS_ACCESS_KEY_ID=dummy
       - AWS_SECRET_ACCESS_KEY=dummy
 

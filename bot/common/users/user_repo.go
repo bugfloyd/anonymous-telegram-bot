@@ -1,41 +1,60 @@
 package users
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
 	"reflect"
+	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/google/uuid"
-	"github.com/guregu/dynamo"
+	"github.com/guregu/dynamo/v2"
 )
+
+// TableName must match the table in infra/main.tf.
+const TableName = "IncognitoChatBot"
+
+// opTimeout bounds every DynamoDB call so a slow request can't hang the handler.
+const opTimeout = 5 * time.Second
 
 type UserRepository struct {
 	table dynamo.Table
 }
 
-func NewUserRepository() (*UserRepository, error) {
-	var sess *session.Session
-	customDynamoDbEndpoint := os.Getenv("DYNAMODB_ENDPOINT")
-	awsRegion := os.Getenv("AWS_REGION")
-
-	if customDynamoDbEndpoint != "" {
-		sess = session.Must(session.NewSession(&aws.Config{
-			Region:   aws.String(awsRegion),
-			Endpoint: aws.String(customDynamoDbEndpoint),
-		}))
-	} else {
-		sess = session.Must(session.NewSession(&aws.Config{Region: aws.String(awsRegion)}))
+// loadDB creates the DynamoDB client once per process (Lambda execution
+// environment) and reuses it for every update. DYNAMODB_ENDPOINT points it
+// at a local DynamoDB for development and tests.
+var loadDB = sync.OnceValues(func() (*dynamo.DB, error) {
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
+	var opts []func(*dynamodb.Options)
+	if endpoint := os.Getenv("DYNAMODB_ENDPOINT"); endpoint != "" {
+		opts = append(opts, func(o *dynamodb.Options) { o.BaseEndpoint = aws.String(endpoint) })
+	}
+	return dynamo.New(cfg, opts...), nil
+})
 
-	db := dynamo.New(sess)
+func NewUserRepository() (*UserRepository, error) {
+	return newUserRepository(TableName)
+}
 
-	return &UserRepository{
-		table: db.Table("IncognitoChatBot"),
-	}, nil
+func newUserRepository(tableName string) (*UserRepository, error) {
+	db, err := loadDB()
+	if err != nil {
+		return nil, err
+	}
+	return &UserRepository{table: db.Table(tableName)}, nil
+}
+
+func opContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), opTimeout)
 }
 
 func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
@@ -46,7 +65,9 @@ func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
 		LinkKey:   int32(rand.Intn(900000) + 100000),
 		CreatedAt: time.Now(),
 	}
-	err := repo.table.Put(u).Run()
+	ctx, cancel := opContext()
+	defer cancel()
+	err := repo.table.Put(u).Run(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
@@ -55,7 +76,9 @@ func (repo *UserRepository) CreateUser(userId int64) (*User, error) {
 
 func (repo *UserRepository) ReadUserByUUID(uuid string) (*User, error) {
 	var u User
-	err := repo.table.Get("UUID", uuid).One(&u)
+	ctx, cancel := opContext()
+	defer cancel()
+	err := repo.table.Get("UUID", uuid).One(ctx, &u)
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +87,9 @@ func (repo *UserRepository) ReadUserByUUID(uuid string) (*User, error) {
 
 func (repo *UserRepository) ReadUserByUserId(userId int64) (*User, error) {
 	var u User
-	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(&u)
+	ctx, cancel := opContext()
+	defer cancel()
+	err := repo.table.Get("UserID", userId).Index("UserID-GSI").One(ctx, &u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -73,7 +98,9 @@ func (repo *UserRepository) ReadUserByUserId(userId int64) (*User, error) {
 
 func (repo *UserRepository) ReadUserByUsername(username string) (*User, error) {
 	var u User
-	err := repo.table.Get("Username", username).Index("Username-GSI").One(&u)
+	ctx, cancel := opContext()
+	defer cancel()
+	err := repo.table.Get("Username", username).Index("Username-GSI").One(ctx, &u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -82,7 +109,9 @@ func (repo *UserRepository) ReadUserByUsername(username string) (*User, error) {
 
 func (repo *UserRepository) ReadUserByLinkKey(linkKey int32, createdAt int64) (*User, error) {
 	var u User
-	err := repo.table.Get("LinkKey", linkKey).Index("LinkKey-GSI").Range("CreatedAt", dynamo.Equal, createdAt).One(&u)
+	ctx, cancel := opContext()
+	defer cancel()
+	err := repo.table.Get("LinkKey", linkKey).Index("LinkKey-GSI").Range("CreatedAt", dynamo.Equal, createdAt).One(ctx, &u)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
@@ -94,7 +123,9 @@ func (repo *UserRepository) UpdateUser(user *User, updates map[string]interface{
 	for key, value := range updates {
 		updateBuilder = updateBuilder.Set(key, value)
 	}
-	err := updateBuilder.Run()
+	ctx, cancel := opContext()
+	defer cancel()
+	err := updateBuilder.Run(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
@@ -142,7 +173,9 @@ func (repo *UserRepository) UpdateBlacklist(user *User, method string, value str
 		return fmt.Errorf("invalid method")
 	}
 
-	err := updateBuilder.Run()
+	ctx, cancel := opContext()
+	defer cancel()
+	err := updateBuilder.Run(ctx)
 
 	if err != nil {
 		return fmt.Errorf("failed to %s blacklist: %w", method, err)
