@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
+	"github.com/bugfloyd/anonymous-telegram-bot/common/webhook"
 )
 
 // SecretStruct represents the structure of the JSON-encoded secret string
@@ -18,6 +19,10 @@ type SecretStruct struct {
 
 var BotToken string
 var SqidsAlphabet string
+
+// WebhookSecret is the token Telegram must send with every webhook update.
+// It is derived from BotToken, see the webhook package.
+var WebhookSecret string
 
 func init() {
 	secretName := "anonymous-bot-secrets"
@@ -61,4 +66,9 @@ func init() {
 		BotToken = token
 		SqidsAlphabet = alphabet
 	}
+
+	if BotToken == "" {
+		log.Fatal("Bot token is empty")
+	}
+	WebhookSecret = webhook.DeriveSecret(BotToken)
 }

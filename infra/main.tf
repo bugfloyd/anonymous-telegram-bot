@@ -1,101 +1,73 @@
 provider "aws" {
   region = var.aws_region
-}
 
-# Lambda
-resource "aws_lambda_function" "anonymous_bot" {
-  function_name    = "AnonymousBot"
-  s3_bucket        = var.lambda_bucket
-  s3_key           = "lambda_function.zip"
-  handler          = "main"
-  runtime          = "provided.al2023"
-  role             = aws_iam_role.lambda_exec_role.arn
-  source_code_hash = filebase64sha256(var.zip_bundle_path)
-
-  environment {
-    variables = {
-      DEFAULT_LANGUAGE = var.default_language
+  default_tags {
+    tags = {
+      Project   = "anonymous-telegram-bot"
+      Stack     = "app"
+      ManagedBy = "terraform"
     }
   }
 }
 
-resource "aws_iam_role" "lambda_exec_role" {
-  name = "lambda_exec_role"
+data "aws_caller_identity" "current" {}
+data "aws_partition" "current" {}
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      },
-    ]
+locals {
+  # These names are referenced by the bootstrap stack's deploy-role policy
+  # (init/main.tf) and some by the bot code. Keep them in sync.
+  function_name    = "AnonymousBot"
+  table_name       = "AnonymousBot"          # bot/common/users/user_repo.go
+  secret_name      = "anonymous-bot-secrets" # bot/secrets/secrets.go
+  lambda_role_name = "anonymous-bot-lambda"
+  api_name         = "anonymous-bot"
+  webhook_path     = "/webhook"
+
+  # Created by the bootstrap stack. The deploy role may only create the
+  # Lambda role with this boundary attached.
+  lambda_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/anonymous-bot-lambda-boundary"
+}
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+
+# Alphabet that sqids uses to encode user link keys. Generated once and never
+# changed: changing it would break every link already shared.
+resource "random_shuffle" "sqids_alphabet" {
+  input = split("", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+}
+
+resource "aws_secretsmanager_secret" "bot" {
+  name                    = local.secret_name
+  description             = "Telegram bot token and sqids alphabet"
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "bot" {
+  secret_id = aws_secretsmanager_secret.bot.id
+
+  # Write-only: sent to AWS, never persisted in state or plan.
+  secret_string_wo = jsonencode({
+    bot_token = var.bot_token
+    alphabet  = join("", random_shuffle.sqids_alphabet.result)
   })
+  secret_string_wo_version = var.bot_secret_version
 }
 
-resource "aws_iam_role_policy" "lambda_policy" {
-  role = aws_iam_role.lambda_exec_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ],
-        Effect   = "Allow",
-        Resource = "arn:aws:logs:*:*:*"
-      },
-    ]
-  })
-}
-
-# API Gateway
-resource "aws_apigatewayv2_api" "http_api" {
-  name          = "BotHTTPAPI"
-  protocol_type = "HTTP"
-}
-
-resource "aws_apigatewayv2_integration" "lambda_integration" {
-  api_id           = aws_apigatewayv2_api.http_api.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = aws_lambda_function.anonymous_bot.invoke_arn
-}
-
-resource "aws_apigatewayv2_route" "route" {
-  api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "POST /anonymous-bot"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
-}
-
-resource "aws_apigatewayv2_stage" "default_stage" {
-  api_id      = aws_apigatewayv2_api.http_api.id
-  name        = "$default"
-  auto_deploy = true
-}
-
-output "webhook_url" {
-  value     = "${aws_apigatewayv2_stage.default_stage.invoke_url}anonymous-bot"
-  sensitive = true
-}
-
-resource "aws_lambda_permission" "api_gw_lambda" {
-  statement_id  = "AllowExecutionFromAPIGateway"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.anonymous_bot.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*/*"
-}
+# ---------------------------------------------------------------------------
+# DynamoDB
+# ---------------------------------------------------------------------------
 
 resource "aws_dynamodb_table" "main" {
-  name         = "AnonymousBot"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "UUID"
+  name                        = local.table_name
+  billing_mode                = "PAY_PER_REQUEST"
+  hash_key                    = "UUID"
+  deletion_protection_enabled = true
+
+  point_in_time_recovery {
+    enabled = true
+  }
 
   attribute {
     name = "UUID"
@@ -124,98 +96,179 @@ resource "aws_dynamodb_table" "main" {
 
   global_secondary_index {
     name            = "UserID-GSI"
-    hash_key        = "UserID"
     projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "UserID"
+      key_type       = "HASH"
+    }
   }
 
   global_secondary_index {
     name            = "Username-GSI"
-    hash_key        = "Username"
     projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "Username"
+      key_type       = "HASH"
+    }
   }
 
   global_secondary_index {
     name            = "LinkKey-GSI"
-    hash_key        = "LinkKey"
-    range_key       = "CreatedAt"
     projection_type = "ALL"
+
+    key_schema {
+      attribute_name = "LinkKey"
+      key_type       = "HASH"
+    }
+
+    key_schema {
+      attribute_name = "CreatedAt"
+      key_type       = "RANGE"
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Lambda
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${local.function_name}"
+  retention_in_days = var.log_retention_days
+}
+
+data "aws_iam_policy_document" "lambda_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "lambda" {
+  name                 = local.lambda_role_name
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume.json
+  permissions_boundary = local.lambda_boundary_arn
+}
+
+data "aws_iam_policy_document" "lambda" {
+  statement {
+    sid       = "Logs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.lambda.arn}:*"]
   }
 
-  lifecycle {
-    prevent_destroy = false
+  statement {
+    sid       = "DynamoDB"
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
+    resources = [aws_dynamodb_table.main.arn, "${aws_dynamodb_table.main.arn}/index/*"]
+  }
+
+  statement {
+    sid       = "BotSecrets"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.bot.arn]
   }
 }
 
-resource "aws_iam_policy" "lambda_dynamodb_policy" {
-  name        = "AnonymousDynamoDBLambdaPolicy"
-  description = "Policy to allow Lambda function to manage DynamoDB"
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Action = [
-          "dynamodb:GetItem",
-          "dynamodb:PutItem",
-          "dynamodb:UpdateItem",
-          "dynamodb:DeleteItem",
-          "dynamodb:Query",
-          "dynamodb:BatchGetItem",
-          "dynamodb:BatchWriteItem",
-          "dynamodb:DescribeTable",
-        ],
-        Effect   = "Allow",
-        Resource = aws_dynamodb_table.main.arn
-      },
-      {
-        Action = [
-          "dynamodb:Query",
-        ],
-        Effect = "Allow",
-        Resource = [
-          "${aws_dynamodb_table.main.arn}/index/UserID-GSI",
-          "${aws_dynamodb_table.main.arn}/index/Username-GSI",
-          "${aws_dynamodb_table.main.arn}/index/LinkKey-GSI"
-        ]
-      }
-    ]
-  })
+resource "aws_iam_role_policy" "lambda" {
+  name   = "runtime"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.lambda.json
 }
 
-resource "aws_iam_policy" "lambda_secrets_policy" {
-  name        = "LambdaSecretsAccessPolicy"
-  description = "Policy to allow Lambda to access bot secrets"
-  policy      = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["secretsmanager:GetSecretValue"]
-        Resource = aws_secretsmanager_secret.bot_secrets.arn
-      }
-    ]
-  })
+resource "aws_lambda_function" "bot" {
+  function_name    = local.function_name
+  description      = "Anonymous Telegram bot webhook handler"
+  role             = aws_iam_role.lambda.arn
+  filename         = var.lambda_zip_path
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  architectures    = ["arm64"]
+  memory_size      = 128
+  timeout          = 10
+
+  environment {
+    variables = {
+      DEFAULT_LANGUAGE = var.default_language
+      # The bot reads its secret once per execution environment. Changing this
+      # value replaces those environments, so a rotated token takes effect.
+      BOT_SECRET_VERSION = tostring(var.bot_secret_version)
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda,
+    aws_iam_role_policy.lambda,
+    aws_secretsmanager_secret_version.bot,
+  ]
 }
 
-resource "aws_iam_role_policy_attachment" "rest_backend_lambda_dynamodb_policy_attachment" {
-  role       = aws_iam_role.lambda_exec_role.name
-  policy_arn = aws_iam_policy.lambda_dynamodb_policy.arn
+# ---------------------------------------------------------------------------
+# API Gateway (HTTP API) – Telegram webhook endpoint
+# ---------------------------------------------------------------------------
+
+resource "aws_apigatewayv2_api" "bot" {
+  name          = local.api_name
+  protocol_type = "HTTP"
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_secrets_policy_attachment" {
-  role       = aws_iam_role.lambda_exec_role.name
-  policy_arn = aws_iam_policy.lambda_secrets_policy.arn
+resource "aws_apigatewayv2_integration" "lambda" {
+  api_id                 = aws_apigatewayv2_api.bot.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.bot.invoke_arn
+  payload_format_version = "1.0" # the bot uses events.APIGatewayProxyRequest
 }
 
-resource "aws_secretsmanager_secret" "bot_secrets" {
-  name = "anonymous-bot-secrets"
+resource "aws_apigatewayv2_route" "webhook" {
+  api_id    = aws_apigatewayv2_api.bot.id
+  route_key = "POST ${local.webhook_path}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
-resource "aws_secretsmanager_secret_version" "bot_secrets_version" {
-  secret_id = aws_secretsmanager_secret.bot_secrets.id
+resource "aws_cloudwatch_log_group" "api_access" {
+  name              = "/aws/apigateway/${local.api_name}"
+  retention_in_days = var.log_retention_days
+}
 
-  secret_string = jsonencode({
-    bot_token = var.bot_token
-    alphabet  = var.sqids_alphabet
-  })
+resource "aws_apigatewayv2_stage" "default" {
+  api_id      = aws_apigatewayv2_api.bot.id
+  name        = "$default"
+  auto_deploy = true
+
+  # Limits how much traffic anyone hitting the public endpoint can cause.
+  default_route_settings {
+    throttling_rate_limit  = var.api_throttle_rate_limit
+    throttling_burst_limit = var.api_throttle_burst_limit
+  }
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api_access.arn
+    format = jsonencode({
+      requestId         = "$context.requestId"
+      requestTime       = "$context.requestTime"
+      sourceIp          = "$context.identity.sourceIp"
+      httpMethod        = "$context.httpMethod"
+      routeKey          = "$context.routeKey"
+      status            = "$context.status"
+      responseLength    = "$context.responseLength"
+      responseLatency   = "$context.responseLatency"
+      integrationStatus = "$context.integrationStatus"
+      integrationError  = "$context.integrationErrorMessage"
+    })
+  }
+}
+
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowWebhookRouteInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.bot.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.bot.execution_arn}/*/POST${local.webhook_path}"
 }

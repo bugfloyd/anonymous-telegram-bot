@@ -1,0 +1,202 @@
+name: CI/CD
+
+# Pull requests: test, scan and validate (no cloud access, no secrets).
+# main: the same checks, then deploy through the "production" environment,
+# which only the main branch may use (see scripts/bootstrap.sh).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege by default; jobs opt in to more.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TERRAFORM_VERSION: "1.17.1"
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  bot:
+    name: Bot – test, scan & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: bot/go.mod
+          cache-dependency-path: bot/go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Run gofmt on: $unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: |
+          go vet ./...
+          go vet -tags manual webserver.go
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Scan for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+      - name: Build Lambda bundle
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: |
+          go build -tags lambda.norpc -trimpath -ldflags="-s -w" -o bootstrap .
+          # Fixed timestamp so identical builds produce identical zips (no redeploy).
+          touch -d '1980-01-01T00:00:00Z' bootstrap
+          zip -X -q lambda_function.zip bootstrap
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lambda-bundle
+          path: bot/lambda_function.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  terraform:
+    name: Terraform – format & validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff infra
+
+      - name: Validate
+        run: |
+          for dir in infra infra/init; do
+            terraform -chdir="$dir" init -backend=false -lockfile=readonly
+            terraform -chdir="$dir" validate
+          done
+
+  deploy:
+    name: Deploy to production
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [bot, terraform]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS, no stored AWS keys
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Check environment configuration
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          missing=0
+          for name in BOT_TOKEN AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set in the production environment (see README: Deployment)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lambda-bundle
+          path: bot
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          role-session-name: github-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 1800
+
+      - name: Terraform init
+        working-directory: infra
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: >-
+          terraform init -lockfile=readonly
+          -backend-config="bucket=${TF_STATE_BUCKET}"
+          -backend-config="region=${AWS_REGION}"
+
+      - name: Terraform plan
+        working-directory: infra
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+          TF_VAR_bot_secret_version: ${{ vars.BOT_SECRET_VERSION || '1' }}
+          TF_VAR_default_language: ${{ vars.DEFAULT_LANGUAGE }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          # Ephemeral variables aren't saved in the plan file; supply it again.
+          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+        run: terraform apply tfplan
+
+      - name: Register Telegram webhook
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          webhook_url=$(terraform -chdir=infra output -raw webhook_url)
+          echo "::add-mask::${webhook_url}"
+          echo "WEBHOOK_URL=${webhook_url}" >> "$GITHUB_ENV"
+          scripts/set-webhook.sh "$webhook_url"
+
+      - name: Smoke test – forged updates are rejected
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+            -X POST -H 'Content-Type: application/json' -d '{}' "$WEBHOOK_URL")
+          if [ "$status" != "401" ]; then
+            echo "::error::Expected HTTP 401 for a request without the secret token, got ${status}"
+            exit 1
+          fi
+          echo "Webhook rejects unauthenticated requests (HTTP 401)"

@@ -1,26 +1,25 @@
-variable "init_aws_region" {
-  description = "The AWS region to create resources in"
+variable "aws_region" {
+  description = "AWS region for the state bucket and the app resources the deploy role may manage"
   type        = string
 }
 
-variable "terraform_state_bucket" {
-  description = "The AWS S3 bucket used to store terraform state"
-  type        = string
-}
-
-variable "terraform_state_lock_dynamodb_table" {
-  description = "The AWS DynamoDB table name to be used for terraform state lock"
-  type        = string
-  default     = "anonymous-chatbot-terraform-state-lock"
-}
-
-variable "init_lambda_bucket" {
-  description = "The AWS S3 bucket for storing lambda function codes"
+variable "state_bucket_name" {
+  description = "Name of the S3 bucket that stores Terraform state for both stacks"
   type        = string
 }
 
 variable "github_repo" {
-  description = "Github repo to be used to allow github actions to have access to the AWS account via OIDC in this format: <GITHUB_OWNER>/<GITHUB_REPO>"
+  description = "GitHub repository allowed to deploy, in the form <owner>/<repo>"
   type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repo))
+    error_message = "github_repo must look like <owner>/<repo>."
+  }
 }
 
+variable "github_environment" {
+  description = "GitHub environment whose jobs may assume the deploy role"
+  type        = string
+  default     = "production"
+}
