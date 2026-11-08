@@ -10,6 +10,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
+	"github.com/bugfloyd/telegram-incognito-bot/common/notification"
 )
 
 func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -164,13 +165,13 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		IsBig: false,
 	})
 	if err != nil {
-		fmt.Println("failed to react to sender's message: %w", err)
+		log.Println("failed to react to sender's message:", err)
 	}
 
-	// Delete message with "Open" button
-	_, err = cb.Message.Delete(b, &gotgbot.DeleteMessageOpts{})
-	if err != nil {
-		fmt.Println("failed to delete message: %w", err)
+	// Remove the notification with the "Open" button: delete it, or, when it's
+	// too old to delete, replace its text and drop the button.
+	if err := notification.Retire(b, cb.Message, i18n.T(i18n.OpenedNotificationText)); err != nil {
+		log.Println("failed to retire notification:", err)
 	}
 
 	return nil
