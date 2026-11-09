@@ -13,6 +13,7 @@ Runs on AWS: API Gateway (HTTP API) → Lambda (Go, arm64) → DynamoDB, with se
 | Deploy permissions | Least privilege: the deploy role can only manage this bot's own resources, by name. The Lambda role it creates must carry a permissions boundary, so it can't be used to escalate privileges. |
 | Bot token | Stored as a GitHub environment secret and written to Secrets Manager through a Terraform write-only argument, so it never lands in Terraform state, plan files, or the repo. |
 | Webhook | Telegram signs each update with a secret token derived from the bot token. The Lambda rejects anything else with `401`, and every deploy smoke-tests that. |
+| Anonymity | Buttons that refer to another user (Open, Reply, Block, Unblock) carry no user IDs: their data is encrypted and authenticated for the person who sees them, so it can't be read or forged with a modified client. Senders are shown as labels such as `🦊 K3F9` that differ for every recipient and for each direction of a conversation, so they can't be compared or linked to anyone's public link. Both use an identity key that Terraform generates once and keeps in Secrets Manager. |
 | Endpoint abuse | API Gateway throttling, access logs, 30-day log retention. |
 | Data | DynamoDB with point-in-time recovery and deletion protection. |
 | State | Encrypted, versioned, TLS-only S3 bucket with S3-native locking. |
@@ -66,7 +67,7 @@ Optional `production` environment variables:
 | Variable | Default | Purpose |
 |---|---|---|
 | `DEFAULT_LANGUAGE` | *(empty: detect from client)* | `en_US` or `fa_IR` |
-| `BOT_SECRET_VERSION` | `1` | Increase after changing `BOT_TOKEN` so the new token is written to Secrets Manager |
+| `BOT_SECRET_VERSION` | `1` | Increase after changing `BOT_TOKEN` so the new token is written to Secrets Manager (the identity key stays the same) |
 | `INVITE_ONLY` | `true` | Set to `false` to open the bot to everyone (see [Invitations](#invitations)) |
 
 Optional `production` environment secret:
@@ -114,8 +115,11 @@ Use docker compose to run a local DynamoDB and a local development web server on
 ```shell
 export BOT_TOKEN=<BOT_TOKEN>              # a separate test bot is recommended
 export SQIDS_ALPHABET=<SHUFFLED_ALPHABET> # e.g. a shuffled a-zA-Z0-9
+export IDENTITY_KEY=$(openssl rand -base64 32)
 docker compose up -d
 ```
+
+Keep `IDENTITY_KEY` the same between runs: a new key makes existing buttons stop working and changes everyone's labels.
 
 The local DynamoDB starts empty. Create an `IncognitoChatBot` table with the same keys and indexes as `infra/main.tf` (for example with `aws dynamodb create-table --endpoint-url http://localhost:8000 ...`).
 

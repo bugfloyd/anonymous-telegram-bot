@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/bugfloyd/telegram-incognito-bot/common/conversation"
 	"github.com/bugfloyd/telegram-incognito-bot/common/db"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"github.com/google/uuid"
@@ -174,10 +175,15 @@ func (repo *UserRepository) ResetState(u *User) error {
 }
 
 // StartSending makes the user's next message go to contactUUID, as a reply to
-// replyToMessageID when it isn't 0.
-func (repo *UserRepository) StartSending(u *User, contactUUID string, replyToMessageID int64) error {
+// replyToMessageID when it isn't 0. role is the user's own role in that
+// conversation.
+func (repo *UserRepository) StartSending(u *User, contactUUID string, replyToMessageID int64, role conversation.Role) error {
+	if !role.Valid() {
+		return fmt.Errorf("invalid conversation role %q", role)
+	}
 	upd := expression.Set(expression.Name("State"), expression.Value(Sending)).
 		Set(expression.Name("ContactUUID"), expression.Value(contactUUID)).
+		Set(expression.Name("Role"), expression.Value(role)).
 		Remove(expression.Name("LastSentAt"))
 	if replyToMessageID != 0 {
 		upd = upd.Set(expression.Name("ReplyMessageID"), expression.Value(replyToMessageID))
@@ -187,20 +193,18 @@ func (repo *UserRepository) StartSending(u *User, contactUUID string, replyToMes
 	if err := repo.update(u, upd); err != nil {
 		return fmt.Errorf("failed to start sending: %w", err)
 	}
-	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = Sending, contactUUID, replyToMessageID, 0
+	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt, u.Role = Sending, contactUUID, replyToMessageID, 0, role
 	return nil
 }
 
 // StartSettingUsername makes the user's next message their new username.
 func (repo *UserRepository) StartSettingUsername(u *User) error {
-	upd := expression.Set(expression.Name("State"), expression.Value(SettingUsername)).
-		Remove(expression.Name("ContactUUID")).
-		Remove(expression.Name("ReplyMessageID")).
-		Remove(expression.Name("LastSentAt"))
+	upd := withoutConversation(expression.Set(expression.Name("State"), expression.Value(SettingUsername)))
 	if err := repo.update(u, upd); err != nil {
 		return fmt.Errorf("failed to start setting username: %w", err)
 	}
-	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = SettingUsername, "", 0, 0
+	u.State = SettingUsername
+	u.clearConversation()
 	return nil
 }
 
@@ -218,14 +222,12 @@ func (repo *UserRepository) StartCreatingInvitation(u *User) error {
 // startPrompt puts the user in a state where their next message answers a
 // question from the bot, with no conversation open.
 func (repo *UserRepository) startPrompt(u *User, state State) error {
-	upd := expression.Set(expression.Name("State"), expression.Value(state)).
-		Remove(expression.Name("ContactUUID")).
-		Remove(expression.Name("ReplyMessageID")).
-		Remove(expression.Name("LastSentAt"))
+	upd := withoutConversation(expression.Set(expression.Name("State"), expression.Value(state)))
 	if err := repo.update(u, upd); err != nil {
 		return fmt.Errorf("failed to set state %s: %w", state, err)
 	}
-	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = state, "", 0, 0
+	u.State = state
+	u.clearConversation()
 	return nil
 }
 
@@ -277,15 +279,22 @@ func (repo *UserRepository) ContinueConversation(u *User, sentAt time.Time) erro
 }
 
 // InterruptFollowUps ends a user's follow-ups because the bot is showing them
-// something from fromUUID. It only acts when the user is Continuing a
-// conversation with someone else: a message from the same person doesn't
-// interrupt, and explicitly chosen states (e.g. after pressing Reply) are left
-// alone. The check and the write are one conditional update, so concurrent
-// changes can't slip in between. Reports whether follow-ups were ended.
-func (repo *UserRepository) InterruptFollowUps(userUUID, fromUUID string) (bool, error) {
+// a message from fromUUID, whose role in that message's conversation is
+// fromRole. It only acts when the user is Continuing a different
+// conversation: a message from the same conversation doesn't interrupt, and
+// explicitly chosen states (e.g. after pressing Reply) are left alone. The
+// same person in their other conversation with the user (the other way
+// around) counts as someone else, so the user can't link the two. The check
+// and the write are one conditional update, so concurrent changes can't slip
+// in between. Reports whether follow-ups were ended.
+func (repo *UserRepository) InterruptFollowUps(userUUID, fromUUID string, fromRole conversation.Role) (bool, error) {
+	// In the same conversation, the user's role is the opposite of fromRole.
+	otherConversation := expression.Name("ContactUUID").NotEqual(expression.Value(fromUUID)).
+		Or(expression.AttributeNotExists(expression.Name("Role"))).
+		Or(expression.Name("Role").NotEqual(expression.Value(fromRole.Opposite())))
 	cond := expression.AttributeExists(expression.Name("UUID")).
 		And(expression.Name("State").Equal(expression.Value(Continuing))).
-		And(expression.Name("ContactUUID").NotEqual(expression.Value(fromUUID)))
+		And(otherConversation)
 	err := repo.updateWhere(userUUID, idle(), cond)
 	if db.IsConditionFailed(err) {
 		return false, nil
@@ -329,15 +338,26 @@ func (repo *UserRepository) UnblockAll(u *User) error {
 
 // idle is the update that returns a user to Idle with no conversation.
 func idle() expression.UpdateBuilder {
-	return expression.Set(expression.Name("State"), expression.Value(Idle)).
-		Remove(expression.Name("ContactUUID")).
+	return withoutConversation(expression.Set(expression.Name("State"), expression.Value(Idle)))
+}
+
+// withoutConversation adds removing the conversation in progress to upd.
+func withoutConversation(upd expression.UpdateBuilder) expression.UpdateBuilder {
+	return upd.Remove(expression.Name("ContactUUID")).
 		Remove(expression.Name("ReplyMessageID")).
-		Remove(expression.Name("LastSentAt"))
+		Remove(expression.Name("LastSentAt")).
+		Remove(expression.Name("Role"))
 }
 
 // setIdle mirrors idle() on the in-memory user.
 func (u *User) setIdle() {
-	u.State, u.ContactUUID, u.ReplyMessageID, u.LastSentAt = Idle, "", 0, 0
+	u.State = Idle
+	u.clearConversation()
+}
+
+// clearConversation mirrors withoutConversation on the in-memory user.
+func (u *User) clearConversation() {
+	u.ContactUUID, u.ReplyMessageID, u.LastSentAt, u.Role = "", 0, 0, ""
 }
 
 // update applies upd to the user's item. The item must already exist, so an

@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"github.com/bugfloyd/telegram-incognito-bot/common/buttons"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 
@@ -115,11 +116,12 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 			return fmt.Errorf("unknown command: %s", c)
 		}
 	case CallbackCommand:
-		// Buttons that refer to another user only act on data the bot issued
-		// to the person pressing them. Checked before anything else.
-		switch c {
-		case ReplyCallback, BlockCallback, UnBlockCallback, OpenCallback:
-			if ok, err := r.authenticateButton(b, ctx); !ok {
+		// Buttons that refer to another user only act on data the bot sealed
+		// for the person pressing them. Checked before anything else.
+		var ref buttons.Ref
+		if action, ok := userButtons[c]; ok {
+			var err error
+			if ref, ok, err = r.openButton(b, ctx, action); !ok {
 				return err
 			}
 		}
@@ -134,13 +136,13 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 
 		switch c {
 		case ReplyCallback:
-			return r.replyCallback(b, ctx)
+			return r.replyCallback(b, ctx, ref)
 		case BlockCallback:
-			return r.blockCallback(b, ctx)
+			return r.blockCallback(b, ctx, ref)
 		case UnBlockCallback:
-			return r.unBlockCallback(b, ctx)
+			return r.unBlockCallback(b, ctx, ref)
 		case OpenCallback:
-			return r.openCallback(b, ctx)
+			return r.openCallback(b, ctx, ref)
 		case SetUsernameCallback:
 			return r.usernameCallback(b, ctx, "SET")
 		case RemoveUsernameCallback:

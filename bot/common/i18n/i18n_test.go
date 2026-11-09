@@ -5,9 +5,26 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
+
+// TestSamePlaceholders ensures every translation of a text takes the same
+// format arguments, in the same order.
+func TestSamePlaceholders(t *testing.T) {
+	verbs := regexp.MustCompile(`%[a-z]`)
+	en := loadLanguage(EnUS)
+	for _, lang := range []Language{FaIR} {
+		texts := loadLanguage(lang)
+		for id, text := range en {
+			if want, got := verbs.FindAllString(text, -1), verbs.FindAllString(texts[id], -1); !slices.Equal(got, want) {
+				t.Errorf("%s in %s has placeholders %v, English has %v", id, lang, got, want)
+			}
+		}
+	}
+}
 
 // TestCompleteTranslations ensures that each language has all required text IDs translated.
 func TestCompleteTranslations(t *testing.T) {

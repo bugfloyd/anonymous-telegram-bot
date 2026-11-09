@@ -3,6 +3,7 @@ package users
 import (
 	"time"
 
+	"github.com/bugfloyd/telegram-incognito-bot/common/conversation"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 )
 
@@ -24,6 +25,10 @@ type User struct {
 	// LastSentAt is when the user's last message in the current conversation
 	// was delivered (unix seconds), while State is Continuing.
 	LastSentAt int64 `dynamodbav:"LastSentAt,omitempty"`
+	// Role is the user's own role in the conversation with ContactUUID, while
+	// State is Sending or Continuing: Anonymous if they opened the contact's
+	// link, Known if they own the link the contact opened.
+	Role conversation.Role `dynamodbav:"Role,omitempty"`
 
 	// Invitations (see the invitations package).
 	// Level is how far the user is from an admin in the invitation tree:
