@@ -123,6 +123,15 @@ func (r *RootHandler) runCommand(b *gotgbot.Bot, ctx *ext.Context, command inter
 			return fmt.Errorf("unknown command: %s", c)
 		}
 	case CallbackCommand:
+		// Buttons that refer to another user only act on data the bot issued
+		// to the person pressing them. Checked before anything else.
+		switch c {
+		case ReplyCallback, BlockCallback, UnBlockCallback, OpenCallback:
+			if ok, err := r.authenticateButton(b, ctx); !ok {
+				return err
+			}
+		}
+
 		// Reset user state if necessary
 		if r.user.State != users.Idle || r.user.ContactUUID != "" || r.user.ReplyMessageID != 0 {
 			err := r.userRepo.ResetState(r.user)

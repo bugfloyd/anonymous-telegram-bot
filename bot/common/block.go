@@ -38,7 +38,7 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				{
 					{
 						Text:         i18n.T(i18n.UnblockButtonText),
-						CallbackData: fmt.Sprintf("ub|%s|%s", receiverUUID, replyMessageID),
+						CallbackData: signButton(r.user.UUID, fmt.Sprintf("ub|%s|%s", receiverUUID, replyMessageID)),
 					},
 				},
 			},
@@ -78,12 +78,12 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	if replyMessageID == "0" {
 		replyMessageKey = gotgbot.InlineKeyboardButton{
 			Text:         i18n.T(i18n.SendMessageButtonText),
-			CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
+			CallbackData: signButton(r.user.UUID, fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID)),
 		}
 	} else {
 		replyMessageKey = gotgbot.InlineKeyboardButton{
 			Text:         i18n.T(i18n.ReplyButtonText),
-			CallbackData: fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID),
+			CallbackData: signButton(r.user.UUID, fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID)),
 		}
 	}
 
@@ -94,7 +94,7 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 					replyMessageKey,
 					{
 						Text:         i18n.T(i18n.BlockButtonText),
-						CallbackData: fmt.Sprintf("b|%s|%s", receiverUUID, replyMessageID),
+						CallbackData: signButton(r.user.UUID, fmt.Sprintf("b|%s|%s", receiverUUID, replyMessageID)),
 					},
 				},
 			},

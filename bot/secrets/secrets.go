@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/bugfloyd/telegram-incognito-bot/common/buttons"
 	"github.com/bugfloyd/telegram-incognito-bot/common/webhook"
 )
 
@@ -25,6 +26,10 @@ var SqidsAlphabet string
 // WebhookSecret is the token Telegram must send with every webhook update.
 // It is derived from BotToken, see the webhook package.
 var WebhookSecret string
+
+// ButtonKey signs the data of buttons that refer to another user, see the
+// buttons package. It is derived from BotToken.
+var ButtonKey []byte
 
 func init() {
 	secretName := "incognito-chat-bot-secrets" // must match infra/main.tf
@@ -68,4 +73,5 @@ func init() {
 		log.Fatal("Bot token is empty")
 	}
 	WebhookSecret = webhook.DeriveSecret(BotToken)
+	ButtonKey = buttons.DeriveKey(BotToken)
 }

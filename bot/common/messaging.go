@@ -75,7 +75,7 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 				{
 					{
 						Text:         i18n.TT(i18n.OpenMessageButtonText, receiver.Language),
-						CallbackData: fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId),
+						CallbackData: signButton(receiver.UUID, fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId)),
 					},
 				},
 			},
@@ -156,11 +156,11 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 				{
 					{
 						Text:         i18n.T(i18n.ReplyButtonText),
-						CallbackData: fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID),
+						CallbackData: signButton(r.user.UUID, fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID)),
 					},
 					{
 						Text:         i18n.T(i18n.BlockButtonText),
-						CallbackData: fmt.Sprintf("b|%s|%d", sender.UUID, senderMessageID),
+						CallbackData: signButton(r.user.UUID, fmt.Sprintf("b|%s|%d", sender.UUID, senderMessageID)),
 					},
 				},
 			},
@@ -236,7 +236,7 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 						{
 							{
 								Text:         i18n.T(i18n.UnblockButtonText),
-								CallbackData: fmt.Sprintf("ub|%s|%d", receiverUUID, messageID),
+								CallbackData: signButton(r.user.UUID, fmt.Sprintf("ub|%s|%d", receiverUUID, messageID)),
 							},
 						},
 					},
