@@ -59,6 +59,9 @@ var enLocale = LocaleTexts{
 	InvitationCreatedText:           "Invitation created (uses: %d).\n\nShare this link:\n%s\n\nOr the code: %s",
 	NoInvitationsToGiveText:         "You don't have any invitations to give right now.",
 	ChangeLanguageHintText:          "🌐 Change language · تغییر زبان: /language",
+	MessageDeletedText:              "🗑 This message was deleted by the sender before you opened it.",
+	MessageUnavailableText:          "🗑 This message is no longer available.",
+	OpenFailedText:                  "Couldn't open this message. Please try again.",
 	OpenedNotificationText:          "Message opened ⤵️",
 	MessageNotSentText:              "This message wasn't sent to anyone.\n\nTo answer a message you received, tap the \"%s\" button under it.\nTo send a new anonymous message, open that person's link.\nTo receive anonymous messages, share your own link: /link",
 }

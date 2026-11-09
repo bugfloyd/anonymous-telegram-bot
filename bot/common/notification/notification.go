@@ -3,7 +3,9 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 )
@@ -28,6 +30,29 @@ func Retire(b *gotgbot.Bot, msg Message, openedText string) error {
 	// No ReplyMarkup: the edit removes the inline keyboard.
 	if _, _, editErr := msg.EditText(b, &gotgbot.EditMessageTextOpts{Text: openedText}); editErr != nil {
 		return fmt.Errorf("failed to delete notification (%w) and to edit it (%w)", deleteErr, editErr)
+	}
+	return nil
+}
+
+// SourceGone reports whether copying a message failed because it no longer
+// exists: the sender deleted it for both sides, or their account is gone.
+func SourceGone(err error) bool {
+	var tgErr *gotgbot.TelegramError
+	if !errors.As(err, &tgErr) {
+		return false
+	}
+	description := strings.ToLower(tgErr.Description)
+	return strings.Contains(description, "message to copy not found") ||
+		strings.Contains(description, "chat not found")
+}
+
+// MarkUnavailable replaces a notification's text with text (e.g. "the sender
+// deleted this message") and removes its Open button, so the outcome stays
+// visible in the chat. Bots can edit their own messages without a time limit.
+func MarkUnavailable(b *gotgbot.Bot, msg Message, text string) error {
+	// No ReplyMarkup: the edit removes the inline keyboard.
+	if _, _, err := msg.EditText(b, &gotgbot.EditMessageTextOpts{Text: text}); err != nil {
+		return fmt.Errorf("failed to mark notification as unavailable: %w", err)
 	}
 	return nil
 }

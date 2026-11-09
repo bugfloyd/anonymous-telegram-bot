@@ -1,6 +1,7 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"github.com/bugfloyd/telegram-incognito-bot/common/notification"
+	"github.com/bugfloyd/telegram-incognito-bot/common/users"
 )
 
 func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) error {
@@ -96,6 +98,27 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 	return r.userRepo.ContinueConversation(r.user, messageTime(ctx.EffectiveMessage))
 }
 
+// markMessageUnavailable turns an Open notification into a visible note that
+// the message can't be opened anymore (removing its button), and shows the
+// same text as the button's pop-up.
+func (r *RootHandler) markMessageUnavailable(b *gotgbot.Bot, cb *gotgbot.CallbackQuery, text string) error {
+	if err := notification.MarkUnavailable(b, cb.Message, text); err != nil {
+		log.Println(err)
+	}
+	if _, err := cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: text}); err != nil {
+		return fmt.Errorf("failed to answer callback: %w", err)
+	}
+	return nil
+}
+
+// answerOpenFailed tells the user opening didn't work, keeping the
+// notification so they can try again.
+func (r *RootHandler) answerOpenFailed(b *gotgbot.Bot, cb *gotgbot.CallbackQuery) {
+	if _, err := cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: i18n.T(i18n.OpenFailedText)}); err != nil {
+		log.Println("failed to answer callback:", err)
+	}
+}
+
 // messageTime is when Telegram says the user sent the message.
 func messageTime(msg *gotgbot.Message) time.Time {
 	return time.Unix(msg.Date, 0)
@@ -108,22 +131,18 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("invalid callback data: %s", cb.Data)
 	}
 	uuid := split[1]
-	sender, err := r.userRepo.ReadUserByUUID(uuid)
-	if err != nil {
-		return fmt.Errorf("failed to get receiver: %w", err)
-	}
-
-	// Send callback answer to telegram
-	_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-		Text: i18n.T(i18n.MessageOpenedText),
-	})
-	if err != nil {
-		return fmt.Errorf("failed to answer callback: %w", err)
-	}
-
 	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
 	if err != nil {
 		return fmt.Errorf("failed to parse message ID: %w", err)
+	}
+	sender, err := r.userRepo.ReadUserByUUID(uuid)
+	if errors.Is(err, users.ErrNotFound) {
+		// The sender's account no longer exists.
+		return r.markMessageUnavailable(b, cb, i18n.T(i18n.MessageUnavailableText))
+	}
+	if err != nil {
+		r.answerOpenFailed(b, cb)
+		return fmt.Errorf("failed to get sender: %w", err)
 	}
 	var replyMessageID int64
 	if ctx.EffectiveMessage.ReplyToMessage != nil {
@@ -151,8 +170,18 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 			AllowSendingWithoutReply: true,
 		},
 	})
+	if notification.SourceGone(err) {
+		// The sender deleted the message (for both sides) before it was opened.
+		return r.markMessageUnavailable(b, cb, i18n.T(i18n.MessageDeletedText))
+	}
 	if err != nil {
+		r.answerOpenFailed(b, cb)
 		return fmt.Errorf("failed to send message to receiver: %w", err)
+	}
+
+	// Only now confirm: the message really was delivered.
+	if _, err := cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: i18n.T(i18n.MessageOpenedText)}); err != nil {
+		log.Println("failed to answer callback:", err)
 	}
 
 	// React with eyes emoji to senderMessageID
