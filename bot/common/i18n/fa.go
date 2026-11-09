@@ -4,7 +4,7 @@ var faLocale = LocaleTexts{
 	StartMessageText:                "خوش اومدی! از دستور /link برای دریافت لینک ناشناس خودت استفاده بکن",
 	InitialSendMessagePromptText:    "در حال ارسال پیام ناشناس به %s هستید.\n\nمی‌توانید چند پیام پشت سر هم بفرستید.\nپیغام خود را بنویسید:",
 	UnblockButtonText:               "آنبلاک",
-	ReplyButtonText:                 "پاسخ بده",
+	ReplyButtonText:                 "پاسخ",
 	BlockButtonText:                 "بلاک کن",
 	UnblockAllUsersResultText:       "تمامی کاربران آنبلاک شدند!",
 	UserBlockedText:                 "کاربر بلاک شد!",
