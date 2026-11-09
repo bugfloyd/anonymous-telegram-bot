@@ -22,12 +22,11 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
 
-	// Blocking only stops incoming messages, and nobody is ever told they are
-	// blocked: block status would let people link someone's anonymous
-	// messages to their public link. A message to someone who blocked the
-	// sender is silently not delivered; the sender sees the usual "sent"
-	// reaction, and missing "seen" looks the same as not opened yet.
-	if slices.Contains(receiver.Blacklist, r.user.UUID) {
+	// A block stops messages in both directions, silently. Nobody is ever
+	// told about blocks: block status would let people link someone's
+	// anonymous messages to their public link. The sender sees the usual
+	// "sent" reaction, and a missing "seen" looks the same as not opened yet.
+	if slices.Contains(receiver.Blacklist, r.user.UUID) || slices.Contains(r.user.Blacklist, receiver.UUID) {
 		if err := reactSent(b, ctx.EffectiveMessage); err != nil {
 			return err
 		}
