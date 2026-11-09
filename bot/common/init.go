@@ -63,10 +63,11 @@ func InitBot(request APIRequest) (APIResponse, error) {
 	dispatcher.AddHandler(handlers.NewMessage(CustomSendMessageFilter, rootHandler.init(TextMessage)))
 
 	// Callback queries handlers
-	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("r|"), rootHandler.init(ReplyCallback)))
-	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("b|"), rootHandler.init(BlockCallback)))
-	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ub|"), rootHandler.init(UnBlockCallback)))
-	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("o|"), rootHandler.init(OpenCallback)))
+	// Buttons that refer to another user (see userButtons); routed on their
+	// action prefix. "ub|" must come before the username callbacks' "u".
+	for _, c := range []CallbackCommand{ReplyCallback, BlockCallback, UnBlockCallback, OpenCallback} {
+		dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix(string(userButtons[c])+"|"), rootHandler.init(c)))
+	}
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("u"), rootHandler.init(SetUsernameCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("ru"), rootHandler.init(RemoveUsernameCallback)))
 	dispatcher.AddHandler(handlers.NewCallback(callbackquery.Prefix("cu"), rootHandler.init(CancelUsernameCallback)))

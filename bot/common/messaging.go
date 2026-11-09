@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"log"
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/bugfloyd/telegram-incognito-bot/common/buttons"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 	"github.com/bugfloyd/telegram-incognito-bot/common/notification"
 	"github.com/bugfloyd/telegram-incognito-bot/common/users"
@@ -33,15 +32,23 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return r.userRepo.ContinueConversation(r.user, messageTime(ctx.EffectiveMessage))
 	}
 
+	// What the receiver's buttons refer to: this message, and the sender in
+	// the role they have in this conversation.
+	ref := buttons.Ref{Other: r.user.UUID, Role: r.user.Role, MessageID: ctx.EffectiveMessage.MessageId}
+	keyboard, err := openKeyboard(receiver.UUID, receiver.Language, ref)
+	if err != nil {
+		return err
+	}
+
 	var replyParameters *gotgbot.ReplyParameters
-	msgText := i18n.TT(i18n.YouHaveANewMessageText, receiver.Language)
+	msgText := fmt.Sprintf(i18n.TT(i18n.NewMessageFromText, receiver.Language), labelOf(receiver.UUID, ref))
 	if r.user.ReplyMessageID != 0 {
 		replyParameters = &gotgbot.ReplyParameters{
 			MessageId:                r.user.ReplyMessageID,
 			AllowSendingWithoutReply: true,
 		}
 
-		msgText = i18n.TT(i18n.NewReplyToYourMessageText, receiver.Language)
+		msgText = fmt.Sprintf(i18n.TT(i18n.NewReplyFromText, receiver.Language), labelOf(receiver.UUID, ref))
 	}
 
 	if err := reactSent(b, ctx.EffectiveMessage); err != nil {
@@ -50,26 +57,17 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 
 	// Send the new message notification to the receiver
 	_, err = b.SendMessage(receiver.UserID, msgText, &gotgbot.SendMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{
-					{
-						Text:         i18n.TT(i18n.OpenMessageButtonText, receiver.Language),
-						CallbackData: signButton(receiver.UUID, fmt.Sprintf("o|%s|%d", r.user.UUID, ctx.EffectiveMessage.MessageId)),
-					},
-				},
-			},
-		},
+		ReplyMarkup:     keyboard,
 		ReplyParameters: replyParameters,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to send message to receiver: %w", err)
 	}
 
-	// The receiver just got a message from this sender, so their own
-	// follow-ups to someone else (if any) end here. Delivery already
+	// The receiver just got a message from this conversation, so their own
+	// follow-ups in another one (if any) end here. Delivery already
 	// succeeded, so a failure is only logged.
-	if _, err := r.userRepo.InterruptFollowUps(receiver.UUID, r.user.UUID); err != nil {
+	if _, err := r.userRepo.InterruptFollowUps(receiver.UUID, r.user.UUID, r.user.Role); err != nil {
 		log.Println("failed to interrupt receiver's follow-ups:", err)
 	}
 
@@ -115,18 +113,9 @@ func messageTime(msg *gotgbot.Message) time.Time {
 	return time.Unix(msg.Date, 0)
 }
 
-func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context, ref buttons.Ref) error {
 	cb := ctx.Update.CallbackQuery
-	split := strings.Split(cb.Data, "|")
-	if len(split) != 3 {
-		return fmt.Errorf("invalid callback data: %s", cb.Data)
-	}
-	uuid := split[1]
-	senderMessageID, err := strconv.ParseInt(split[2], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse message ID: %w", err)
-	}
-	sender, err := r.userRepo.ReadUserByUUID(uuid)
+	sender, err := r.userRepo.ReadUserByUUID(ref.Other)
 	if errors.Is(err, users.ErrNotFound) {
 		// The sender's account no longer exists.
 		return r.markMessageUnavailable(b, cb, i18n.T(i18n.MessageUnavailableText))
@@ -135,27 +124,19 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		r.answerOpenFailed(b, cb)
 		return fmt.Errorf("failed to get sender: %w", err)
 	}
+	keyboard, err := messageKeyboard(r.user.UUID, ref)
+	if err != nil {
+		r.answerOpenFailed(b, cb)
+		return err
+	}
 	var replyMessageID int64
 	if ctx.EffectiveMessage.ReplyToMessage != nil {
 		replyMessageID = ctx.EffectiveMessage.ReplyToMessage.MessageId
 	}
 
 	// Copy the sender's message to the receiver
-	_, err = b.CopyMessage(ctx.EffectiveChat.Id, sender.UserID, senderMessageID, &gotgbot.CopyMessageOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{
-					{
-						Text:         i18n.T(i18n.ReplyButtonText),
-						CallbackData: signButton(r.user.UUID, fmt.Sprintf("r|%s|%d", sender.UUID, senderMessageID)),
-					},
-					{
-						Text:         i18n.T(i18n.BlockButtonText),
-						CallbackData: signButton(r.user.UUID, fmt.Sprintf("b|%s|%d", sender.UUID, senderMessageID)),
-					},
-				},
-			},
-		},
+	_, err = b.CopyMessage(ctx.EffectiveChat.Id, sender.UserID, ref.MessageID, &gotgbot.CopyMessageOpts{
+		ReplyMarkup: keyboard,
 		ReplyParameters: &gotgbot.ReplyParameters{
 			MessageId:                replyMessageID,
 			AllowSendingWithoutReply: true,
@@ -175,8 +156,8 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		log.Println("failed to answer callback:", err)
 	}
 
-	// React with eyes emoji to senderMessageID
-	_, err = b.SetMessageReaction(sender.UserID, senderMessageID, &gotgbot.SetMessageReactionOpts{
+	// Mark the sender's message as seen
+	_, err = b.SetMessageReaction(sender.UserID, ref.MessageID, &gotgbot.SetMessageReactionOpts{
 		Reaction: []gotgbot.ReactionType{
 			gotgbot.ReactionTypeEmoji{
 				Emoji: "👀",
@@ -190,32 +171,25 @@ func (r *RootHandler) openCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 
 	// Remove the notification with the "Open" button: delete it, or, when it's
 	// too old to delete, replace its text and drop the button.
-	if err := notification.Retire(b, cb.Message, i18n.T(i18n.OpenedNotificationText)); err != nil {
+	opened := fmt.Sprintf(i18n.T(i18n.OpenedNotificationText), labelOf(r.user.UUID, ref))
+	if err := notification.Retire(b, cb.Message, opened); err != nil {
 		log.Println("failed to retire notification:", err)
 	}
 
 	return nil
 }
 
-func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context, ref buttons.Ref) error {
 	cb := ctx.Update.CallbackQuery
-	split := strings.Split(cb.Data, "|")
-	if len(split) != 3 {
-		return fmt.Errorf("invalid callback data: %s", cb.Data)
-	}
-	receiverUUID := split[1]
-	messageID, err := strconv.ParseInt(split[2], 10, 64)
-	if err != nil {
-		return fmt.Errorf("failed to parse message ID: %w", err)
-	}
 
 	// Check if receiver exists
-	if _, err := r.userRepo.ReadUserByUUID(receiverUUID); err != nil {
+	if _, err := r.userRepo.ReadUserByUUID(ref.Other); err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
 
-	// Store the message id in the user and set status to replying
-	err = r.userRepo.StartSending(r.user, receiverUUID, messageID)
+	// Reply in the same conversation: the user's role in it is the opposite
+	// of the other person's.
+	err := r.userRepo.StartSending(r.user, ref.Other, ref.MessageID, ref.Role.Opposite())
 	if err != nil {
 		return fmt.Errorf("failed to update user state: %w", err)
 	}

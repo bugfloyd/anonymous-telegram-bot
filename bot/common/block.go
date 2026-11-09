@@ -2,24 +2,21 @@ package common
 
 import (
 	"fmt"
+
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
+	"github.com/bugfloyd/telegram-incognito-bot/common/buttons"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
-	"strings"
 )
 
-func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context, ref buttons.Ref) error {
 	cb := ctx.Update.CallbackQuery
-	split := strings.Split(cb.Data, "|")
-	if len(split) != 3 {
-		return fmt.Errorf("invalid callback data: %s", cb.Data)
-	}
-	receiverUUID := split[1]
-	replyMessageID := split[2]
-
-	err := r.userRepo.Block(r.user, receiverUUID)
-
+	keyboard, err := blockedKeyboard(r.user.UUID, ref)
 	if err != nil {
+		return err
+	}
+
+	if err := r.userRepo.Block(r.user, ref.Other); err != nil {
 		return fmt.Errorf("failed to block user: %w", err)
 	}
 
@@ -30,38 +27,20 @@ func (r *RootHandler) blockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
-	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{
-					{
-						Text:         i18n.T(i18n.UnblockButtonText),
-						CallbackData: signButton(r.user.UUID, fmt.Sprintf("ub|%s|%s", receiverUUID, replyMessageID)),
-					},
-				},
-			},
-		},
-	})
-
-	if err != nil {
+	if _, _, err := cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{ReplyMarkup: keyboard}); err != nil {
 		return fmt.Errorf("failed to update message markup: %w", err)
 	}
-
 	return nil
 }
 
-func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
+func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context, ref buttons.Ref) error {
 	cb := ctx.Update.CallbackQuery
-	split := strings.Split(cb.Data, "|")
-	if len(split) != 3 {
-		return fmt.Errorf("invalid callback data: %s", cb.Data)
-	}
-	receiverUUID := split[1]
-	replyMessageID := split[2]
-
-	err := r.userRepo.Unblock(r.user, receiverUUID)
-
+	keyboard, err := messageKeyboard(r.user.UUID, ref)
 	if err != nil {
+		return err
+	}
+
+	if err := r.userRepo.Unblock(r.user, ref.Other); err != nil {
 		return fmt.Errorf("failed to unblock user: %w", err)
 	}
 
@@ -72,37 +51,9 @@ func (r *RootHandler) unBlockCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 		return fmt.Errorf("failed to answer callback: %w", err)
 	}
 
-	var replyMessageKey gotgbot.InlineKeyboardButton
-	if replyMessageID == "0" {
-		replyMessageKey = gotgbot.InlineKeyboardButton{
-			Text:         i18n.T(i18n.SendMessageButtonText),
-			CallbackData: signButton(r.user.UUID, fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID)),
-		}
-	} else {
-		replyMessageKey = gotgbot.InlineKeyboardButton{
-			Text:         i18n.T(i18n.ReplyButtonText),
-			CallbackData: signButton(r.user.UUID, fmt.Sprintf("r|%s|%s", receiverUUID, replyMessageID)),
-		}
-	}
-
-	_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
-		ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-			InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-				{
-					replyMessageKey,
-					{
-						Text:         i18n.T(i18n.BlockButtonText),
-						CallbackData: signButton(r.user.UUID, fmt.Sprintf("b|%s|%s", receiverUUID, replyMessageID)),
-					},
-				},
-			},
-		},
-	})
-
-	if err != nil {
+	if _, _, err := cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{ReplyMarkup: keyboard}); err != nil {
 		return fmt.Errorf("failed to update message markup: %w", err)
 	}
-
 	return nil
 }
 

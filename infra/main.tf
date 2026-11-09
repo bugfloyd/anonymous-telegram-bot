@@ -39,9 +39,27 @@ resource "random_shuffle" "sqids_alphabet" {
   input = split("", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 }
 
+# Key that protects who is who: the bot seals the data of buttons that refer
+# to another user with it, and derives people's labels from it (see
+# bot/common/buttons and bot/common/labels). Generated once and independent
+# of the bot token, so rotating the token keeps buttons working and labels
+# unchanged. Replacing it makes every existing button stop working and
+# changes every label.
+resource "random_bytes" "identity_key" {
+  length = 32
+}
+
+locals {
+  # Increase when the secret gets a new field, so the write-only value is
+  # written again on the next deploy without bumping BOT_SECRET_VERSION.
+  # 1: identity_key added.
+  secret_layout_version = 1
+  secret_version        = var.bot_secret_version + local.secret_layout_version
+}
+
 resource "aws_secretsmanager_secret" "bot" {
   name                    = local.secret_name
-  description             = "Telegram bot token and sqids alphabet"
+  description             = "Telegram bot token, sqids alphabet and identity key"
   recovery_window_in_days = 7
 }
 
@@ -50,10 +68,11 @@ resource "aws_secretsmanager_secret_version" "bot" {
 
   # Write-only: sent to AWS, never persisted in state or plan.
   secret_string_wo = jsonencode({
-    bot_token = var.bot_token
-    alphabet  = join("", random_shuffle.sqids_alphabet.result)
+    bot_token    = var.bot_token
+    alphabet     = join("", random_shuffle.sqids_alphabet.result)
+    identity_key = random_bytes.identity_key.base64
   })
-  secret_string_wo_version = var.bot_secret_version
+  secret_string_wo_version = local.secret_version
 }
 
 # ---------------------------------------------------------------------------
@@ -249,7 +268,7 @@ resource "aws_lambda_function" "bot" {
       DEFAULT_LANGUAGE = var.default_language
       # The bot reads its secret once per execution environment. Changing this
       # value replaces those environments, so a rotated token takes effect.
-      BOT_SECRET_VERSION = tostring(var.bot_secret_version)
+      BOT_SECRET_VERSION = tostring(local.secret_version)
       INVITE_ONLY        = tostring(var.invite_only)
       ADMIN_TELEGRAM_IDS = var.admin_telegram_ids
     }

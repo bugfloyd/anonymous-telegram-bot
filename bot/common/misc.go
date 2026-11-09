@@ -88,8 +88,9 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 
-		// Set user state to sending
-		err = r.userRepo.StartSending(r.user, receiverUser.UUID, 0)
+		// Set user state to sending: whoever opens a link is anonymous to its
+		// owner.
+		err = r.userRepo.StartSending(r.user, receiverUser.UUID, 0, conversation.Anonymous)
 		if err != nil {
 			return fmt.Errorf("failed to update user state: %w", err)
 		}
@@ -148,10 +149,18 @@ func (r *RootHandler) getLink(b *gotgbot.Bot, ctx *ext.Context) error {
 
 func (r *RootHandler) processText(b *gotgbot.Bot, ctx *ext.Context) error {
 	switch r.user.State {
-	case users.Sending:
-		return r.sendAnonymousMessage(b, ctx)
-	case users.Continuing:
-		if conversation.CanFollowUp(r.user.LastSentAt, messageTime(ctx.EffectiveMessage)) {
+	case users.Sending, users.Continuing:
+		if !r.user.Role.Valid() {
+			// A conversation started before roles existed: the bot can't tell
+			// how the receiver knows the sender, so it ends the conversation
+			// instead of guessing.
+			if err := r.userRepo.ResetState(r.user); err != nil {
+				return err
+			}
+			return r.sendMessageNotSent(b, ctx)
+		}
+		if r.user.State == users.Sending ||
+			conversation.CanFollowUp(r.user.LastSentAt, messageTime(ctx.EffectiveMessage)) {
 			return r.sendAnonymousMessage(b, ctx)
 		}
 		// Too long since their last message: close the conversation instead

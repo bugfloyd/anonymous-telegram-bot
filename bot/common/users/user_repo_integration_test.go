@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/expression"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/bugfloyd/telegram-incognito-bot/common/conversation"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
 )
 
@@ -123,7 +125,7 @@ func TestUserLifecycle(t *testing.T) {
 			}
 		}
 		// Empty fields must be absent; an empty Username would break its index.
-		for _, name := range []string{"Username", "ContactUUID", "ReplyMessageID", "Language", "Blacklist", "LastSentAt"} {
+		for _, name := range []string{"Username", "ContactUUID", "ReplyMessageID", "Language", "Blacklist", "LastSentAt", "Role"} {
 			if _, ok := item[name]; ok {
 				t.Errorf("%s should not be stored for a new user", name)
 			}
@@ -168,36 +170,57 @@ func TestUserLifecycle(t *testing.T) {
 	})
 
 	t.Run("sending a new message, then a reply, then reset", func(t *testing.T) {
-		if err := repo.StartSending(u, "contact-uuid", 0); err != nil {
+		if err := repo.StartSending(u, "contact-uuid", 0, conversation.Anonymous); err != nil {
 			t.Fatalf("StartSending: %v", err)
 		}
 		assertStored(t, repo, u, func(got *User) bool {
-			return got.State == Sending && got.ContactUUID == "contact-uuid" && got.ReplyMessageID == 0
+			return got.State == Sending && got.ContactUUID == "contact-uuid" && got.ReplyMessageID == 0 &&
+				got.Role == conversation.Anonymous
 		})
-		if _, ok := rawItem(t, repo, u.UUID)["ReplyMessageID"]; ok {
+		item := rawItem(t, repo, u.UUID)
+		if _, ok := item["ReplyMessageID"]; ok {
 			t.Error("ReplyMessageID should be absent for a new message")
 		}
+		if typ := attrType(item["Role"]); typ != "S" {
+			t.Errorf("Role stored as %q, want S", typ)
+		}
 
-		if err := repo.StartSending(u, "contact-uuid", 7); err != nil {
+		if err := repo.StartSending(u, "contact-uuid", 7, conversation.Known); err != nil {
 			t.Fatalf("StartSending reply: %v", err)
 		}
 		assertStored(t, repo, u, func(got *User) bool {
-			return got.State == Sending && got.ContactUUID == "contact-uuid" && got.ReplyMessageID == 7
+			return got.State == Sending && got.ContactUUID == "contact-uuid" && got.ReplyMessageID == 7 &&
+				got.Role == conversation.Known
 		})
 
 		if err := repo.ResetState(u); err != nil {
 			t.Fatalf("ResetState: %v", err)
 		}
 		assertStored(t, repo, u, func(got *User) bool {
-			return got.State == Idle && got.ContactUUID == "" && got.ReplyMessageID == 0
+			return got.State == Idle && got.ContactUUID == "" && got.ReplyMessageID == 0 && got.Role == ""
 		})
+		if _, ok := rawItem(t, repo, u.UUID)["Role"]; ok {
+			t.Error("Role should be removed when the conversation ends")
+		}
+	})
+
+	t.Run("sending needs a valid role", func(t *testing.T) {
+		if err := repo.StartSending(u, "contact-uuid", 0, ""); err == nil {
+			t.Error("StartSending without a role should fail")
+		}
+		assertStored(t, repo, u, func(got *User) bool { return got.State == Idle && got.Role == "" })
 	})
 
 	t.Run("username: start, set, find, remove", func(t *testing.T) {
+		if err := repo.StartSending(u, "contact-uuid", 0, conversation.Anonymous); err != nil {
+			t.Fatalf("StartSending: %v", err)
+		}
 		if err := repo.StartSettingUsername(u); err != nil {
 			t.Fatalf("StartSettingUsername: %v", err)
 		}
-		assertStored(t, repo, u, func(got *User) bool { return got.State == SettingUsername })
+		assertStored(t, repo, u, func(got *User) bool {
+			return got.State == SettingUsername && got.ContactUUID == "" && got.Role == ""
+		})
 
 		if err := repo.SetUsername(u, "alice"); err != nil {
 			t.Fatalf("SetUsername: %v", err)
@@ -228,14 +251,15 @@ func TestUserLifecycle(t *testing.T) {
 	})
 
 	t.Run("language", func(t *testing.T) {
-		if err := repo.StartSending(u, "contact-uuid", 3); err != nil {
+		if err := repo.StartSending(u, "contact-uuid", 3, conversation.Known); err != nil {
 			t.Fatalf("StartSending: %v", err)
 		}
 		if err := repo.SetLanguage(u, i18n.FaIR); err != nil {
 			t.Fatalf("SetLanguage: %v", err)
 		}
 		assertStored(t, repo, u, func(got *User) bool {
-			return got.Language == i18n.FaIR && got.State == Idle && got.ContactUUID == "" && got.ReplyMessageID == 0
+			return got.Language == i18n.FaIR && got.State == Idle && got.ContactUUID == "" && got.ReplyMessageID == 0 &&
+				got.Role == ""
 		})
 	})
 
@@ -289,58 +313,95 @@ func TestFollowUps(t *testing.T) {
 		}
 		return got
 	}
-	interrupt := func(t *testing.T, from string) bool {
+	interrupt := func(t *testing.T, from string, fromRole conversation.Role) bool {
 		t.Helper()
-		ended, err := repo.InterruptFollowUps(u.UUID, from)
+		ended, err := repo.InterruptFollowUps(u.UUID, from, fromRole)
 		if err != nil {
 			t.Fatalf("InterruptFollowUps: %v", err)
 		}
 		return ended
 	}
-
-	t.Run("continuing keeps the recipient and the thread", func(t *testing.T) {
-		if err := repo.StartSending(u, "contact-a", 9); err != nil {
+	// continueWithA puts u in a conversation with contact-a, having opened
+	// contact-a's link: u is anonymous and contact-a is known.
+	continueWithA := func(t *testing.T) {
+		t.Helper()
+		if err := repo.StartSending(u, "contact-a", 9, conversation.Anonymous); err != nil {
 			t.Fatalf("StartSending: %v", err)
 		}
 		if err := repo.ContinueConversation(u, sentAt); err != nil {
 			t.Fatalf("ContinueConversation: %v", err)
 		}
+	}
+	assertReset := func(t *testing.T) {
+		t.Helper()
+		got := stored(t)
+		if got.State != Idle || got.ContactUUID != "" || got.ReplyMessageID != 0 || got.LastSentAt != 0 || got.Role != "" {
+			t.Errorf("not reset: %+v", got)
+		}
+		item := rawItem(t, repo, u.UUID)
+		for _, name := range []string{"LastSentAt", "Role"} {
+			if _, ok := item[name]; ok {
+				t.Errorf("%s should be removed", name)
+			}
+		}
+	}
+
+	t.Run("continuing keeps the recipient, the thread and the role", func(t *testing.T) {
+		continueWithA(t)
 		assertStored(t, repo, u, func(got *User) bool {
 			return got.State == Continuing && got.ContactUUID == "contact-a" &&
-				got.ReplyMessageID == 9 && got.LastSentAt == sentAt.Unix()
+				got.ReplyMessageID == 9 && got.LastSentAt == sentAt.Unix() && got.Role == conversation.Anonymous
 		})
 		if typ := attrType(rawItem(t, repo, u.UUID)["LastSentAt"]); typ != "N" {
 			t.Errorf("LastSentAt stored as %q, want N", typ)
 		}
 	})
 
-	t.Run("a message from the same person doesn't interrupt", func(t *testing.T) {
-		if interrupt(t, "contact-a") {
-			t.Error("follow-ups ended by a message from the same person")
+	t.Run("a message in the same conversation doesn't interrupt", func(t *testing.T) {
+		if interrupt(t, "contact-a", conversation.Known) {
+			t.Error("follow-ups ended by a message from the same conversation")
 		}
 		if got := stored(t); got.State != Continuing || got.ContactUUID != "contact-a" {
 			t.Errorf("stored user changed: %+v", got)
 		}
 	})
 
+	t.Run("the same person in their other conversation interrupts", func(t *testing.T) {
+		// contact-a opened u's link too, and writes anonymously: to u that's
+		// someone else, so it must behave like someone else.
+		if !interrupt(t, "contact-a", conversation.Anonymous) {
+			t.Error("follow-ups not ended by a message from the other conversation")
+		}
+		assertReset(t)
+	})
+
 	t.Run("a message from someone else interrupts", func(t *testing.T) {
-		if !interrupt(t, "contact-b") {
+		continueWithA(t)
+		if !interrupt(t, "contact-b", conversation.Known) {
 			t.Error("follow-ups not ended by a message from someone else")
 		}
-		got := stored(t)
-		if got.State != Idle || got.ContactUUID != "" || got.ReplyMessageID != 0 || got.LastSentAt != 0 {
-			t.Errorf("not reset: %+v", got)
+		assertReset(t)
+	})
+
+	t.Run("a conversation without a role is interrupted by anyone", func(t *testing.T) {
+		// Conversations started before roles existed.
+		legacy := expression.Set(expression.Name("State"), expression.Value(Continuing)).
+			Set(expression.Name("ContactUUID"), expression.Value("contact-a")).
+			Remove(expression.Name("Role"))
+		if err := repo.update(u, legacy); err != nil {
+			t.Fatalf("update: %v", err)
 		}
-		if _, ok := rawItem(t, repo, u.UUID)["LastSentAt"]; ok {
-			t.Error("LastSentAt should be removed")
+		if !interrupt(t, "contact-a", conversation.Known) {
+			t.Error("a conversation without a role was not interrupted")
 		}
+		assertReset(t)
 	})
 
 	t.Run("an explicit reply in progress isn't interrupted", func(t *testing.T) {
-		if err := repo.StartSending(u, "contact-a", 5); err != nil {
+		if err := repo.StartSending(u, "contact-a", 5, conversation.Known); err != nil {
 			t.Fatalf("StartSending: %v", err)
 		}
-		if interrupt(t, "contact-b") {
+		if interrupt(t, "contact-b", conversation.Anonymous) {
 			t.Error("explicit Sending state was interrupted")
 		}
 		if got := stored(t); got.State != Sending || got.ContactUUID != "contact-a" || got.ReplyMessageID != 5 {
@@ -352,20 +413,20 @@ func TestFollowUps(t *testing.T) {
 		if err := repo.ResetState(u); err != nil {
 			t.Fatalf("ResetState: %v", err)
 		}
-		if interrupt(t, "contact-b") {
+		if interrupt(t, "contact-b", conversation.Anonymous) {
 			t.Error("idle user reported as interrupted")
 		}
 		if err := repo.StartSettingUsername(u); err != nil {
 			t.Fatalf("StartSettingUsername: %v", err)
 		}
-		if interrupt(t, "contact-b") || stored(t).State != SettingUsername {
+		if interrupt(t, "contact-b", conversation.Anonymous) || stored(t).State != SettingUsername {
 			t.Error("setting-username state was interrupted")
 		}
 	})
 
 	t.Run("explicit states and resets clear the follow-up timestamp", func(t *testing.T) {
 		for name, next := range map[string]func() error{
-			"StartSending": func() error { return repo.StartSending(u, "contact-c", 0) },
+			"StartSending": func() error { return repo.StartSending(u, "contact-c", 0, conversation.Anonymous) },
 			"ResetState":   func() error { return repo.ResetState(u) },
 		} {
 			if err := repo.ContinueConversation(u, sentAt); err != nil {
@@ -381,7 +442,7 @@ func TestFollowUps(t *testing.T) {
 	})
 
 	t.Run("unknown user", func(t *testing.T) {
-		ended, err := repo.InterruptFollowUps("no-such-uuid", "contact-b")
+		ended, err := repo.InterruptFollowUps("no-such-uuid", "contact-b", conversation.Known)
 		if err != nil || ended {
 			t.Errorf("InterruptFollowUps(unknown) = %v, %v; want false, nil", ended, err)
 		}
