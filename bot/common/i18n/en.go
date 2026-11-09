@@ -62,6 +62,7 @@ var enLocale = LocaleTexts{
 	MessageDeletedText:              "🗑 This message was deleted by the sender before you opened it.",
 	MessageUnavailableText:          "🗑 This message is no longer available.",
 	OpenFailedText:                  "Couldn't open this message. Please try again.",
+	InvalidButtonText:               "This button isn't valid anymore.",
 	OpenedNotificationText:          "Message opened ⤵️",
 	MessageNotSentText:              "This message wasn't sent to anyone.\n\nTo answer a message you received, tap the \"%s\" button under it.\nTo send a new anonymous message, open that person's link.\nTo receive anonymous messages, share your own link: /link",
 }

@@ -100,7 +100,7 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 						{
 							{
 								Text:         i18n.T(i18n.UnblockButtonText),
-								CallbackData: fmt.Sprintf("ub|%s|%d", receiverUser.UUID, 0),
+								CallbackData: signButton(r.user.UUID, fmt.Sprintf("ub|%s|%d", receiverUser.UUID, 0)),
 							},
 						},
 					},

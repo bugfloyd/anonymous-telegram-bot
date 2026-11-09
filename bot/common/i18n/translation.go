@@ -51,6 +51,7 @@ const (
 	SameUsernameText                TextID = "SameUsernameText"
 	MessageNotSentText              TextID = "MessageNotSentText"
 	OpenedNotificationText          TextID = "OpenedNotificationText"
+	InvalidButtonText               TextID = "InvalidButtonText"
 	MessageDeletedText              TextID = "MessageDeletedText"
 	MessageUnavailableText          TextID = "MessageUnavailableText"
 	OpenFailedText                  TextID = "OpenFailedText"
