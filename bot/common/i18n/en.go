@@ -15,8 +15,6 @@ var enLocale = LocaleTexts{
 	NoPreferredLanguageSetText:      "You don't have a preferred language yet.",
 	NeverMindButtonText:             "Never mind!",
 	LanguageUpdatedSuccessfullyText: "Language updated successfully to English.",
-	YouHaveBlockedThisUserText:      "You have blocked this user.",
-	ThisUserHasBlockedYouText:       "This user has blocked you.",
 	YouHaveANewMessageText:          "You have a new message.",
 	NewReplyToYourMessageText:       "New reply to your message",
 	OpenMessageButtonText:           "Open Message",

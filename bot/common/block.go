@@ -5,8 +5,6 @@ import (
 	"github.com/PaulSonOfLars/gotgbot/v2"
 	"github.com/PaulSonOfLars/gotgbot/v2/ext"
 	"github.com/bugfloyd/telegram-incognito-bot/common/i18n"
-	"github.com/bugfloyd/telegram-incognito-bot/common/users"
-	"slices"
 	"strings"
 )
 
@@ -120,13 +118,4 @@ func (r *RootHandler) unBlockAll(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	return nil
-}
-
-func blockCheck(sender *users.User, receiver *users.User) BlockedBy {
-	if slices.Contains(sender.Blacklist, receiver.UUID) {
-		return Sender
-	} else if slices.Contains(receiver.Blacklist, sender.UUID) {
-		return Receiver
-	}
-	return None
 }

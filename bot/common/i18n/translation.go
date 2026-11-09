@@ -22,8 +22,6 @@ const (
 	NoPreferredLanguageSetText      TextID = "NoPreferredLanguageSetText"
 	NeverMindButtonText             TextID = "NeverMindButtonText"
 	LanguageUpdatedSuccessfullyText TextID = "LanguageUpdatedSuccessfullyText"
-	YouHaveBlockedThisUserText      TextID = "YouHaveBlockedThisUserText"
-	ThisUserHasBlockedYouText       TextID = "ThisUserHasBlockedYouText"
 	YouHaveANewMessageText          TextID = "YouHaveANewMessageText"
 	NewReplyToYourMessageText       TextID = "NewReplyToYourMessageText"
 	OpenMessageButtonText           TextID = "OpenMessageButtonText"

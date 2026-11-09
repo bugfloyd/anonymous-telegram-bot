@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,27 +22,16 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		return fmt.Errorf("failed to get receiver: %w", err)
 	}
 
-	// Check if they block each other
-	blockedBy := blockCheck(r.user, receiver)
-	if blockedBy != None {
-		var reason string
-		if blockedBy == Sender {
-			reason = i18n.T(i18n.YouHaveBlockedThisUserText)
-		} else if blockedBy == Receiver {
-			reason = i18n.T(i18n.ThisUserHasBlockedYouText)
-		}
-		_, err = ctx.EffectiveMessage.Reply(b, reason, nil)
-		if err != nil {
-			return fmt.Errorf("failed to send block message: %w", err)
-		}
-
-		// Reset sender user
-		err = r.userRepo.ResetState(r.user)
-		if err != nil {
+	// Blocking only stops incoming messages, and nobody is ever told they are
+	// blocked: block status would let people link someone's anonymous
+	// messages to their public link. A message to someone who blocked the
+	// sender is silently not delivered; the sender sees the usual "sent"
+	// reaction, and missing "seen" looks the same as not opened yet.
+	if slices.Contains(receiver.Blacklist, r.user.UUID) {
+		if err := reactSent(b, ctx.EffectiveMessage); err != nil {
 			return err
 		}
-
-		return nil
+		return r.userRepo.ContinueConversation(r.user, messageTime(ctx.EffectiveMessage))
 	}
 
 	var replyParameters *gotgbot.ReplyParameters
@@ -55,17 +45,8 @@ func (r *RootHandler) sendAnonymousMessage(b *gotgbot.Bot, ctx *ext.Context) err
 		msgText = i18n.TT(i18n.NewReplyToYourMessageText, receiver.Language)
 	}
 
-	// React with sent emoji to senderMessageID
-	_, err = ctx.EffectiveMessage.SetReaction(b, &gotgbot.SetMessageReactionOpts{
-		Reaction: []gotgbot.ReactionType{
-			gotgbot.ReactionTypeEmoji{
-				Emoji: "🕊",
-			},
-		},
-		IsBig: false,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to react to sender's message: %w", err)
+	if err := reactSent(b, ctx.EffectiveMessage); err != nil {
+		return err
 	}
 
 	// Send the new message notification to the receiver
@@ -117,6 +98,17 @@ func (r *RootHandler) answerOpenFailed(b *gotgbot.Bot, cb *gotgbot.CallbackQuery
 	if _, err := cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{Text: i18n.T(i18n.OpenFailedText)}); err != nil {
 		log.Println("failed to answer callback:", err)
 	}
+}
+
+// reactSent marks the sender's message with the "sent" reaction.
+func reactSent(b *gotgbot.Bot, msg *gotgbot.Message) error {
+	_, err := msg.SetReaction(b, &gotgbot.SetMessageReactionOpts{
+		Reaction: []gotgbot.ReactionType{gotgbot.ReactionTypeEmoji{Emoji: "🕊"}},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to react to sender's message: %w", err)
+	}
+	return nil
 }
 
 // messageTime is when Telegram says the user sent the message.
@@ -219,47 +211,8 @@ func (r *RootHandler) replyCallback(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	// Check if receiver exists
-	receiver, err := r.userRepo.ReadUserByUUID(receiverUUID)
-	if err != nil {
+	if _, err := r.userRepo.ReadUserByUUID(receiverUUID); err != nil {
 		return fmt.Errorf("failed to get receiver: %w", err)
-	}
-
-	// Check if they block each other
-	blockedBy := blockCheck(r.user, receiver)
-	if blockedBy != None {
-		var reason string
-		if blockedBy == Sender {
-			reason = i18n.T(i18n.YouHaveBlockedThisUserText)
-			_, _, err = cb.Message.EditReplyMarkup(b, &gotgbot.EditMessageReplyMarkupOpts{
-				ReplyMarkup: gotgbot.InlineKeyboardMarkup{
-					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-						{
-							{
-								Text:         i18n.T(i18n.UnblockButtonText),
-								CallbackData: signButton(r.user.UUID, fmt.Sprintf("ub|%s|%d", receiverUUID, messageID)),
-							},
-						},
-					},
-				},
-			})
-
-			if err != nil {
-				return fmt.Errorf("failed to update message markup: %w", err)
-			}
-
-		} else if blockedBy == Receiver {
-			reason = i18n.T(i18n.ThisUserHasBlockedYouText)
-		}
-
-		_, err = cb.Answer(b, &gotgbot.AnswerCallbackQueryOpts{
-			Text:      reason,
-			ShowAlert: true,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to answer callback: %w", err)
-		}
-
-		return nil
 	}
 
 	// Store the message id in the user and set status to replying
