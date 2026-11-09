@@ -2,6 +2,7 @@ package notification
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/PaulSonOfLars/gotgbot/v2"
@@ -65,3 +66,43 @@ func TestRetireReportsBothFailures(t *testing.T) {
 
 // The callback query's message type must satisfy Message.
 var _ Message = gotgbot.MaybeInaccessibleMessage(nil)
+
+func TestSourceGone(t *testing.T) {
+	gone := []error{
+		&gotgbot.TelegramError{Code: 400, Description: "Bad Request: message to copy not found"},
+		fmt.Errorf("unable to copyMessage: %w", &gotgbot.TelegramError{Code: 400, Description: "Bad Request: chat not found"}),
+	}
+	for _, err := range gone {
+		if !SourceGone(err) {
+			t.Errorf("SourceGone(%v) = false, want true", err)
+		}
+	}
+	notGone := []error{
+		nil,
+		errors.New("message to copy not found"), // not a Telegram API error
+		&gotgbot.TelegramError{Code: 429, Description: "Too Many Requests: retry after 5"},
+		&gotgbot.TelegramError{Code: 403, Description: "Forbidden: bot was blocked by the user"},
+	}
+	for _, err := range notGone {
+		if SourceGone(err) {
+			t.Errorf("SourceGone(%v) = true, want false", err)
+		}
+	}
+}
+
+func TestMarkUnavailable(t *testing.T) {
+	msg := &fakeMessage{}
+	if err := MarkUnavailable(nil, msg, "Deleted"); err != nil {
+		t.Fatalf("MarkUnavailable: %v", err)
+	}
+	if msg.deletes != 0 || len(msg.edits) != 1 {
+		t.Fatalf("deletes=%d edits=%d, want only one edit (the note must stay visible)", msg.deletes, len(msg.edits))
+	}
+	if msg.edits[0].Text != "Deleted" || len(msg.edits[0].ReplyMarkup.InlineKeyboard) != 0 {
+		t.Errorf("edit = %+v, want the text and no buttons", msg.edits[0])
+	}
+	failing := &fakeMessage{editErr: errEditFail}
+	if err := MarkUnavailable(nil, failing, "Deleted"); !errors.Is(err, errEditFail) {
+		t.Errorf("error %v should wrap the edit failure", err)
+	}
+}
