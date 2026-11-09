@@ -88,39 +88,6 @@ func (r *RootHandler) start(b *gotgbot.Bot, ctx *ext.Context) error {
 			return nil
 		}
 
-		// Check if they block each other
-		blockedBy := blockCheck(r.user, receiverUser)
-		if blockedBy != None {
-			var reason string
-			var keyboard gotgbot.InlineKeyboardMarkup
-			if blockedBy == Sender {
-				reason = i18n.T(i18n.YouHaveBlockedThisUserText)
-				keyboard = gotgbot.InlineKeyboardMarkup{
-					InlineKeyboard: [][]gotgbot.InlineKeyboardButton{
-						{
-							{
-								Text:         i18n.T(i18n.UnblockButtonText),
-								CallbackData: signButton(r.user.UUID, fmt.Sprintf("ub|%s|%d", receiverUser.UUID, 0)),
-							},
-						},
-					},
-				}
-
-			} else if blockedBy == Receiver {
-				reason = i18n.T(i18n.ThisUserHasBlockedYouText)
-			}
-
-			_, err = ctx.EffectiveMessage.Reply(b, reason, &gotgbot.SendMessageOpts{
-				ReplyMarkup: keyboard,
-			})
-
-			if err != nil {
-				return fmt.Errorf("failed to send block message: %w", err)
-			}
-
-			return nil
-		}
-
 		// Set user state to sending
 		err = r.userRepo.StartSending(r.user, receiverUser.UUID, 0)
 		if err != nil {

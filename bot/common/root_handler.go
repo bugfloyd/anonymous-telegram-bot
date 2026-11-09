@@ -46,14 +46,6 @@ const (
 	CancelInvitationCallback CallbackCommand = "cancel-invitation-callback"
 )
 
-type BlockedBy string
-
-const (
-	Sender   BlockedBy = "same-user"
-	Receiver BlockedBy = "other-user"
-	None     BlockedBy = "none"
-)
-
 type RootHandler struct {
 	user     *users.User
 	userRepo users.UserRepository
