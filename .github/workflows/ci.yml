@@ -1,8 +1,9 @@
 name: CI
 
 # v2 is built on the v2 branch: every pull request and every push to v2 is
-# tested and built. Nothing here deploys; deployment is added with the
-# infrastructure.
+# tested and built. Pushes to v2 then deploy to the dev environment (its own
+# AWS account), which only the v2 branch may use (see scripts/bootstrap.sh).
+# Pull requests never get cloud access or secrets.
 on:
   pull_request:
   push:
@@ -151,5 +152,153 @@ jobs:
 
       - name: Validate
         run: |
-          terraform -chdir=infra/init init -backend=false -lockfile=readonly
-          terraform -chdir=infra/init validate
+          for dir in infra infra/init; do
+            terraform -chdir="$dir" init -backend=false -lockfile=readonly
+            terraform -chdir="$dir" validate
+          done
+
+  deploy-dev:
+    name: Deploy to dev
+    if: github.ref == 'refs/heads/v2' && github.event_name != 'pull_request'
+    needs: [backend, web, terraform]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS, no stored AWS keys
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    steps:
+      - name: Check environment configuration
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS }}
+        run: |
+          missing=0
+          for name in BOT_TOKEN AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set in the dev environment"
+              missing=1
+            fi
+          done
+          # Catch a mis-pasted secret before anything is written to AWS.
+          if [ -n "$BOT_TOKEN" ] && ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::BOT_TOKEN doesn't look like a Telegram bot token"
+            missing=1
+          fi
+          exit "$missing"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lambda-bundles
+          path: backend/dist
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          role-session-name: github-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 1800
+
+      - name: Terraform init
+        working-directory: infra
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: >-
+          terraform init -lockfile=readonly
+          -backend-config="bucket=${TF_STATE_BUCKET}"
+          -backend-config="region=${AWS_REGION}"
+
+      # Workflow logs are public. Hide the endpoints of earlier deploys before
+      # Terraform prints anything (there are none on the first deploy).
+      - name: Mask endpoints
+        working-directory: infra
+        run: |
+          for name in api_url ws_url webhook_url; do
+            value=$(terraform output -raw "$name" 2>/dev/null || true)
+            if [ -n "$value" ]; then
+              echo "::add-mask::${value}"
+              host=${value#*://}
+              echo "::add-mask::${host%%[/.]*}"
+            fi
+          done
+
+      - name: Terraform plan
+        working-directory: infra
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_environment: dev
+          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+          TF_VAR_bot_token_version: ${{ vars.BOT_TOKEN_VERSION || '1' }}
+          TF_VAR_secrets_version: ${{ vars.SECRETS_VERSION || '1' }}
+          TF_VAR_client_origins: ${{ vars.CLIENT_ORIGINS }}
+          TF_VAR_deletion_protection: ${{ vars.DELETION_PROTECTION || 'true' }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          # Ephemeral variables aren't saved in the plan file; supply it again.
+          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+        # Resource IDs (such as the WebSocket API's) are printed on creation.
+        run: terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
+
+      - name: Read endpoints
+        working-directory: infra
+        run: |
+          for name in api_url ws_url webhook_url; do
+            value=$(terraform output -raw "$name")
+            echo "::add-mask::${value}"
+            host=${value#*://}
+            echo "::add-mask::${host%%[/.]*}"
+            echo "$(echo "$name" | tr '[:lower:]' '[:upper:]')=${value}" >> "$GITHUB_ENV"
+          done
+
+      - name: Smoke test – API answers with JSON errors
+        run: |
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' "${API_URL%/}/no-such-route")
+          status=${body##*$'\n'}
+          if [ "$status" != "404" ] || [[ "$body" != *'"error":"not_found"'* ]]; then
+            echo "::error::Expected a 404 JSON error from the API, got HTTP ${status}"
+            exit 1
+          fi
+          echo "API reachable (HTTP 404 with a JSON error)"
+
+      - name: Smoke test – webhook is reachable
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST -d '{}' "$WEBHOOK_URL")
+          if [ "$status" != "404" ]; then
+            echo "::error::Expected HTTP 404 from the webhook stub, got ${status}"
+            exit 1
+          fi
+          echo "Webhook reachable (HTTP 404 until the bot is built)"
+
+      - name: Smoke test – sockets refuse unauthenticated connections
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \
+            -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+            -H 'Sec-WebSocket-Key: c21va2UtdGVzdC1rZXktMQ==' "https://${WS_URL#wss://}")
+          if [ "$status" != "403" ]; then
+            echo "::error::Expected HTTP 403 for an unauthenticated socket, got ${status}"
+            exit 1
+          fi
+          echo "Sockets refuse unauthenticated connections (HTTP 403)"
