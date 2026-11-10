@@ -28,8 +28,9 @@ for dir in cmd/*/; do
   # Fixed permissions and timestamp, and no extra attributes, keep the zip
   # byte-identical whatever the umask or clock.
   chmod 0755 "$work/$name/bootstrap"
-  touch -d '1980-01-01T00:00:00Z' "$work/$name/bootstrap"
+  TZ=UTC touch -d '1980-01-01T00:00:00Z' "$work/$name/bootstrap"
   rm -f "$out/$name.zip"
-  (cd "$work/$name" && zip -X -q "$out/$name.zip" bootstrap)
+  # zip stores local time, so pin the time zone too.
+  (cd "$work/$name" && TZ=UTC zip -X -q "$out/$name.zip" bootstrap)
   echo "$(sha256sum "$out/$name.zip" | cut -d' ' -f1)  $name.zip"
 done
