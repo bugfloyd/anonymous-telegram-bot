@@ -1,19 +1,32 @@
+/* Design tokens. Telegram's theme overrides them (platform/theme.ts); outside
+   Telegram they follow the system's light or dark mode. Layout uses logical
+   properties throughout, so right-to-left needs no special cases. */
 :root {
   --app-bg: #ffffff;
   --app-text: #111111;
   --app-muted: #6b7280;
+  --app-surface: #f3f4f6;
+  --app-accent: #2481cc;
+  --app-on-accent: #ffffff;
+  --app-link: #2481cc;
+  --app-danger: #dc2626;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='telegram']) {
     --app-bg: #111827;
     --app-text: #f9fafb;
     --app-muted: #9ca3af;
+    --app-surface: #1f2937;
+    --app-accent: #60a5fa;
+    --app-on-accent: #0b1220;
+    --app-link: #93c5fd;
+    --app-danger: #f87171;
   }
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--app-bg); color: var(--app-text); }
 body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.placeholder { max-width: 32rem; margin: 0 auto; padding: 2rem 1rem; }
-.placeholder h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+.placeholder { max-inline-size: 32rem; margin-inline: auto; padding: 2rem 1rem; }
+.placeholder h1 { font-size: 1.5rem; margin-block: 0 0.5rem; }
 .muted { color: var(--app-muted); font-size: 0.875rem; }

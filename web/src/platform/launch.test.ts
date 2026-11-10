@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isTelegramLaunch, parseLaunch } from './launch';
 
-const initData = 'auth_date=1700000000&start_param=reg123&user=%7B%22id%22%3A1%7D&signature=abc&hash=def';
+const initData = 'auth_date=1700000000&start_param=reg123&user=' + encodeURIComponent('{"id":1,"language_code":"fa"}') + '&signature=abc&hash=def';
 
 describe('parseLaunch', () => {
   it('reads Telegram launch parameters from the fragment', () => {
@@ -15,6 +15,7 @@ describe('parseLaunch', () => {
     expect(launch.platform).toBe('android');
     expect(launch.startParam).toBe('reg123');
     expect(launch.themeParams).toEqual({ bg_color: '#ffffff', text_color: '#000' });
+    expect(launch.userLanguage).toBe('fa');
     expect(isTelegramLaunch(launch)).toBe(true);
   });
 
@@ -29,8 +30,16 @@ describe('parseLaunch', () => {
 
   it('handles a page opened outside Telegram', () => {
     const launch = parseLaunch('');
-    expect(launch).toEqual({ initData: '', version: '', platform: '', startParam: '', themeParams: {} });
+    expect(launch).toEqual({ initData: '', version: '', platform: '', startParam: '', themeParams: {}, userLanguage: '' });
     expect(isTelegramLaunch(launch)).toBe(false);
+  });
+
+  it('reads only a well-formed language code from the user', () => {
+    const user = (u: string) => parseLaunch('tgWebAppData=' + encodeURIComponent('user=' + encodeURIComponent(u))).userLanguage;
+    expect(user('{"id":1,"language_code":"en-GB"}')).toBe('en-GB');
+    expect(user('{"id":1,"language_code":"<script>"}')).toBe('');
+    expect(user('{"id":1}')).toBe('');
+    expect(user('not json')).toBe('');
   });
 
   it('drops malformed or non-colour theme values', () => {
