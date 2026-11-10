@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,41 @@ func TestJSONHeaders(t *testing.T) {
 		if got := resp.Headers[header]; got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
+	}
+}
+
+func TestDecodeJSON(t *testing.T) {
+	type body struct {
+		Name string `json:"name"`
+	}
+	tests := []struct {
+		name   string
+		req    Request
+		ok     bool
+		result string
+	}{
+		{"plain", Request{Body: `{"name":"a"}`}, true, "a"},
+		{"base64", Request{Body: "eyJuYW1lIjoiYiJ9", IsBase64Encoded: true}, true, "b"},
+		{"whitespace after", Request{Body: "{\"name\":\"c\"}\n "}, true, "c"},
+		{"unknown field", Request{Body: `{"name":"a","x":1}`}, false, ""},
+		{"two values", Request{Body: `{"name":"a"}{"name":"b"}`}, false, ""},
+		{"trailing garbage", Request{Body: `{"name":"a"} x`}, false, ""},
+		{"empty", Request{Body: ""}, false, ""},
+		{"bad base64", Request{Body: "%%%", IsBase64Encoded: true}, false, ""},
+		{"too large", Request{Body: `{"name":"` + strings.Repeat("a", MaxBody) + `"}`}, false, ""},
+		{"wrong type", Request{Body: `{"name":5}`}, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got body
+			err := DecodeJSON(tt.req, &got)
+			if tt.ok && (err != nil || got.Name != tt.result) {
+				t.Fatalf("got %+v, %v", got, err)
+			}
+			if !tt.ok && err == nil {
+				t.Fatalf("accepted: %+v", got)
+			}
+		})
 	}
 }
 
