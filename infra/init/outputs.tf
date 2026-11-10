@@ -9,7 +9,7 @@ output "deploy_policy_arn" {
 }
 
 output "lambda_boundary_policy_arn" {
-  description = "Permissions boundary the app stack must attach to the Lambda role"
+  description = "Permissions boundary the app stack must attach to every function role"
   value       = aws_iam_policy.lambda_boundary.arn
 }
 

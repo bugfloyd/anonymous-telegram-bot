@@ -1,6 +1,7 @@
 # GitHub Actions authenticates with short-lived OIDC credentials (no stored
 # AWS keys). Only jobs that run in the configured GitHub environment can
-# assume the deploy role, and the environment only accepts the main branch.
+# assume the deploy role, and the environment only accepts one branch (set by
+# scripts/bootstrap.sh).
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
@@ -30,7 +31,7 @@ data "aws_iam_policy_document" "deploy_trust" {
 }
 
 resource "aws_iam_role" "deploy" {
-  name                 = "incognito-chat-bot-github-deploy"
+  name                 = "${local.prefix}-github-deploy"
   description          = "Assumed by GitHub Actions (${var.github_environment} environment) to deploy the app stack"
   assume_role_policy   = data.aws_iam_policy_document.deploy_trust.json
   max_session_duration = 3600
@@ -42,7 +43,8 @@ resource "aws_iam_role_policy_attachment" "deploy" {
 }
 
 # Least privilege: the deploy role can manage only the app stack's own
-# resources (by name) and read/write only the app/ prefix of the state bucket.
+# resources (by name prefix) and read/write only the app/ prefix of the state
+# bucket.
 data "aws_iam_policy_document" "deploy" {
   statement {
     sid       = "StateBucketList"
@@ -56,55 +58,56 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${local.arns.state_bucket}/app/*"]
   }
 
+  # Functions, their versions and their function URLs.
   statement {
     sid       = "Lambda"
     actions   = ["lambda:*"]
-    resources = [local.arns.function, "${local.arns.function}:*"]
+    resources = [local.arns.functions, "${local.arns.functions}:*"]
   }
 
   statement {
-    sid     = "DynamoDB"
-    actions = ["dynamodb:*"]
-    resources = [
-      local.arns.table, "${local.arns.table}/*",
-      local.arns.invitations, "${local.arns.invitations}/*",
-    ]
+    sid       = "DynamoDB"
+    actions   = ["dynamodb:*"]
+    resources = [local.arns.tables, "${local.arns.tables}/*"]
   }
 
+  # Secrets and settings. Values are written through Terraform write-only
+  # arguments, so they never land in state or plan files.
   statement {
-    sid       = "SecretsManager"
-    actions   = ["secretsmanager:*"]
-    resources = [local.arns.secret]
-  }
-
-  statement {
-    sid     = "AppLogGroups"
-    actions = ["logs:*"]
-    resources = flatten([
-      for name in [local.app.lambda_log_group, local.app.api_log_group] : [
-        "${local.arns.log_group}:${name}",
-        "${local.arns.log_group}:${name}:*",
-      ]
-    ])
-  }
-
-  # These calls don't support resource-level permissions. The log delivery
-  # calls are needed to configure API Gateway (HTTP API) access logging.
-  statement {
-    sid = "LogsAccountLevel"
+    sid = "Parameters"
     actions = [
-      "logs:DescribeLogGroups",
-      "logs:CreateLogDelivery",
-      "logs:GetLogDelivery",
-      "logs:UpdateLogDelivery",
-      "logs:DeleteLogDelivery",
-      "logs:ListLogDeliveries",
-      "logs:PutResourcePolicy",
-      "logs:DescribeResourcePolicies",
+      "ssm:PutParameter",
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:DeleteParameter",
+      "ssm:AddTagsToResource",
+      "ssm:RemoveTagsFromResource",
+      "ssm:ListTagsForResource",
     ]
+    resources = [local.arns.parameters]
+  }
+
+  # Doesn't support resource-level permissions.
+  statement {
+    sid       = "ParametersDescribe"
+    actions   = ["ssm:DescribeParameters"]
     resources = ["*"]
   }
 
+  statement {
+    sid       = "LogGroups"
+    actions   = ["logs:*"]
+    resources = [local.arns.log_groups, "${local.arns.log_groups}:*"]
+  }
+
+  # Doesn't support resource-level permissions.
+  statement {
+    sid       = "LogsDescribe"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+
+  # The WebSocket API. API IDs are random, so this can't be narrowed by name.
   statement {
     sid = "ApiGateway"
     actions = [
@@ -113,7 +116,6 @@ data "aws_iam_policy_document" "deploy" {
       "apigateway:PUT",
       "apigateway:PATCH",
       "apigateway:DELETE",
-      # Checked separately when resources (e.g. stages) are created with tags.
       "apigateway:TagResource",
       "apigateway:UntagResource",
     ]
@@ -124,12 +126,12 @@ data "aws_iam_policy_document" "deploy" {
     ]
   }
 
-  # The deploy role may create the Lambda execution role and change its
+  # The deploy role may create the functions' execution roles and change their
   # policies only while the permissions boundary below is attached. That
-  # boundary caps what the Lambda can ever do, so the deploy role can't use
+  # boundary caps what any function can ever do, so the deploy role can't use
   # a role it creates to escalate its own privileges.
   statement {
-    sid = "LambdaRoleWithBoundary"
+    sid = "LambdaRolesWithBoundary"
     actions = [
       "iam:CreateRole",
       "iam:PutRolePolicy",
@@ -138,7 +140,7 @@ data "aws_iam_policy_document" "deploy" {
       "iam:DetachRolePolicy",
       "iam:PutRolePermissionsBoundary",
     ]
-    resources = [local.arns.lambda_role]
+    resources = [local.arns.lambda_roles]
 
     condition {
       test     = "StringEquals"
@@ -148,7 +150,7 @@ data "aws_iam_policy_document" "deploy" {
   }
 
   statement {
-    sid = "LambdaRoleManage"
+    sid = "LambdaRolesManage"
     actions = [
       "iam:GetRole",
       "iam:DeleteRole",
@@ -162,13 +164,13 @@ data "aws_iam_policy_document" "deploy" {
       "iam:ListAttachedRolePolicies",
       "iam:ListInstanceProfilesForRole",
     ]
-    resources = [local.arns.lambda_role]
+    resources = [local.arns.lambda_roles]
   }
 
   statement {
-    sid       = "PassLambdaRoleToLambdaOnly"
+    sid       = "PassLambdaRolesToLambdaOnly"
     actions   = ["iam:PassRole"]
-    resources = [local.arns.lambda_role]
+    resources = [local.arns.lambda_roles]
 
     condition {
       test     = "StringEquals"
@@ -186,37 +188,56 @@ data "aws_iam_policy_document" "deploy" {
 }
 
 resource "aws_iam_policy" "deploy" {
-  name        = "incognito-chat-bot-github-deploy"
-  description = "Least-privilege permissions for deploying the incognito chat bot app stack"
+  name        = "${local.prefix}-github-deploy"
+  description = "Least-privilege permissions for deploying the Incognito Chat app stack (${var.github_environment})"
   policy      = data.aws_iam_policy_document.deploy.json
 }
 
-# The most the Lambda execution role can ever be allowed to do.
+# The most any function's execution role can ever be allowed to do. Each
+# function gets a narrower policy of its own in the app stack.
 data "aws_iam_policy_document" "lambda_boundary" {
   statement {
     sid       = "Logs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["${local.arns.log_group}:${local.app.lambda_log_group}:*"]
+    resources = ["${local.arns.log_groups}:*"]
   }
 
   statement {
-    sid     = "DynamoDB"
-    actions = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query"]
-    resources = [
-      local.arns.table, "${local.arns.table}/index/*",
-      local.arns.invitations, "${local.arns.invitations}/index/*",
+    sid = "DynamoDB"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:Query",
+      "dynamodb:BatchGetItem",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:ConditionCheckItem",
     ]
+    resources = [local.arns.tables, "${local.arns.tables}/index/*"]
   }
 
   statement {
-    sid       = "BotSecrets"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [local.arns.secret]
+    sid       = "Parameters"
+    actions   = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = [local.arns.parameters]
+  }
+
+  statement {
+    sid       = "PushToSockets"
+    actions   = ["execute-api:ManageConnections"]
+    resources = [local.arns.ws_management]
+  }
+
+  statement {
+    sid       = "InvokeNotify"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [local.arns.notify]
   }
 }
 
 resource "aws_iam_policy" "lambda_boundary" {
-  name        = "incognito-chat-bot-lambda-boundary"
-  description = "Permissions boundary for the incognito chat bot Lambda execution role"
+  name        = "${local.prefix}-lambda-boundary"
+  description = "Permissions boundary for every Incognito Chat function role (${var.github_environment})"
   policy      = data.aws_iam_policy_document.lambda_boundary.json
 }
