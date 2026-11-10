@@ -18,7 +18,8 @@ have to trust, will be published here before release.
 |---|---|
 | `backend/` | Go, one module. `cmd/` holds one AWS Lambda entry point per trust boundary: `api` (HTTPS API), `bot` (Telegram webhook), `ws` (WebSocket connections), `notify` (Telegram notices). |
 | `web/` | The client: TypeScript, Vite and Preact. Runs as a Telegram Mini App and in a browser. |
-| `infra/init/` | Bootstrap Terraform: state bucket, GitHub OIDC provider, deploy role, Lambda permissions boundary. Applied by an account admin with `scripts/bootstrap.sh`. |
+| `infra/` | App Terraform for one environment: DynamoDB tables (TTL, no point-in-time recovery), SSM parameters written write-only, the four functions with function URLs, the WebSocket API. Applied by CI. |
+| `infra/init/` | Bootstrap Terraform, one AWS account per environment: state bucket, GitHub OIDC provider, deploy role, Lambda permissions boundary. Applied by an account admin with `scripts/bootstrap.sh`; CI can't change its own permissions. |
 | `scripts/` | `bootstrap.sh`, and `build-lambdas.sh` for reproducible Lambda bundles. |
 
 ## Checks
@@ -45,6 +46,24 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+## Environments
+
+Each environment has its own AWS account and GitHub environment. While v2 is
+being built, pushes to `v2` deploy to **dev**, and pull requests never get
+cloud access. An account admin bootstraps an environment once:
+
+```shell
+AWS_PROFILE=<profile> DEPLOY_BRANCH=v2 scripts/bootstrap.sh <aws-region> dev
+gh secret set BOT_TOKEN --env dev
+gh variable set CLIENT_ORIGINS --env dev --body '["https://<client-origin>"]'
+```
+
+Secrets (the bot token, the session key, the Telegram ID pepper, the webhook
+secret) are written to SSM through Terraform write-only arguments, so they
+never land in Terraform state or plans. Each function's role can read only the
+parameters it needs; only the `bot` and `notify` functions can read the bot
+token.
 
 ## Reproducible builds
 

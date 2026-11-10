@@ -24,7 +24,12 @@ variable "github_oidc_subject_prefix" {
 }
 
 variable "github_environment" {
-  description = "GitHub environment whose jobs may assume the deploy role"
+  description = "GitHub environment whose jobs may assume the deploy role. It also names every resource (incognitochat-<environment>-…)."
   type        = string
   default     = "production"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,15}$", var.github_environment))
+    error_message = "github_environment must be 2-16 lowercase letters or digits, starting with a letter (e.g. dev, production)."
+  }
 }
