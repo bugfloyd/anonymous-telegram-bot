@@ -4,13 +4,48 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
 )
+
+// MaxBody is the largest request body DecodeJSON accepts.
+const MaxBody = 64 << 10
+
+// ErrBadRequest is returned by DecodeJSON for any body it won't accept.
+var ErrBadRequest = errors.New("httpapi: bad request")
+
+// DecodeJSON decodes the request body into v. It accepts exactly one JSON
+// value of at most MaxBody bytes, with no unknown fields and nothing after it.
+func DecodeJSON(req Request, v any) error {
+	body := []byte(req.Body)
+	if req.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(req.Body)
+		if err != nil {
+			return ErrBadRequest
+		}
+		body = decoded
+	}
+	if len(body) > MaxBody {
+		return ErrBadRequest
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return ErrBadRequest
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return ErrBadRequest
+	}
+	return nil
+}
 
 // Request is a function URL request.
 type Request = events.LambdaFunctionURLRequest
