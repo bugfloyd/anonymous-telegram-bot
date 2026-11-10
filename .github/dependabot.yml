@@ -5,30 +5,39 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
 
   - package-ecosystem: gomod
-    directory: /bot
+    directory: /backend
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       go-modules:
         patterns: ["*"]
 
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+
   - package-ecosystem: terraform
     directories:
-      - /infra
       - /infra/init
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       terraform-providers:
         patterns: ["*"]
-
-  # Local development images (golang, DynamoDB Local).
-  - package-ecosystem: docker-compose
-    directory: /
-    schedule:
-      interval: weekly
