@@ -63,7 +63,10 @@ next to the session token. Nonces are 16–64 base64url characters and are used
 once; timestamps must be within 60 seconds of the server's clock.
 
 **One device per account.** Setting up on a second device replaces the
-account (after a typed confirmation); there is no device linking or sync. A
+account (after a typed confirmation); there is no device linking or sync.
+Replacing deletes the old account's links and mailboxes on the server, and a
+new setup on a device first deletes everything the previous account left
+there (keys, conversations, mailboxes, links). A
 device without an account may ask `POST /accounts/lookup {initData}` whether
 its Telegram user has one, to say "your account is on another device" instead
 of offering setup. Like notices, it accepts only a plain or registration
@@ -220,6 +223,10 @@ each mailbox's owner, to deliver, but not who writes to it.
   it closes (at most 2 h 10 min).
 - `POST /mailboxes/{id}/discard` ends a mailbox (a block, or an ended
   conversation); a link's intro mailbox ends with the link.
+- `POST /mailboxes/check {ids}` returns which of the given mailboxes aren't
+  the caller's (any more). At upkeep the app drops those from its pool and
+  gives conversations that used one as their reply address a new one, which
+  their next message carries. Nothing is stored.
 - **Blocking** discards our mailbox for the conversation and, for someone who
   wrote to our link, remembers their sender tag (by link fingerprint), so new
   conversations from them are dropped too. Silent: their sends still look

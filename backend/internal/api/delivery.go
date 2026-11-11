@@ -13,6 +13,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
 	"github.com/incognitochat/incognitochat/backend/internal/ids"
 	"github.com/incognitochat/incognitochat/backend/internal/inbox"
+	"github.com/incognitochat/incognitochat/backend/internal/links"
 )
 
 const (
@@ -206,6 +207,54 @@ func accepted() httpapi.Response {
 // so their answer takes about as long.
 func RandomPause() {
 	time.Sleep(time.Duration(15+rand.IntN(25)) * time.Millisecond)
+}
+
+// MailboxChecksPerDay limits POST /mailboxes/check per account.
+const MailboxChecksPerDay = 20
+
+// checkMailboxes tells the app which of the mailboxes it holds are no longer
+// its own, so it stops handing them out as reply addresses. That happens
+// when its data outlived the account it was made for (an account replaced
+// on the same device, before apps wiped on a new setup). The server already
+// knows every account's mailboxes; nothing is stored.
+func (s *Server) checkMailboxes(ctx context.Context, req httpapi.Request, c caller) httpapi.Response {
+	const route = "POST /mailboxes/check"
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if err := httpapi.DecodeJSON(req, &in); err != nil {
+		return httpapi.DecodeError(err)
+	}
+	if len(in.IDs) == 0 || len(in.IDs) > MaxMailboxes+links.MaxActive {
+		return httpapi.Error(http.StatusBadRequest, "bad_request")
+	}
+	for _, id := range in.IDs {
+		if !ids.Valid(id) {
+			return httpapi.Error(http.StatusBadRequest, "bad_request")
+		}
+	}
+	ok, err := s.Limits.Allow(ctx, "mbxcheck#"+c.AccountID, MailboxChecksPerDay, 24*time.Hour)
+	if err != nil {
+		return s.internal(route, err)
+	}
+	if !ok {
+		return httpapi.Error(http.StatusTooManyRequests, "rate_limited")
+	}
+	owned, err := s.Directory.Mailboxes(ctx, c.AccountID)
+	if err != nil {
+		return s.internal(route, err)
+	}
+	mine := make(map[string]bool, len(owned))
+	for _, id := range owned {
+		mine[id] = true
+	}
+	missing := []string{}
+	for _, id := range in.IDs {
+		if !mine[id] {
+			missing = append(missing, id)
+		}
+	}
+	return httpapi.JSON(http.StatusOK, map[string][]string{"missing": missing})
 }
 
 // listInbox returns the calling device's undelivered envelopes.

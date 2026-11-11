@@ -120,6 +120,18 @@ func (m *memDirectory) Mailbox(_ context.Context, id string) (directory.Mailbox,
 	return b, nil
 }
 
+func (m *memDirectory) Mailboxes(_ context.Context, account string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for id, b := range m.boxes {
+		if b.Owner == account {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 func (m *memDirectory) DiscardMailbox(_ context.Context, account, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

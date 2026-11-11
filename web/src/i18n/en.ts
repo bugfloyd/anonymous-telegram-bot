@@ -135,7 +135,7 @@ export const en = {
 
   replacedTitle: 'Your account was replaced',
   replacedBody:
-    "Your account was replaced by a new setup using your Telegram account. If this wasn't you, your Telegram account was accessed or the app was tampered with.",
+    "Your account was replaced by a new setup using your Telegram account. If this wasn't you, your Telegram account was accessed or the app was tampered with. Setting up again here clears this device's old chats.",
   setUpAgain: 'Set up again',
 
   errorNetwork: "Couldn't reach the server. Check your connection and try again.",

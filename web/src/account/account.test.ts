@@ -4,9 +4,13 @@ import { fromBase64Url, fromHex, toHex } from '../crypto/encoding';
 import { importSigningPublicKey } from '../crypto/keys';
 import { LABEL_REGISTER, LABEL_REQUEST, LABEL_SESSION, message, verify } from '../crypto/signing';
 import { ApiError, type Api } from '../net/api';
-import { getKeyPair, getMeta, openDatabase } from '../storage/db';
+import { getKeyPair, getMeta, getSealed, openDatabase, putMeta, putSealed } from '../storage/db';
+import { listConversations, putConversation } from '../messaging/store';
 import {
   isRegistrationLaunch,
+  markReplaced,
+  META_START_OVER,
+  takePendingLink,
   logIn,
   loginParts,
   prepareSetup,
@@ -98,6 +102,43 @@ describe('setup', () => {
     expect(account!.privateKey.extractable).toBe(false);
     expect(device!.privateKey.extractable).toBe(false);
     expect(await readAccount(db)).toMatchObject({ state: 'pending', fingerprint: code.slice(3) });
+  });
+
+  it("starts a new account with nothing of the replaced one's", async () => {
+    const db = await fresh();
+    await prepareSetup(db);
+    // Pretend it registered and has data, then was replaced.
+    await putMeta(db, 'account', { state: 'registered', deviceId: 'A'.repeat(22), fingerprint: 'B'.repeat(43), accountId: 'C'.repeat(22) });
+    await putMeta(db, 'mailbox-pool', ['D'.repeat(22)]);
+    await putMeta(db, 'links', [{ id: 'E'.repeat(11), fingerprint: 'F'.repeat(43), keys: [] }]);
+    await putSealed(db, 'link-signing', new Uint8Array([1, 2, 3]));
+    await putConversation(db, {
+      id: 'G'.repeat(22),
+      role: 'sender',
+      link: { id: 'E'.repeat(11), fingerprint: 'F'.repeat(43) },
+      label: 'x',
+      peerKey: 'k',
+      myKey: null,
+      sendTo: 'H'.repeat(22),
+      myMailbox: 'D'.repeat(22),
+      lastAt: 0,
+      unread: 0,
+      status: 'active',
+      lastReceived: null,
+    });
+    await markReplaced(db, 'C'.repeat(22));
+    await rememberLink(db, '1' + 'E'.repeat(11) + 'F'.repeat(43));
+    await putMeta(db, META_START_OVER, true);
+
+    const code = await prepareSetup(db);
+    expect(await readAccount(db)).toMatchObject({ state: 'pending', fingerprint: code.slice(3) });
+    expect(await listConversations(db)).toEqual([]);
+    expect(await getMeta(db, 'mailbox-pool')).toBeUndefined();
+    expect(await getMeta(db, 'links')).toBeUndefined();
+    expect(await getSealed(db, 'link-signing')).toBeUndefined();
+    // Kept: the link opened just before, and the choice to start over.
+    expect(await getMeta(db, META_START_OVER)).toBe(true);
+    expect(await takePendingLink(db)).toBe('1' + 'E'.repeat(11) + 'F'.repeat(43));
   });
 
   it('builds the reopen path', () => {

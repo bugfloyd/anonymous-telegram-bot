@@ -66,6 +66,7 @@ type Directory interface {
 	Mailbox(ctx context.Context, id string) (directory.Mailbox, error)
 	DiscardMailbox(ctx context.Context, accountID, id string) error
 	Devices(ctx context.Context, accountID string, now time.Time) ([]string, error)
+	Mailboxes(ctx context.Context, accountID string) ([]string, error)
 }
 
 // Limiter counts uses of a key in fixed windows.
@@ -131,6 +132,7 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/admin/grant", s.withSignature("POST /admin/grant", s.withAdmin(s.adminGrant)))
 	r.Handle(http.MethodPost, "/mailboxes", s.withDevice("POST /mailboxes", s.createMailboxes))
 	r.Handle(http.MethodPost, "/mailboxes/{id}/discard", s.withDevice("POST /mailboxes/{id}/discard", s.discardMailbox))
+	r.Handle(http.MethodPost, "/mailboxes/check", s.withDevice("POST /mailboxes/check", s.checkMailboxes))
 	r.Handle(http.MethodPost, "/send", s.send)
 	r.Handle(http.MethodPost, "/tokens", s.withDevice("POST /tokens", s.issueTokens))
 	r.Handle(http.MethodGet, "/inbox", s.withDevice("GET /inbox", s.listInbox))

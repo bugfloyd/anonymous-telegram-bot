@@ -18,7 +18,7 @@ import { LABEL_REGISTER, LABEL_REQUEST, LABEL_SESSION, sign, signEncoded } from 
 import { generateVaultKey, seal, unseal } from '../crypto/vault';
 import { ApiError, checkTokenResponse, type Api, type TokenResponse } from '../net/api';
 import { encodeDeviceList, firstList } from '../protocol/device-list';
-import { deleteMeta, getKeyPair, getMeta, putKey, putMeta, putSealed, type Database, type StoredKeyPair } from '../storage/db';
+import { deleteMeta, getKeyPair, getMeta, putKey, putMeta, putSealed, type Database, type StoredKeyPair, wipe } from '../storage/db';
 import { withLock } from '../sync/locks';
 
 /** The start parameter prefix of a registration launch. */
@@ -26,6 +26,8 @@ export const REGISTRATION_PREFIX = 'reg';
 
 const META_ACCOUNT = 'account';
 const META_PENDING_LINK = 'pending-link';
+/** Set when someone chose to start over on this device, so the setup that follows asks to confirm. */
+export const META_START_OVER = 'start-over';
 const KEY_ACCOUNT = 'account-key';
 const KEY_DEVICE = 'device-signing-key';
 const KEY_VAULT = 'vault-key';
@@ -77,6 +79,10 @@ export function prepareSetup(db: Database, options: { restart?: boolean } = {}):
       return REGISTRATION_PREFIX + current.fingerprint;
     }
 
+    // A new account starts with nothing from an earlier one on this device
+    // (its mailboxes and links are gone on the server), except a link opened
+    // just before and the choice to start over.
+    await wipe(db, [META_PENDING_LINK, META_START_OVER]);
     const vaultKey = await generateVaultKey();
     const account = await generateCopyableSigningKey();
     const sealed = await seal(vaultKey, account.privateKey, KEY_ACCOUNT);

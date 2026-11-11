@@ -35,6 +35,18 @@ export function refillPool(db: Database, session: Session, count = POOL_REFILL):
   });
 }
 
+/** Drops mailboxes from the pool (the server no longer has them as ours). */
+export function dropFromPool(db: Database, ids: Set<string>): Promise<void> {
+  return withLock(LOCK, async () => {
+    await putMeta(db, META_POOL, (await pool(db)).filter((id) => !ids.has(id)));
+  });
+}
+
+/** The pool's mailboxes. */
+export function pooled(db: Database): Promise<string[]> {
+  return pool(db);
+}
+
 /** Takes a mailbox from the pool, refilling first only if it is empty. */
 export async function takeMailbox(db: Database, session: Session): Promise<string> {
   if ((await poolSize(db)) === 0) await refillPool(db, session);

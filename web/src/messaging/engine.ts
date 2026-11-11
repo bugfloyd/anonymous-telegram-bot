@@ -31,9 +31,9 @@ import {
   lookupKey,
   scheduleKeyDeletion,
 } from './keys';
-import { POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
+import { dropFromPool, pooled, POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessages, getConversation, hasMessage, listMessages, markOwnSeen, putConversation, setMessageStatus } from './store';
+import { addMessage, deleteMessages, getConversation, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, setMessageStatus } from './store';
 
 const DAY = 24 * 3600 * 1000;
 /** Messages sent longer ago than this, or later than now plus a day, are dropped (design §10). */
@@ -453,6 +453,7 @@ export function createMessaging(deps: MessagingDeps) {
    * deletes old keys whose time has come; gives the link a new key when due.
    */
   async function maintain(): Promise<void> {
+    await healMailboxes();
     if ((await poolSize(db)) < POOL_LOW) await refillPool(db, session);
     if ((await countTokens(db, Math.floor(now() / 1000))) < LOW_WATER) {
       await refillTokens(db, session, issuer, undefined, Math.floor(now() / 1000));
@@ -461,6 +462,36 @@ export function createMessaging(deps: MessagingDeps) {
     if ((await deleteExpiredKeys(db, now())) > 0) findKey.clear();
     await backfillLinkKeys();
     await rotateLinkKey(db, session, Math.floor(now() / 1000));
+  }
+
+  /**
+   * Mailboxes we hold that the server no longer has as ours: left from an
+   * account replaced on this device (before a new setup wiped such data).
+   * They leave the pool, and a conversation that gave one as our reply
+   * address takes a new one with its next message or receipt, which tells
+   * the other side. Blocked conversations are left alone (their mailbox was
+   * discarded on purpose).
+   */
+  async function healMailboxes(): Promise<void> {
+    const convs = (await listConversations(db)).filter((c) => c.status === 'active' && c.myMailbox !== null);
+    const ids = [...new Set([...(await pooled(db)), ...convs.map((c) => c.myMailbox!)])];
+    if (ids.length === 0) return;
+    let missing: Set<string>;
+    try {
+      const out = await session.call('POST', '/mailboxes/check', { ids }, checkObject);
+      missing = new Set(Array.isArray(out.missing) ? out.missing.filter((m): m is string => typeof m === 'string') : []);
+    } catch {
+      return;
+    }
+    if (missing.size === 0) return;
+    await dropFromPool(db, missing);
+    for (const c of convs) {
+      if (!missing.has(c.myMailbox!)) continue;
+      await withLock(`send:${c.id}`, async () => {
+        const now = await getConversation(db, c.id);
+        if (now && now.myMailbox === c.myMailbox) await putConversation(db, { ...now, myMailbox: null });
+      });
+    }
   }
 
   /**

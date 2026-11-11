@@ -11,6 +11,7 @@ import {
   register,
   registrationPath,
   rememberLink,
+  META_START_OVER,
   REGISTRATION_PREFIX,
   SetupMismatch,
   takePendingLink,
@@ -41,9 +42,6 @@ import type { Launch } from '../platform/launch';
 import { openPopup, type Bridge, type PopupButton } from '../platform/telegram';
 import { deleteMeta, getMeta, putMeta, type Database } from '../storage/db';
 import type { SyncEvent } from '../sync/locks';
-
-/** Set when someone chose to start over on this device, so the setup that follows asks to confirm. */
-const META_START_OVER = 'start-over';
 
 export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 'generic';
 
