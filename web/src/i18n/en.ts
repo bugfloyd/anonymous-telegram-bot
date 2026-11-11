@@ -96,6 +96,8 @@ export const en = {
   errorNoTokens: "You've sent a lot today. Try again tomorrow.",
   errorTooFast: 'Too many messages to this person right now. Try again in a minute.',
   seen: 'Seen',
+  newMessages: '{count} new messages',
+  toLatest: 'Go to the latest message',
   sent: 'Sent',
   delete: 'Delete',
   deleteAndBlock: 'Delete and block',
