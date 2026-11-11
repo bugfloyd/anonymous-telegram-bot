@@ -11,7 +11,7 @@
 // Sends carry no login: they go to POST /send with an anonymous token.
 
 import { fromBase64Url, toBase64Url, utf8 } from '../crypto/encoding';
-import { keyName, listLinks } from '../account/links';
+import { keyName, listLinks, rotateLinkKey } from '../account/links';
 import { countTokens, LOW_WATER, refillTokens, returnToken, takeToken, type StoredToken, type TokenIssuer } from '../account/wallet';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
@@ -19,7 +19,17 @@ import { checkBundle, verifyBundle, type Bundle, type LinkRef } from '../protoco
 import { newId, openMessage, sealMessage, type Draft, type Message } from '../protocol/message';
 import { getMeta, getSealed, putMeta, type ConversationRecord, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
-import { conversationKey, createConversationKey, hasLinkKey, indexKey, keyFinder, lookupKey } from './keys';
+import {
+  conversationKey,
+  createConversationKey,
+  deleteExpiredKeys,
+  hasLinkKey,
+  indexKey,
+  KEY_RETENTION_MS,
+  keyFinder,
+  lookupKey,
+  scheduleKeyDeletion,
+} from './keys';
 import { POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
 import { addMessage, deleteMessages, getConversation, hasMessage, listMessages, markOwnSeen, putConversation, setMessageStatus } from './store';
@@ -30,6 +40,11 @@ const MAX_AGE = 31 * DAY;
 const MAX_INBOX_PAGES = 10;
 const MAX_SEEN = 100;
 const META_BLOCKED = 'blocked-tags';
+/** Our conversation keys are replaced every 6 to 9 days (design D11), each conversation on its own schedule. */
+const ROTATE_MIN = 6 * DAY;
+const ROTATE_SPREAD = 3 * DAY;
+/** How long a sender not answered yet trusts the link key it has before fetching the current one. */
+const LINK_KEY_RECHECK = 3600 * 1000;
 
 export class NoTokens extends Error {
   constructor() {
@@ -72,6 +87,7 @@ export function createMessaging(deps: MessagingDeps) {
   const { db, api, session, issuer } = deps;
   const now = deps.now ?? Date.now;
   const findKey = keyFinder(db);
+  const nextRotation = () => now() + ROTATE_MIN + Math.floor(Math.random() * ROTATE_SPREAD);
 
   /** Writes the first message to someone's link, starting a conversation. Returns its ID. */
   /**
@@ -103,6 +119,8 @@ export function createMessaging(deps: MessagingDeps) {
       unread: 0,
       status: 'active',
       lastReceived: null,
+      rotateAt: nextRotation(),
+      linkCheckedAt: now(),
     };
     await putConversation(db, conversation);
     await write(conversation, text, undefined, () => onStored?.(id));
@@ -145,10 +163,17 @@ export function createMessaging(deps: MessagingDeps) {
     return withLock(`send:${conv}`, async () => {
       let c = await getConversation(db, conv);
       if (!c) throw new Error('unknown conversation');
-      if (c.myKey === null) {
+      if (c.myKey === null || (c.lastReceived !== null && now() >= (c.rotateAt ?? 0))) {
+        // A first key, or time for a new one (design D11). The new key goes
+        // out with this message: nothing is sent just to rotate. Not before
+        // they've written to us, since until then they know us by this key
+        // alone. The old key stays until they've used the new one (receive).
         const key = await createConversationKey(db, c.id);
-        c = { ...c, myKey: toBase64Url(key.publicKey) };
+        c = { ...c, myKey: toBase64Url(key.publicKey), rotateAt: nextRotation() };
         await putConversation(db, c);
+      }
+      if (c.role === 'sender' && c.lastReceived === null && now() - (c.linkCheckedAt ?? 0) >= LINK_KEY_RECHECK) {
+        c = await refreshLinkKey(c);
       }
       if (c.myMailbox === null) {
         c = { ...c, myMailbox: await takeMailbox(db, session) };
@@ -160,6 +185,24 @@ export function createMessaging(deps: MessagingDeps) {
       // Seen receipts don't trigger a Telegram notice for the other side.
       await deliver(c.sendTo, await sealMessage(draft, myKey, fromBase64Url(c.peerKey)), fields.kind === 'seen');
     });
+  }
+
+  /**
+   * Before they've answered, we write for their link's key. Links get a new
+   * key weekly and old ones are deleted later, so fetch the current one if
+   * ours is more than an hour old. If that fails, the one we have still
+   * works for a while.
+   */
+  async function refreshLinkKey(c: ConversationRecord): Promise<ConversationRecord> {
+    try {
+      const bundle = await api.request('GET', `/links/${c.link.id}`, {}, checkBundle);
+      const { raw } = await verifyBundle({ id: c.link.id, fingerprint: c.link.fingerprint }, bundle, Math.floor(now() / 1000));
+      c = { ...c, peerKey: toBase64Url(raw), linkCheckedAt: now() };
+      await putConversation(db, c);
+    } catch {
+      // Unreachable, replaced or revoked: keep what we have.
+    }
+    return c;
   }
 
   /**
@@ -198,6 +241,8 @@ export function createMessaging(deps: MessagingDeps) {
     }
     if (c.role === 'owner' && c.tag) await addBlockedTag(c.link.fingerprint, c.tag);
     await putConversation(db, { ...c, status: 'blocked', unread: 0 });
+    // Nothing more will be read in it: its keys can go at the next upkeep.
+    await scheduleKeyDeletion(db, (e) => e.conv === c.id, now());
   }
 
   /**
@@ -331,6 +376,12 @@ export function createMessaging(deps: MessagingDeps) {
     } else if (entry.conv) {
       // Written for our conversation key, which only the other side knows.
       if (!conv || entry.conv !== message.conv) return false;
+      if (entry.pub === conv.myKey) {
+        // They have our current key, so they no longer write to older ones:
+        // those go once anything written to them has expired from the inbox.
+        const current = conv.myKey;
+        await scheduleKeyDeletion(db, (e) => e.conv === conv!.id && e.pub !== current, now() + KEY_RETENTION_MS);
+      }
     } else {
       return false;
     }
@@ -369,14 +420,18 @@ export function createMessaging(deps: MessagingDeps) {
 
   /**
    * Upkeep, run at a random moment after the app opens: tops up the mailbox
-   * pool and the token wallet, so neither is fetched right before a send.
+   * pool and the token wallet, so neither is fetched right before a send;
+   * deletes old keys whose time has come; gives the link a new key when due.
    */
   async function maintain(): Promise<void> {
     if ((await poolSize(db)) < POOL_LOW) await refillPool(db, session);
     if ((await countTokens(db, Math.floor(now() / 1000))) < LOW_WATER) {
       await refillTokens(db, session, issuer, undefined, Math.floor(now() / 1000));
     }
+    // Deleting old keys needs no network, so it goes first.
+    if ((await deleteExpiredKeys(db, now())) > 0) findKey.clear();
     await backfillLinkKeys();
+    await rotateLinkKey(db, session, Math.floor(now() / 1000));
   }
 
   /**

@@ -55,6 +55,10 @@ export interface ConversationRecord {
   lastReceived: string | null;
   /** Deleted on this device: out of the list, with no messages, until a new one comes or goes. */
   hidden?: boolean;
+  /** Unix ms when our conversation key is next replaced (weekly, jittered per conversation). */
+  rotateAt?: number;
+  /** For a sender not answered yet: Unix ms when the link's current key was last fetched. */
+  linkCheckedAt?: number;
 }
 
 /** A message, as kept on the device. Only its text is sealed; times and status are local metadata. */

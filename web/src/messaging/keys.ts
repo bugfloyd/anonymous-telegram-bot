@@ -9,7 +9,7 @@ import { AGREEMENT_IMPORT, exportPublicKey, generateCopyableAgreementKey } from 
 import { seal, unseal } from '../crypto/vault';
 import { keyId, type RecipientKey } from '../protocol/envelope';
 import type { ConversationKey } from '../protocol/message';
-import { getKey, getMeta, getSealed, putMeta, putSealed, type Database } from '../storage/db';
+import { deleteSealed, getKey, getMeta, getSealed, putMeta, putSealed, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
 
 const META_INDEX = 'recipient-keys';
@@ -24,7 +24,16 @@ export interface KeyEntry {
   link?: { id: string; fingerprint: string };
   /** For a conversation key: the conversation's ID. */
   conv?: string;
+  /**
+   * Unix ms after which the private key is deleted (design D11): set once
+   * nothing can still be written to it, plus the 30 days envelopes can wait
+   * in the inbox, plus margin.
+   */
+  deleteAfter?: number;
 }
+
+/** How long a retired key is kept: undelivered envelopes expire after 30 days. */
+export const KEY_RETENTION_MS = 35 * 24 * 3600 * 1000;
 
 type Index = Record<string, KeyEntry>;
 
@@ -48,6 +57,31 @@ export function unindexKeys(db: Database, drop: (entry: KeyEntry) => boolean): P
   });
 }
 
+/** Schedules matching keys for deletion at `at` (Unix ms), unless already scheduled. */
+export function scheduleKeyDeletion(db: Database, match: (entry: KeyEntry) => boolean, at: number): Promise<void> {
+  return withLock(META_INDEX, async () => {
+    const entries = Object.entries(await index(db));
+    if (!entries.some(([, e]) => match(e) && e.deleteAfter === undefined)) return;
+    await putMeta(
+      db,
+      META_INDEX,
+      Object.fromEntries(entries.map(([id, e]) => [id, match(e) && e.deleteAfter === undefined ? { ...e, deleteAfter: at } : e])),
+    );
+  });
+}
+
+/** Deletes the private keys whose time has come, and forgets them. Returns how many. */
+export function deleteExpiredKeys(db: Database, nowMs: number): Promise<number> {
+  return withLock(META_INDEX, async () => {
+    const entries = Object.entries(await index(db));
+    const expired = entries.filter(([, e]) => e.deleteAfter !== undefined && e.deleteAfter <= nowMs);
+    if (expired.length === 0) return 0;
+    for (const [, e] of expired) await deleteSealed(db, e.name);
+    await putMeta(db, META_INDEX, Object.fromEntries(entries.filter(([, e]) => !(e.deleteAfter !== undefined && e.deleteAfter <= nowMs))));
+    return expired.length;
+  });
+}
+
 /** Whether any key of a link is indexed. */
 export async function hasLinkKey(db: Database, linkId: string): Promise<boolean> {
   return Object.values(await index(db)).some((e) => e.link?.id === linkId);
@@ -57,10 +91,10 @@ export async function lookupKey(db: Database, id: Uint8Array): Promise<KeyEntry 
   return (await index(db))[toBase64Url(id)];
 }
 
-/** Our key for a key ID, unsealed, if we have one. */
-export function keyFinder(db: Database): (id: Uint8Array) => Promise<RecipientKey | undefined> {
+/** Our key for a key ID, unsealed, if we have one. clear() drops the unsealed copies (after deletions). */
+export function keyFinder(db: Database): ((id: Uint8Array) => Promise<RecipientKey | undefined>) & { clear(): void } {
   const cache = new Map<string, RecipientKey>();
-  return async (id) => {
+  const find = async (id: Uint8Array) => {
     const k = toBase64Url(id);
     const cached = cache.get(k);
     if (cached) return cached;
@@ -71,6 +105,7 @@ export function keyFinder(db: Database): (id: Uint8Array) => Promise<RecipientKe
     cache.set(k, found);
     return found;
   };
+  return Object.assign(find, { clear: () => cache.clear() });
 }
 
 async function unsealKey(db: Database, name: string): Promise<CryptoKey> {

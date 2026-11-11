@@ -9,10 +9,11 @@ import { ApiError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, type LinkRef } from '../protocol/link';
 import { countTokens, LOW_WATER } from '../account/wallet';
-import { openDatabase, putKey, putMeta, type Database } from '../storage/db';
+import { getMeta, getSealed, openDatabase, putKey, putMeta, type Database } from '../storage/db';
 import { POOL_LOW, poolSize } from './pool';
 import { createMessaging } from './engine';
-import { listConversations, listMessages } from './store';
+import { getConversation, listConversations, listMessages } from './store';
+import { KEY_RETENTION_MS, type KeyEntry } from './keys';
 
 let n = 0;
 const rand = () => toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
@@ -89,6 +90,12 @@ async function fakeBackend() {
           bundles.set(b.id as string, { signingKey: b.signingKey, keys: b.keys, mailbox: intro });
           return check({ id: b.id, mailbox: intro });
         }
+        if (method === 'PUT' && path.startsWith('/links/') && path.endsWith('/keys')) {
+          const bundle = bundles.get(path.split('/')[2]!);
+          if (!bundle) throw new ApiError(404, 'not_found');
+          bundle.keys = b.keys;
+          return check({});
+        }
         if (method === 'POST' && path.startsWith('/mailboxes/') && path.endsWith('/discard')) {
           const id = path.split('/')[2]!;
           if (mailboxes.get(id) !== account) throw new ApiError(404, 'not_found');
@@ -109,11 +116,11 @@ async function fakeBackend() {
   return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes };
 }
 
-async function person(backend: Awaited<ReturnType<typeof fakeBackend>>, account: string) {
+async function person(backend: Awaited<ReturnType<typeof fakeBackend>>, account: string, now?: () => number) {
   const db: Database = await openDatabase(`engine-test-${n++}`);
   await putKey(db, 'vault-key', await generateVaultKey());
   const session = backend.session(account);
-  return { db, session, messaging: createMessaging({ db, api: backend.api, session, issuer: backend.issuer }) };
+  return { db, session, messaging: createMessaging({ db, api: backend.api, session, issuer: backend.issuer, ...(now ? { now } : {}) }) };
 }
 
 async function linkOf(backend: Awaited<ReturnType<typeof fakeBackend>>, owner: Awaited<ReturnType<typeof person>>) {
@@ -367,5 +374,119 @@ describe('a replaced link', () => {
     await friend.messaging.startConversation(next.ref, next.bundle, 'new link, same me');
     expect(await owner.messaging.sync()).toBe(1);
     expect(await labelOf('new link, same me')).toBe(friendLabel);
+  });
+});
+
+describe('key rotation', () => {
+  const DAY = 24 * 3600 * 1000;
+  const convKeys = async (db: Database, conv: string) =>
+    Object.values((await getMeta<Record<string, KeyEntry>>(db, 'recipient-keys')) ?? {}).filter((e) => e.conv === conv);
+  const linkKeys = async (db: Database, link: string) =>
+    Object.values((await getMeta<Record<string, KeyEntry>>(db, 'recipient-keys')) ?? {}).filter((e) => e.link?.id === link);
+
+  it('replaces our conversation key weekly with the next message, and deletes the old one once they use the new', async () => {
+    const backend = await fakeBackend();
+    let clock = Date.now();
+    const now = () => clock;
+    const owner = await person(backend, 'owner', now);
+    const sender = await person(backend, 'sender', now);
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi');
+    await sender.messaging.sync();
+    const first = (await getConversation(owner.db, conv))!.myKey!;
+
+    // Before it's due: the same key.
+    clock += 5 * DAY;
+    await owner.messaging.send(conv, 'still the same key');
+    expect((await getConversation(owner.db, conv))!.myKey).toBe(first);
+
+    // Due: the next message carries a new key; nothing extra is sent.
+    clock += 5 * DAY;
+    const sendsBefore = backend.seenEnvelopes.length;
+    await owner.messaging.send(conv, 'a new key comes with this');
+    expect(backend.seenEnvelopes.length).toBe(sendsBefore + 1);
+    const second = (await getConversation(owner.db, conv))!.myKey!;
+    expect(second).not.toBe(first);
+    expect(await sender.messaging.sync()).toBe(2);
+    expect((await getConversation(sender.db, conv))!.peerKey).toBe(second);
+
+    // The old key stays while they haven't written to the new one...
+    expect((await convKeys(owner.db, conv)).map((k) => [k.pub, k.deleteAfter])).toEqual([
+      [first, undefined],
+      [second, undefined],
+    ]);
+    clock += 40 * DAY;
+    await owner.messaging.maintain();
+    expect((await convKeys(owner.db, conv)).length).toBe(2);
+
+    // ...and goes 35 days after they have.
+    await sender.messaging.send(conv, 'got your new key');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect((await convKeys(owner.db, conv)).find((k) => k.pub === first)!.deleteAfter).toBe(clock + KEY_RETENTION_MS);
+    clock += 34 * DAY;
+    await owner.messaging.maintain();
+    expect((await convKeys(owner.db, conv)).length).toBe(2);
+    clock += 2 * DAY;
+    await owner.messaging.maintain();
+    expect((await convKeys(owner.db, conv)).map((k) => k.pub)).toEqual([second]);
+    expect(await getSealed(owner.db, (await convKeys(owner.db, conv))[0]!.name)).toBeDefined();
+    // Still talking.
+    await sender.messaging.send(conv, 'still here');
+    expect(await owner.messaging.sync()).toBe(1);
+  });
+
+  it("doesn't replace a sender's key before the owner has answered", async () => {
+    const backend = await fakeBackend();
+    let clock = Date.now();
+    const owner = await person(backend, 'owner', () => clock);
+    const sender = await person(backend, 'sender', () => clock);
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    const key = (await getConversation(sender.db, conv))!.myKey;
+    clock += 10 * DAY;
+    await sender.messaging.send(conv, 'anyone?');
+    expect((await getConversation(sender.db, conv))!.myKey).toBe(key);
+    expect(await owner.messaging.sync()).toBe(2);
+  });
+
+  it("replaces the link's key weekly; unanswered senders follow it; the old one goes after 35 days", async () => {
+    const backend = await fakeBackend();
+    let clock = Date.now();
+    const now = () => clock;
+    const owner = await person(backend, 'owner', now);
+    const early = await person(backend, 'early', now);
+    const later = await person(backend, 'later', now);
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await early.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    const firstKey = bundle.keys[0]!.key;
+
+    await owner.messaging.maintain();
+    expect((await linkKeys(owner.db, ref.id)).length).toBe(1);
+    clock += 10 * DAY;
+    await owner.messaging.maintain();
+    const rotated = await backend.api.request('GET', `/links/${ref.id}`, {}, checkBundle);
+    expect(rotated.keys).toHaveLength(1);
+    expect(toBase64Url(rotated.keys[0]!.key)).not.toBe(toBase64Url(firstKey));
+    const keys = await linkKeys(owner.db, ref.id);
+    expect(keys.map((k) => k.deleteAfter !== undefined)).toEqual([true, false]);
+
+    // Not answered yet: the early sender fetches the new key before writing again.
+    await early.messaging.send(conv, 'me again');
+    expect((await getConversation(early.db, conv))!.peerKey).toBe(toBase64Url(rotated.keys[0]!.key));
+    // Someone new writes to the new key.
+    await later.messaging.startConversation(ref, rotated, 'hi from later');
+    expect(await owner.messaging.sync()).toBe(2);
+
+    // 36 days on: the first key is deleted (and the link has moved on again).
+    const firstName = keys[0]!.name;
+    clock += 36 * DAY;
+    await owner.messaging.maintain();
+    const after = await linkKeys(owner.db, ref.id);
+    expect(after.map((k) => k.pub)).not.toContain(toBase64Url(firstKey));
+    expect(await getSealed(owner.db, firstName)).toBeUndefined();
+    expect(after.map((k) => k.deleteAfter !== undefined)).toEqual([true, false]);
   });
 });
