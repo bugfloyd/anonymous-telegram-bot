@@ -47,7 +47,10 @@ export interface ConversationRecord {
   /** Unix ms of the latest message, for ordering. */
   lastAt: number;
   unread: number;
-  status: 'active' | 'ended';
+  /** blocked: our mailbox is discarded and anything more from them is dropped. */
+  status: 'active' | 'ended' | 'blocked';
+  /** For an owner: the sender's tag (base64url), to block the person and not just this conversation. */
+  tag?: string;
   /** The ID of the last message received from them. */
   lastReceived: string | null;
 }
@@ -59,7 +62,8 @@ export interface MessageRecord {
   /** Unix ms shown: the sender's time, but never later than when it arrived. */
   at: number;
   out: boolean;
-  status: 'sending' | 'sent' | 'failed' | 'received';
+  /** Ours: sending, sent, failed, then seen once they open it. Theirs: received, then read once we told them. */
+  status: 'sending' | 'sent' | 'failed' | 'seen' | 'received' | 'read';
   /** AES-GCM under the storage key: nonce ‖ ciphertext of {text, replyTo}. */
   sealed: Uint8Array<ArrayBuffer>;
 }

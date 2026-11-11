@@ -81,3 +81,4 @@ body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; 
 .composer { display: flex; gap: 0.5rem; align-items: flex-end; position: sticky; inset-block-end: 0; background: var(--app-bg); padding-block: 0.5rem; }
 .composer textarea { flex: 1; font: inherit; resize: none; padding: 0.5rem 0.75rem; border-radius: 0.75rem; border: 1px solid var(--app-muted); background: var(--app-bg); color: var(--app-text); unicode-bidi: plaintext; }
 .conversation-head .label { align-self: flex-start; }
+.link-button { align-self: flex-start; font: inherit; font-size: 0.875rem; padding: 0; border: 0; background: none; color: var(--app-danger); cursor: pointer; }

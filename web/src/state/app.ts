@@ -45,6 +45,7 @@ export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 
 
 /** A short message on the home screen after an action. */
 export type HomeNotice =
+  | 'blocked'
   | 'created'
   | 'revoked'
   | 'limit'
@@ -269,13 +270,16 @@ export function createApp(deps: Deps) {
     if (current.kind === 'home' && !current.busy) {
       screen.value = { ...current, conversations: await conversations() };
     } else if (current.kind === 'conversation' && !current.busy) {
-      await messaging?.markRead(current.id);
       screen.value = { ...current, messages: await listMessages(deps.db, current.id) };
+      seen(current.id);
     }
   }
 
   async function conversations(): Promise<ConversationView[]> {
-    const list = await listConversations(deps.db);
+    // Blocked conversations are gone from the list.
+    const list = (await listConversations(deps.db)).filter(
+      (c): c is typeof c & { status: 'active' | 'ended' } => c.status !== 'blocked',
+    );
     return Promise.all(
       list.map(async (c) => {
         const messages = await listMessages(deps.db, c.id);
@@ -293,10 +297,40 @@ export function createApp(deps: Deps) {
     );
   }
 
+  /**
+   * Tells the other side, at once, what we've just read (design D12). In the
+   * background: the screen doesn't wait, and a failure is retried next time.
+   */
+  function seen(id: string): void {
+    void messaging
+      ?.markSeen(id)
+      .then(async () => {
+        const now = currentScreen();
+        if (now.kind === 'conversation' && now.id === id) screen.value = { ...now, messages: await listMessages(deps.db, id) };
+      })
+      .catch(() => {});
+  }
+
+  /** Blocks the open conversation, silently, then goes back to the list. */
+  async function block(): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || !messaging) return;
+    screen.value = { ...current, busy: true };
+    try {
+      await messaging.block(current.id);
+    } catch (err) {
+      if (handleGone(err)) return;
+      screen.value = { ...current, busy: false, error: sendError(err) };
+      return;
+    }
+    deps.broadcast({ type: 'data-changed' });
+    return showHome({ tab: 'chats', notice: 'blocked' });
+  }
+
   async function openConversation(id: string): Promise<void> {
     const list = await listConversations(deps.db);
     const c = list.find((x) => x.id === id);
-    if (!c) return showHome();
+    if (!c || c.status === 'blocked') return showHome();
     await messaging?.markRead(id);
     backButton(true);
     screen.value = {
@@ -309,6 +343,7 @@ export function createApp(deps: Deps) {
       busy: false,
       error: null,
     };
+    seen(id);
   }
 
   function sendError(err: unknown): SendError {
@@ -537,7 +572,7 @@ export function createApp(deps: Deps) {
     // Already writing to this link: continue that conversation. A new one
     // would gain nothing, since the owner sees the same sender tag and label.
     const existing = (await listConversations(deps.db)).find(
-      (c) => c.role === 'sender' && c.link.id === ref.id && c.link.fingerprint === ref.fingerprint && c.status === 'active',
+      (c) => c.role === 'sender' && c.link.id === ref.id && c.link.fingerprint === ref.fingerprint && c.status !== 'blocked',
     );
     if (existing) return openConversation(existing.id);
     screen.value = linkScreen('checking');
@@ -605,6 +640,7 @@ export function createApp(deps: Deps) {
     refresh,
     openConversation,
     sendMessage,
+    block,
     writeToLink,
     createLink: () => linkAction(() => createLink(deps.db, session!), 'created'),
     revokeLink: (id: string) => linkAction(() => revokeLink(deps.db, session!, id), 'revoked'),
