@@ -20,6 +20,8 @@
 //	already_member                        the account already joined through an invitation
 //	not_member                            invitations can only be granted to members
 //	admin_only                            only admins can do this
+//	invalid_envelope                      the envelope's layout can't be valid
+//	mailbox_limit                         the account has the most mailboxes allowed
 //	not_found                             no such route, or no such link (revoked links included)
 //	internal                              something failed on the server
 package api
@@ -56,6 +58,10 @@ type Directory interface {
 	Invitations(ctx context.Context, accountID string) ([]directory.Invitation, error)
 	Redeem(ctx context.Context, accountID, code string) (int, error)
 	Grant(ctx context.Context, linkID string, invitations int) error
+	CreateMailboxes(ctx context.Context, accountID string, ids []string, max int) error
+	Mailbox(ctx context.Context, id string) (directory.Mailbox, error)
+	DiscardMailbox(ctx context.Context, accountID, id string) error
+	Devices(ctx context.Context, accountID string, now time.Time) ([]string, error)
 }
 
 // Limiter counts uses of a key in fixed windows.
@@ -78,6 +84,12 @@ type Server struct {
 	InviteOnly bool
 	// Admins holds the Telegram hashes (directory.TelegramHash) of admins.
 	Admins map[string]bool
+
+	// Inbox stores undelivered envelopes.
+	Inbox Inbox
+	// Pause, if set, runs when a send goes to a mailbox that doesn't exist,
+	// so the answer takes about as long as a delivery (RandomPause).
+	Pause func()
 }
 
 // Routes registers the API's routes.
@@ -95,6 +107,11 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodGet, "/admin/levels", s.withDevice("GET /admin/levels", s.withAdmin(s.adminLevels)))
 	r.Handle(http.MethodPut, "/admin/levels", s.withSignature("PUT /admin/levels", s.withAdmin(s.adminSetLevel)))
 	r.Handle(http.MethodPost, "/admin/grant", s.withSignature("POST /admin/grant", s.withAdmin(s.adminGrant)))
+	r.Handle(http.MethodPost, "/mailboxes", s.withDevice("POST /mailboxes", s.createMailboxes))
+	r.Handle(http.MethodPost, "/mailboxes/{id}/discard", s.withDevice("POST /mailboxes/{id}/discard", s.discardMailbox))
+	r.Handle(http.MethodPost, "/send", s.send)
+	r.Handle(http.MethodGet, "/inbox", s.withDevice("GET /inbox", s.listInbox))
+	r.Handle(http.MethodPost, "/ack", s.withDevice("POST /ack", s.ack))
 }
 
 // tokenResponse is what a successful registration or login returns.

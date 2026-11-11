@@ -26,6 +26,7 @@ type Link struct {
 	ID         string
 	SigningKey []byte
 	Keys       []links.Key
+	Mailbox    string // the intro mailbox first messages go to
 }
 
 func linkPK(id string) string { return "L#" + id }
@@ -41,6 +42,7 @@ func (s *Store) CreateLink(ctx context.Context, accountID string, l Link, max in
 				"a":  sv(accountID),
 				"k":  bv(l.SigningKey),
 				"ek": keysValue(l.Keys),
+				"m":  sv(l.Mailbox),
 			}),
 			ConditionExpression: aws.String("attribute_not_exists(pk)"),
 		}},
@@ -60,8 +62,9 @@ func (s *Store) CreateLink(ctx context.Context, accountID string, l Link, max in
 			},
 		}},
 	}
+	writes = append(writes, s.introMailboxWrites(accountID, l.ID, l.Mailbox)...)
 	reasons, err := s.transactReasons(ctx, writes)
-	if errors.Is(err, ErrConflict) && len(reasons) == 3 && reasons[2] == "ConditionalCheckFailed" {
+	if errors.Is(err, ErrConflict) && len(reasons) == len(writes) && reasons[2] == "ConditionalCheckFailed" {
 		return ErrLimit
 	}
 	return err
@@ -75,10 +78,11 @@ func (s *Store) Link(ctx context.Context, id string) (Link, error) {
 	}
 	k, ok := bin(it, "k")
 	keys, okKeys := keysFrom(it["ek"])
-	if !ok || !okKeys {
+	mailbox, okMailbox := str(it, "m")
+	if !ok || !okKeys || !okMailbox {
 		return Link{}, ErrNotFound
 	}
-	return Link{ID: id, SigningKey: k, Keys: keys}, nil
+	return Link{ID: id, SigningKey: k, Keys: keys, Mailbox: mailbox}, nil
 }
 
 // SetLinkKeys replaces a link's encryption keys. It returns ErrNotFound unless
@@ -98,8 +102,13 @@ func (s *Store) SetLinkKeys(ctx context.Context, accountID, id string, keys []li
 	return err
 }
 
-// DeleteLink revokes a link. It returns ErrNotFound unless the account owns it.
+// DeleteLink revokes a link and its intro mailbox. It returns ErrNotFound
+// unless the account owns it.
 func (s *Store) DeleteLink(ctx context.Context, accountID, id string) error {
+	l, err := s.Link(ctx, id)
+	if err != nil {
+		return err
+	}
 	writes := []types.TransactWriteItem{
 		{Delete: &types.Delete{
 			TableName:                 &s.Table,
@@ -118,6 +127,8 @@ func (s *Store) DeleteLink(ctx context.Context, accountID, id string) error {
 			ConditionExpression:       aws.String("lc > :zero"),
 			ExpressionAttributeValues: attrs{":zero": nv(0), ":one": nv(1)},
 		}},
+		{Delete: &types.Delete{TableName: &s.Table, Key: key(mailboxPK(l.Mailbox), skMailbox)}},
+		{Delete: &types.Delete{TableName: &s.Table, Key: key(accountPK(accountID), mailboxPrefix+l.Mailbox)}},
 	}
 	reasons, err := s.transactReasons(ctx, writes)
 	if errors.Is(err, ErrConflict) && len(reasons) > 0 && reasons[0] == "ConditionalCheckFailed" {

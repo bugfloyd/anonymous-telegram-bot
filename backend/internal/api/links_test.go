@@ -15,6 +15,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/devicesig"
 	"github.com/incognitochat/incognitochat/backend/internal/directory"
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
+	"github.com/incognitochat/incognitochat/backend/internal/ids"
 	"github.com/incognitochat/incognitochat/backend/internal/links"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 )
@@ -222,7 +223,7 @@ func TestLinkLifecycle(t *testing.T) {
 
 	// Anyone can read the bundle, which says nothing about the owner.
 	status, out = h.call(t, nil, "", http.MethodGet, "/links/"+l.id, nil, false)
-	if status != http.StatusOK || out["signingKey"] != b64(raw(t, l.lsk)) || len(out) != 2 {
+	if status != http.StatusOK || out["signingKey"] != b64(raw(t, l.lsk)) || len(out) != 3 || !ids.Valid(out["mailbox"].(string)) {
 		t.Fatalf("bundle: %d %v", status, out)
 	}
 	if keys := out["keys"].([]any); len(keys) != 1 || keys[0].(map[string]any)["key"] != create["keys"].([]any)[0].(map[string]any)["key"] {

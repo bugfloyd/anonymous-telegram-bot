@@ -22,6 +22,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/directory"
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
 	"github.com/incognitochat/incognitochat/backend/internal/ids"
+	"github.com/incognitochat/incognitochat/backend/internal/inbox"
 	"github.com/incognitochat/incognitochat/backend/internal/links"
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
@@ -67,6 +68,7 @@ type memDirectory struct {
 	links    map[string]*memLink
 	codes    map[string]*memCode
 	levels   map[int]int
+	boxes    map[string]directory.Mailbox
 	fail     error
 }
 
@@ -77,7 +79,102 @@ func newMemDirectory() *memDirectory {
 		links:    map[string]*memLink{},
 		codes:    map[string]*memCode{},
 		levels:   map[int]int{},
+		boxes:    map[string]directory.Mailbox{},
 	}
+}
+
+func (m *memDirectory) CreateMailboxes(_ context.Context, account string, ids []string, max int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, b := range m.boxes {
+		if b.Owner == account && b.Link == "" {
+			n++
+		}
+	}
+	if n+len(ids) > max {
+		return directory.ErrLimit
+	}
+	for _, id := range ids {
+		m.boxes[id] = directory.Mailbox{ID: id, Owner: account}
+	}
+	return nil
+}
+
+func (m *memDirectory) Mailbox(_ context.Context, id string) (directory.Mailbox, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.boxes[id]
+	if !ok {
+		return directory.Mailbox{}, directory.ErrNotFound
+	}
+	return b, nil
+}
+
+func (m *memDirectory) DiscardMailbox(_ context.Context, account, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.boxes[id]
+	if !ok || b.Owner != account || b.Link != "" {
+		return directory.ErrNotFound
+	}
+	delete(m.boxes, id)
+	return nil
+}
+
+func (m *memDirectory) Devices(_ context.Context, account string, _ time.Time) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[account]
+	if !ok || a.replaced {
+		return nil, nil
+	}
+	var out []string
+	for d := range a.devices {
+		out = append(out, d)
+	}
+	return out, nil
+}
+
+type memInbox struct {
+	mu    sync.Mutex
+	items map[string][]inbox.Item // "<account>#<device>" -> items
+}
+
+func (m *memInbox) Deliver(_ context.Context, account string, devices []string, mailbox string, env []byte, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, d := range devices {
+		m.items[account+"#"+d] = append(m.items[account+"#"+d], inbox.Item{ID: ids.New(), Mailbox: mailbox, Envelope: env})
+	}
+	return nil
+}
+
+func (m *memInbox) List(_ context.Context, account, device string, limit int, _ time.Time) ([]inbox.Item, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	items := m.items[account+"#"+device]
+	if len(items) > limit {
+		return append([]inbox.Item(nil), items[:limit]...), true, nil
+	}
+	return append([]inbox.Item(nil), items...), false, nil
+}
+
+func (m *memInbox) Ack(_ context.Context, account, device string, ackIDs []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	drop := map[string]bool{}
+	for _, id := range ackIDs {
+		drop[id] = true
+	}
+	var kept []inbox.Item
+	for _, it := range m.items[account+"#"+device] {
+		if !drop[it.ID] {
+			kept = append(kept, it)
+		}
+	}
+	m.items[account+"#"+device] = kept
+	return nil
 }
 
 func (m *memDirectory) Levels(context.Context) (map[int]int, error) {
@@ -169,6 +266,7 @@ func (m *memDirectory) CreateLink(_ context.Context, account string, l directory
 	}
 	a.links++
 	m.links[l.ID] = &memLink{owner: account, link: l}
+	m.boxes[l.Mailbox] = directory.Mailbox{ID: l.Mailbox, Owner: account, Link: l.ID}
 	return nil
 }
 
@@ -201,6 +299,7 @@ func (m *memDirectory) DeleteLink(_ context.Context, account, id string) error {
 		return directory.ErrNotFound
 	}
 	delete(m.links, id)
+	delete(m.boxes, l.link.Mailbox)
 	m.accounts[account].links--
 	return nil
 }
@@ -251,6 +350,11 @@ func (m *memDirectory) Replace(_ context.Context, old directory.Account, n direc
 			delete(m.links, id)
 		}
 	}
+	for id, b := range m.boxes {
+		if b.Owner == old.ID {
+			delete(m.boxes, id)
+		}
+	}
 	m.put(n)
 	return nil
 }
@@ -289,6 +393,7 @@ type harness struct {
 	server *Server
 	router *httpapi.Router
 	dir    *memDirectory
+	inbox  *memInbox
 	logs   *bytes.Buffer
 	now    time.Time
 }
@@ -299,7 +404,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{dir: newMemDirectory(), logs: &bytes.Buffer{}, now: start}
+	h := &harness{dir: newMemDirectory(), logs: &bytes.Buffer{}, now: start, inbox: &memInbox{items: map[string][]inbox.Item{}}}
 	h.server = &Server{
 		Telegram:  initdatatest.Verifier(botID),
 		Sessions:  issuer,
@@ -309,6 +414,7 @@ func newHarness(t *testing.T) *harness {
 		Pepper:    []byte("pepper-pepper-pepper-pepper-pepper"),
 		Log:       logx.New(h.logs, "api"),
 		Now:       func() time.Time { return h.now },
+		Inbox:     h.inbox,
 	}
 	h.router = httpapi.NewRouter()
 	h.server.Routes(h.router)

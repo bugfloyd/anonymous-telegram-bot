@@ -153,6 +153,25 @@ the owner and carries its reply mailbox; from then on each side writes for the
 other's latest conversation key. Both sides rotate their own conversation key
 about weekly, each conversation on its own schedule.
 
+## Delivery
+
+The server routes by **mailbox** (16 random bytes), never by account. It knows
+each mailbox's owner, to deliver, but not who writes to it.
+
+- Each link has an intro mailbox, listed in its bundle (`mailbox`); first
+  messages go there. Clients keep a small pool of further mailboxes
+  (`POST /mailboxes`) and take one when a conversation needs it, so creating
+  one never happens right before a send.
+- `POST /send {mailbox, envelope}` needs no login. The server checks the
+  envelope's layout and the caps, then stores the envelope once for each of the
+  owner's devices. Unknown and discarded mailboxes get the same `200 {}`, after
+  a similar pause, and nothing is stored.
+- `GET /inbox` returns a device's undelivered envelopes in no meaningful order;
+  `POST /ack {ids}` deletes the ones it has stored. Undelivered envelopes expire
+  after 30 days.
+- `POST /mailboxes/{id}/discard` ends a mailbox (a block, or an ended
+  conversation); a link's intro mailbox ends with the link.
+
 ## Test vectors
 
 | What | Where |
@@ -163,3 +182,4 @@ about weekly, each conversation on its own schedule.
 | Register, session and request messages | `backend/internal/api/vectors_test.go`, `web/src/account/account.test.ts` |
 | Link keys | `backend/internal/links`, `web/src/protocol/link.test.ts` |
 | HPKE (RFC 9180 Appendix A, AES-128-GCM and AES-256-GCM) | `web/src/crypto/hpke-vectors.json` |
+| Envelope layout (sealed by the client) | `backend/internal/envelope/testdata` |

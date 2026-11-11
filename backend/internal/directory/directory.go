@@ -11,6 +11,7 @@
 //	A#<account>  I#<code>   marks an invitation code the account made (invitations.go)
 //	I#<code>     I          a code: owner (o), owner's level (l), uses (u), uses left (r)
 //	S#levels     S          invitation allowance per level (m), version (v)
+//	M#<mailbox>  M          a mailbox (mailboxes.go)
 //	T#<hash>     T          one account per Telegram user: account ID (a)
 //
 // The account item also counts the account's active links (lc) and, once it
@@ -218,6 +219,12 @@ func (s *Store) Replace(ctx context.Context, old Account, n NewAccount, now time
 	for _, sk := range old.items {
 		switch {
 		case sk == skAccount:
+		case strings.HasPrefix(sk, mailboxPrefix):
+			// Sends to the account's mailboxes then go nowhere.
+			requests = append(requests,
+				types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(accountPK(old.ID), sk)}},
+				types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(mailboxPK(strings.TrimPrefix(sk, mailboxPrefix)), skMailbox)}},
+			)
 		case strings.HasPrefix(sk, codePrefix):
 			// Unused codes of an ended account stop working.
 			requests = append(requests,
