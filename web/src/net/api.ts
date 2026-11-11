@@ -13,6 +13,10 @@ export type ErrorCode =
   | 'rate_limited'
   | 'login_refused'
   | 'account_replaced'
+  | 'session_expired'
+  | 'invitation_required'
+  | 'invalid_link'
+  | 'link_limit'
   | 'internal'
   | 'not_found'
   | 'method_not_allowed';
@@ -28,6 +32,10 @@ const CODES = new Set<string>([
   'rate_limited',
   'login_refused',
   'account_replaced',
+  'session_expired',
+  'invitation_required',
+  'invalid_link',
+  'link_limit',
   'internal',
   'not_found',
   'method_not_allowed',
@@ -56,19 +64,24 @@ export type Fetch = (input: string, init: RequestInit) => Promise<Response>;
 
 const TIMEOUT_MS = 15_000;
 
+export type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+
 export interface Api {
+  /** Sends a request. body is the exact JSON text, since signatures cover it. */
+  request<T>(method: Method, path: string, init: { body?: string; headers?: Record<string, string> }, check: (value: unknown) => T): Promise<T>;
   post<T>(path: string, body: unknown, check: (value: unknown) => T): Promise<T>;
 }
 
 export function createApi(baseUrl: string, fetchImpl: Fetch = (input, init) => fetch(input, init)): Api {
-  return {
-    async post(path, body, check) {
+  const api: Api = {
+    post: (path, body, check) => api.request('POST', path, { body: JSON.stringify(body) }, check),
+    async request(method, path, init, check) {
       let response: Response;
       try {
         response = await fetchImpl(baseUrl + path, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          method,
+          headers: { 'Content-Type': 'application/json', ...init.headers },
+          ...(init.body === undefined ? {} : { body: init.body }),
           credentials: 'omit',
           referrerPolicy: 'no-referrer',
           cache: 'no-store',
@@ -96,6 +109,13 @@ export function createApi(baseUrl: string, fetchImpl: Fetch = (input, init) => f
       }
     },
   };
+  return api;
+}
+
+/** Accepts any JSON object, for responses whose content doesn't matter. */
+export function checkObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('not an object');
+  return value as Record<string, unknown>;
 }
 
 /** A session token and when it expires, as /register and /session return. */

@@ -70,12 +70,20 @@ export async function putSealed(db: Database, name: string, sealed: Uint8Array<A
   await db.put('vault', sealed, name);
 }
 
+export async function deleteSealed(db: Database, name: string): Promise<void> {
+  await db.delete('vault', name);
+}
+
 export async function getMeta<T>(db: Database, name: string): Promise<T | undefined> {
   return (await db.get('meta', name)) as T | undefined;
 }
 
 export async function putMeta(db: Database, name: string, value: unknown): Promise<void> {
   await db.put('meta', value, name);
+}
+
+export async function deleteMeta(db: Database, name: string): Promise<void> {
+  await db.delete('meta', name);
 }
 
 /** Asks the browser not to evict our storage. Best effort: often refused. */

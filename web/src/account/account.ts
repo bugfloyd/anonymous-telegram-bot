@@ -13,12 +13,12 @@
 // - vault key: non-extractable, seals the copyable keys.
 
 import { randomBytes, toBase64Url, utf8 } from '../crypto/encoding';
-import { exportPublicKey, fingerprint, generateCopyableSigningKey, generateSigningKey } from '../crypto/keys';
-import { LABEL_REGISTER, LABEL_SESSION, sign, signEncoded } from '../crypto/signing';
+import { exportPublicKey, fingerprint, generateCopyableSigningKey, generateSigningKey, SIGNING_IMPORT } from '../crypto/keys';
+import { LABEL_REGISTER, LABEL_REQUEST, LABEL_SESSION, sign, signEncoded } from '../crypto/signing';
 import { generateVaultKey, seal, unseal } from '../crypto/vault';
 import { ApiError, checkTokenResponse, type Api, type TokenResponse } from '../net/api';
 import { encodeDeviceList, firstList } from '../protocol/device-list';
-import { getKeyPair, getMeta, putKey, putMeta, putSealed, type Database, type StoredKeyPair } from '../storage/db';
+import { deleteMeta, getKeyPair, getMeta, putKey, putMeta, putSealed, type Database, type StoredKeyPair } from '../storage/db';
 import { withLock } from '../sync/locks';
 
 /** The start parameter prefix of a registration launch. */
@@ -31,7 +31,6 @@ const KEY_DEVICE = 'device-signing-key';
 const KEY_VAULT = 'vault-key';
 const LOCK = 'account';
 
-const ECDSA_IMPORT: EcKeyImportParams = { name: 'ECDSA', namedCurve: 'P-256' };
 const ID = /^[A-Za-z0-9_-]{22}$/;
 const FINGERPRINT = /^[A-Za-z0-9_-]{43}$/;
 const LINK_PARAM = /^[A-Za-z0-9_-]{1,64}$/;
@@ -81,7 +80,7 @@ export function prepareSetup(db: Database, options: { restart?: boolean } = {}):
     const vaultKey = await generateVaultKey();
     const account = await generateCopyableSigningKey();
     const sealed = await seal(vaultKey, account.privateKey, KEY_ACCOUNT);
-    const working = await unseal(vaultKey, sealed, KEY_ACCOUNT, ECDSA_IMPORT, ['sign']);
+    const working = await unseal(vaultKey, sealed, KEY_ACCOUNT, SIGNING_IMPORT, ['sign']);
     const device = await generateSigningKey();
     const deviceId = toBase64Url(randomBytes(16));
     const fp = await fingerprint(account.publicKey);
@@ -185,16 +184,54 @@ export async function logIn(db: Database, api: Api, now: () => number = () => Ma
       checkTokenResponse,
     );
   } catch (err) {
-    if (err instanceof ApiError && err.code === 'account_replaced') {
-      await withLock(LOCK, async () => {
-        const latest = await readAccount(db);
-        if (latest?.state === 'registered' && latest.accountId === current.accountId) {
-          await putMeta(db, META_ACCOUNT, { ...latest, state: 'replaced' } satisfies AccountRecord);
-        }
-      });
-    }
+    if (err instanceof ApiError && err.code === 'account_replaced') await markReplaced(db, current.accountId);
     throw err;
   }
+}
+
+/** Records that the server says this account was replaced. */
+export function markReplaced(db: Database, accountId: string): Promise<void> {
+  return withLock(LOCK, async () => {
+    const latest = await readAccount(db);
+    if (latest?.state === 'registered' && latest.accountId === accountId) {
+      await putMeta(db, META_ACCOUNT, { ...latest, state: 'replaced' } satisfies AccountRecord);
+    }
+  });
+}
+
+/** The parts a signed request covers (backend: session.RequestParts). */
+export async function requestParts(
+  accountId: string,
+  deviceId: string,
+  method: string,
+  path: string,
+  timestamp: number,
+  nonce: string,
+  body: string,
+): Promise<(string | Uint8Array)[]> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(body)));
+  return [accountId, deviceId, method, path, String(timestamp), nonce, digest];
+}
+
+/**
+ * The X-Device-Signature header for a sensitive request: this device signs
+ * the method, path, time, a fresh nonce and the exact body text.
+ */
+export async function signRequest(
+  db: Database,
+  method: string,
+  path: string,
+  body: string,
+  now: () => number = () => Math.floor(Date.now() / 1000),
+): Promise<string> {
+  const current = await readAccount(db);
+  if (current?.state !== 'registered') throw new Error('not registered');
+  const device = await requirePair(db, KEY_DEVICE);
+  const timestamp = now();
+  const nonce = toBase64Url(randomBytes(16));
+  const parts = await requestParts(current.accountId, current.deviceId, method, path, timestamp, nonce, body);
+  const signature = await sign(device.privateKey, LABEL_REQUEST, ...parts);
+  return `${timestamp}.${nonce}.${toBase64Url(signature)}`;
 }
 
 /**
@@ -203,6 +240,13 @@ export async function logIn(db: Database, api: Api, now: () => number = () => Ma
  */
 export async function rememberLink(db: Database, startParam: string): Promise<void> {
   if (LINK_PARAM.test(startParam) && !isRegistrationLaunch(startParam)) await putMeta(db, META_PENDING_LINK, startParam);
+}
+
+/** Returns the link remembered before setup, once. */
+export async function takePendingLink(db: Database): Promise<string | undefined> {
+  const value = await getMeta<unknown>(db, META_PENDING_LINK);
+  if (value !== undefined) await deleteMeta(db, META_PENDING_LINK);
+  return typeof value === 'string' ? value : undefined;
 }
 
 async function requirePair(db: Database, name: string): Promise<StoredKeyPair> {

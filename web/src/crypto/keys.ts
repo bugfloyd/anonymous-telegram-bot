@@ -30,6 +30,15 @@ export function generateCopyableSigningKey(): Promise<CryptoKeyPair> {
   return crypto.subtle.generateKey(SIGNING, true, ['sign', 'verify']);
 }
 
+/** A new ECDH key pair whose private key can be sealed and copied (link and persona keys). */
+export function generateCopyableAgreementKey(): Promise<CryptoKeyPair> {
+  return crypto.subtle.generateKey(AGREEMENT, true, ['deriveBits']);
+}
+
+/** Import parameters for unsealing keys from the vault. */
+export const SIGNING_IMPORT: EcKeyImportParams = { name: 'ECDSA', namedCurve: 'P-256' };
+export const AGREEMENT_IMPORT: EcKeyImportParams = { name: 'ECDH', namedCurve: 'P-256' };
+
 /** The 65-byte uncompressed public point, as the backend parses it. */
 export async function exportPublicKey(publicKey: CryptoKey): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await crypto.subtle.exportKey('raw', publicKey));
@@ -38,6 +47,11 @@ export async function exportPublicKey(publicKey: CryptoKey): Promise<Uint8Array<
 /** Imports a 65-byte public point for verifying signatures. */
 export function importSigningPublicKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', raw, SIGNING, true, ['verify']);
+}
+
+/** Imports a 65-byte public point to encrypt to (ECDH). Throws if it isn't on the curve. */
+export function importAgreementPublicKey(raw: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+  return crypto.subtle.importKey('raw', raw, AGREEMENT, true, []);
 }
 
 /**
