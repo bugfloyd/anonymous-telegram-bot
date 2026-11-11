@@ -63,6 +63,7 @@ if [ "$rebuild" = --rebuild ]; then
     VITE_BOT_USERNAME=$(jq -r .build.VITE_BOT_USERNAME "$work/manifest.json") \
     VITE_APP_NAME=$(jq -r .build.VITE_APP_NAME "$work/manifest.json") \
     VITE_ISSUER_KEY=$(jq -r '.build.VITE_ISSUER_KEY // empty' "$work/manifest.json") \
+    VITE_WS_URL=$(jq -r '.build.VITE_WS_URL // empty' "$work/manifest.json") \
       npm run build --silent >/dev/null
   )
   while IFS=$'\t' read -r path sha; do

@@ -25,6 +25,7 @@ async function issuerAndSession(): Promise<{ issuer: TokenIssuer; session: Sessi
   let count = 0;
   const session: Session = {
     use: () => {},
+      token: async () => 'v1.test.token',
     async call(_method, path, body, check) {
       if (path !== '/tokens') throw new Error(path);
       const blinded = (body as { blinded: string[] }).blinded;

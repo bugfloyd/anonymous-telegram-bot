@@ -8,6 +8,8 @@ import issuerKeys from './issuer-keys.json' with { type: 'json' };
 // reach a backend.
 interface BuildSettings {
   apiOrigin: string | null;
+  /** The WebSocket for pushes (optional: without it the app polls). */
+  wsOrigin: string | null;
 }
 
 function checkSettings(env: Record<string, string>): BuildSettings {
@@ -15,7 +17,7 @@ function checkSettings(env: Record<string, string>): BuildSettings {
   const bot = env.VITE_BOT_USERNAME ?? '';
   const app = env.VITE_APP_NAME ?? '';
   const issuer = env.VITE_ISSUER_KEY ?? '';
-  if (!api && !bot && !app && !issuer) return { apiOrigin: null };
+  if (!api && !bot && !app && !issuer) return { apiOrigin: null, wsOrigin: null };
   if (!api || !bot || !app || !issuer) {
     throw new Error('Set all of VITE_API_URL, VITE_BOT_USERNAME, VITE_APP_NAME and VITE_ISSUER_KEY, or none');
   }
@@ -28,13 +30,21 @@ function checkSettings(env: Record<string, string>): BuildSettings {
   }
   if (!/^[A-Za-z][A-Za-z0-9_]{3,31}$/.test(bot)) throw new Error('VITE_BOT_USERNAME is not a bot username');
   if (!/^[A-Za-z0-9_]{3,30}$/.test(app)) throw new Error('VITE_APP_NAME is not a Mini App short name');
-  return { apiOrigin: url.origin };
+  let wsOrigin: string | null = null;
+  if (env.VITE_WS_URL) {
+    const ws = new URL(env.VITE_WS_URL);
+    if (ws.protocol !== 'wss:' || ws.username || ws.password || ws.search || ws.hash) {
+      throw new Error('VITE_WS_URL must be a plain wss:// URL');
+    }
+    wsOrigin = ws.origin;
+  }
+  return { apiOrigin: url.origin, wsOrigin };
 }
 
 // The Content Security Policy is a <meta> tag because GitHub Pages can't send
 // headers. It is only added to production builds: Vite's dev server injects
 // inline scripts that the policy would block. The page may only connect to
-// its own origin and the API.
+// its own origin, the API and the push socket.
 function policy(settings: BuildSettings): string {
   return [
     "default-src 'none'",
@@ -42,7 +52,7 @@ function policy(settings: BuildSettings): string {
     "style-src 'self'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
-    ['connect-src', "'self'", settings.apiOrigin].filter(Boolean).join(' '),
+    ['connect-src', "'self'", settings.apiOrigin, settings.wsOrigin].filter(Boolean).join(' '),
     "manifest-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",

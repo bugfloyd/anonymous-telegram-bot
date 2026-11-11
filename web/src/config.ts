@@ -17,6 +17,8 @@ export interface Config {
    * named by the build: tokens for any other key are refused.
    */
   issuer: { name: string; spki: Uint8Array<ArrayBuffer>; keyId: Uint8Array<ArrayBuffer> };
+  /** The WebSocket that pushes "something arrived"; without it the app polls. */
+  wsUrl?: string;
 }
 
 const env = import.meta.env;
@@ -38,5 +40,6 @@ export const config: Config | null =
         botUsername: env.VITE_BOT_USERNAME,
         appName: env.VITE_APP_NAME,
         issuer: issuerKey,
+        ...(env.VITE_WS_URL ? { wsUrl: env.VITE_WS_URL } : {}),
       }
     : null;
