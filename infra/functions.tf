@@ -160,8 +160,17 @@ resource "aws_lambda_function" "fn" {
   filename         = "${var.lambda_dir}/${each.key}.zip"
   source_code_hash = filebase64sha256("${var.lambda_dir}/${each.key}.zip")
 
+  # Functions read their parameters once, at cold start. PARAMS_VERSION
+  # changes whenever one of this function's parameters is rewritten, which
+  # updates the function and so replaces its warm instances.
   environment {
-    variables = merge({ ENVIRONMENT = var.environment }, each.value.environment)
+    variables = merge(
+      {
+        ENVIRONMENT    = var.environment
+        PARAMS_VERSION = join(",", [for p in each.value.parameters : "${p}=${local.parameter_versions[p]}"])
+      },
+      each.value.environment,
+    )
   }
 
   # JSON at warning level; the platform's START/END/REPORT lines are dropped
@@ -173,7 +182,8 @@ resource "aws_lambda_function" "fn" {
     log_group             = aws_cloudwatch_log_group.fn[each.key].name
   }
 
-  depends_on = [aws_iam_role_policy.fn]
+  # New instances must read the new parameter values.
+  depends_on = [aws_iam_role_policy.fn, aws_ssm_parameter.parameter]
 }
 
 # Public HTTPS endpoints. The functions authenticate requests themselves:
