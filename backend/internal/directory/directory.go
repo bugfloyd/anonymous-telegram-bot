@@ -8,10 +8,15 @@
 //	A#<account>  L          signed device list: bytes (b), signature (s), sequence (q)
 //	A#<account>  K#<link>   marks a link the account owns (links.go)
 //	L#<link>     L          a link: owner (a), signing key (k), encryption keys (ek)
+//	A#<account>  I#<code>   marks an invitation code the account made (invitations.go)
+//	I#<code>     I          a code: owner (o), owner's level (l), uses (u), uses left (r)
+//	S#levels     S          invitation allowance per level (m), version (v)
 //	T#<hash>     T          one account per Telegram user: account ID (a)
 //
 // The account item also counts the account's active links (lc) and, once it
-// joined through an invitation, records its level (lv).
+// joined through an invitation, records its level (lv), the invitations
+// granted to it on top of its level's allowance (ig) and the uses it has put
+// into codes (ia).
 //
 // The Telegram hash is a keyed hash of the Telegram user ID (TelegramHash),
 // so the table enforces one account per user without holding the ID.
@@ -67,6 +72,8 @@ var (
 // DB is the part of the DynamoDB client the store uses.
 type DB interface {
 	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+	BatchGetItem(context.Context, *dynamodb.BatchGetItemInput, ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error)
+	PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
@@ -113,6 +120,9 @@ type Device struct {
 	Replaced     bool
 	TelegramHash string // "" once replaced
 	Member       bool   // joined through an invitation
+	Level        int    // 1 for people invited by an admin, and so on; 0 if not a member
+	Granted      int    // invitations granted on top of the level's allowance
+	Allocated    int    // invitation uses put into codes
 	Links        int    // active links
 }
 
@@ -208,6 +218,12 @@ func (s *Store) Replace(ctx context.Context, old Account, n NewAccount, now time
 	for _, sk := range old.items {
 		switch {
 		case sk == skAccount:
+		case strings.HasPrefix(sk, codePrefix):
+			// Unused codes of an ended account stop working.
+			requests = append(requests,
+				types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(accountPK(old.ID), sk)}},
+				types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(codePK(strings.TrimPrefix(sk, codePrefix)), skCode)}},
+			)
 		case strings.HasPrefix(sk, linkPrefix):
 			// The link itself goes too: its bundle then answers "not found".
 			requests = append(requests,
@@ -249,7 +265,16 @@ func (s *Store) Device(ctx context.Context, accountID, deviceID string, now time
 	g, _ := str(acct, "g")
 	th, _ := str(acct, "th")
 	_, member := acct["lv"].(*types.AttributeValueMemberN)
-	return Device{Key: k, Replaced: g == goneReplaced, TelegramHash: th, Member: member, Links: int(num(acct, "lc"))}, nil
+	return Device{
+		Key:          k,
+		Replaced:     g == goneReplaced,
+		TelegramHash: th,
+		Member:       member,
+		Level:        int(num(acct, "lv")),
+		Granted:      int(num(acct, "ig")),
+		Allocated:    int(num(acct, "ia")),
+		Links:        int(num(acct, "lc")),
+	}, nil
 }
 
 func (s *Store) newAccountItems(n NewAccount) []types.TransactWriteItem {
