@@ -9,7 +9,10 @@ locals {
   functions = {
     # HTTPS API for the client.
     api = {
-      timeout    = 10
+      timeout = 10
+      # More CPU: signing send tokens (RSA) and cold starts are several times
+      # faster, at about the same cost, since Lambda bills per millisecond.
+      memory     = 512
       tables     = ["directory", "messages", "ephemeral"]
       parameters = ["bot-id", "session-key", "telegram-id-pepper", "issuer-key"]
       environment = {
@@ -161,7 +164,7 @@ resource "aws_lambda_function" "fn" {
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
-  memory_size      = 128
+  memory_size      = lookup(each.value, "memory", 128)
   timeout          = each.value.timeout
   filename         = "${var.lambda_dir}/${each.key}.zip"
   source_code_hash = filebase64sha256("${var.lambda_dir}/${each.key}.zip")

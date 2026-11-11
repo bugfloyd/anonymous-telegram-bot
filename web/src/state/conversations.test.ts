@@ -7,6 +7,7 @@ import { fromBase64Url, toBase64Url } from '../crypto/encoding';
 import { ApiError, type Api } from '../net/api';
 import { parseLaunch, type Launch } from '../platform/launch';
 import type { Bridge } from '../platform/telegram';
+import { listConversations } from '../messaging/store';
 import { openDatabase } from '../storage/db';
 import { createApp, type Screen } from './app';
 
@@ -102,7 +103,7 @@ function launchWith(startParam: string): Launch {
 }
 
 /** Sets up an account (two launches) and returns the app of the registration launch. */
-async function person(b: Awaited<ReturnType<typeof backend>>, startParam = '') {
+async function person(b: Awaited<ReturnType<typeof backend>>, startParam = ''): Promise<ReturnType<typeof createApp> & { db: Awaited<ReturnType<typeof openDatabase>>; reopen: (startParam: string) => Promise<ReturnType<typeof createApp>> }> {
   const db = await openDatabase(`conv-test-${n++}`);
   const deps = { config, api: b.api, db, bridge: bridge(), broadcast: () => {}, closeDelayMs: 0, background: false, issuer: b.issuer };
   const first = createApp({ ...deps, launch: launchWith(startParam) });
@@ -111,7 +112,12 @@ async function person(b: Awaited<ReturnType<typeof backend>>, startParam = '') {
   const code = 'reg' + (await readAccount(db))!.fingerprint;
   const app = createApp({ ...deps, launch: launchWith(code) });
   await app.start();
-  return app;
+  const reopen = async (param: string) => {
+    const next = createApp({ ...deps, launch: launchWith(param) });
+    await next.start();
+    return next;
+  };
+  return Object.assign(app, { db, reopen });
 }
 
 function screenOf<K extends Screen['kind']>(screen: Screen, kind: K): Extract<Screen, { kind: K }> {
@@ -120,6 +126,28 @@ function screenOf<K extends Screen['kind']>(screen: Screen, kind: K): Extract<Sc
 }
 
 describe('conversations in the app', () => {
+  it('shows a message as sending before it is delivered', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    // Hold the send until we've looked at the screen.
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => (release = r));
+    const post = b.api.post.bind(b.api);
+    b.api.post = async (path, body, check) => {
+      if (path === '/send') await held;
+      return post(path, body, check);
+    };
+    const writing = sender.writeToLink('right away');
+    await new Promise((r) => setTimeout(r, 300));
+    expect(screenOf(sender.screen.value, 'conversation').messages.map((m) => [m.text, m.status])).toEqual([['right away', 'sending']]);
+    release();
+    await writing;
+    expect(screenOf(sender.screen.value, 'conversation').messages.map((m) => m.status)).toEqual(['sent']);
+  });
+
   it('lets someone write to a link, and the owner read and reply', async () => {
     const b = await backend();
     const owner = await person(b);
@@ -154,6 +182,11 @@ describe('conversations in the app', () => {
       [true, 'hello there'],
       [false, 'hi! who is this?'],
     ]);
+
+    // Opening the link again continues the conversation instead of starting another.
+    const reopened = await sender.reopen(payload);
+    expect(screenOf(reopened.screen.value, 'conversation').id).toBe(conv.id);
+    expect(await listConversations(sender.db)).toHaveLength(1);
   });
 
   it("says when the day's tokens are used up", async () => {
@@ -164,6 +197,9 @@ describe('conversations in the app', () => {
     const sender = await person(b, payload);
     b.state.tokensLeft = 0;
     await sender.writeToLink('hello');
-    expect(screenOf(sender.screen.value, 'link')).toMatchObject({ error: 'no-tokens', busy: false });
+    // The conversation opens at once; the message shows as not sent, and why.
+    const conv = screenOf(sender.screen.value, 'conversation');
+    expect(conv.error).toBe('no-tokens');
+    expect(conv.messages.map((m) => [m.text, m.status])).toEqual([['hello', 'failed']]);
   });
 });

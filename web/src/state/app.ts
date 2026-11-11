@@ -154,6 +154,9 @@ const CLOSE_DELAY_MS = 400;
 
 export function createApp(deps: Deps) {
   const screen = signal<Screen>({ kind: 'loading' });
+  // The screen now, read fresh (TypeScript would otherwise keep a type
+  // narrowed by an earlier assignment, across awaits).
+  const currentScreen = (): Screen => screen.value;
   const session: Session | null = deps.api ? createSession(deps.db, deps.api) : null;
   // What this launch was opened with (a link or an invitation) is handled
   // once, not on every restart.
@@ -239,8 +242,9 @@ export function createApp(deps: Deps) {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') void sync();
     });
-    // Upkeep at a random moment, unrelated to anything the user does.
-    setTimeout(() => void messaging?.maintain().catch(() => {}), 5_000 + Math.random() * 55_000);
+    // Upkeep at a random moment soon after opening, unrelated to anything
+    // the user does, so the first send rarely has to fetch tokens itself.
+    setTimeout(() => void messaging?.maintain().catch(() => {}), 2_000 + Math.random() * 8_000);
   }
 
   /** Fetches new messages; refreshes the screen if any arrived. */
@@ -318,16 +322,23 @@ export function createApp(deps: Deps) {
   async function sendMessage(text: string): Promise<void> {
     const current = screen.value;
     if (current.kind !== 'conversation' || current.busy || !messaging || text.trim() === '') return;
-    screen.value = { ...current, busy: true, error: null };
+    screen.value = { ...current, error: null };
     let error: SendError | null = null;
+    // Shown at once as "sending", updated when delivered.
+    const show = async () => {
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) {
+        screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
+      }
+    };
     try {
-      await messaging.send(current.id, text.trim());
+      await messaging.send(current.id, text.trim(), undefined, show);
     } catch (err) {
       if (handleGone(err)) return;
       error = sendError(err);
     }
     deps.broadcast({ type: 'data-changed' });
-    screen.value = { ...current, busy: false, error, messages: await listMessages(deps.db, current.id) };
+    await show();
   }
 
   /** Writes the first message to the link just checked, starting a conversation. */
@@ -335,13 +346,24 @@ export function createApp(deps: Deps) {
     const current = screen.value;
     if (current.kind !== 'link' || current.busy || !messaging || !openedLink || text.trim() === '') return;
     screen.value = { ...current, busy: true, error: null };
+    let opened: string | null = null;
     try {
-      const id = await messaging.startConversation(openedLink.ref, openedLink.bundle, text.trim());
+      // The conversation opens as soon as the message is stored, shown as sending.
+      await messaging.startConversation(openedLink.ref, openedLink.bundle, text.trim(), async (id) => {
+        opened = id;
+        await openConversation(id);
+      });
       deps.broadcast({ type: 'data-changed' });
-      return openConversation(id);
+      await refresh();
     } catch (err) {
       if (handleGone(err)) return;
-      screen.value = { ...current, busy: false, error: sendError(err) };
+      const error = sendError(err);
+      const now = currentScreen();
+      if (opened && now.kind === 'conversation' && now.id === opened) {
+        screen.value = { ...now, error, messages: await listMessages(deps.db, opened) };
+      } else {
+        screen.value = { ...current, busy: false, error };
+      }
     }
   }
 
@@ -512,6 +534,12 @@ export function createApp(deps: Deps) {
       screen.value = linkScreen('own');
       return;
     }
+    // Already writing to this link: continue that conversation. A new one
+    // would gain nothing, since the owner sees the same sender tag and label.
+    const existing = (await listConversations(deps.db)).find(
+      (c) => c.role === 'sender' && c.link.id === ref.id && c.link.fingerprint === ref.fingerprint && c.status === 'active',
+    );
+    if (existing) return openConversation(existing.id);
     screen.value = linkScreen('checking');
     openedLink = null;
     try {
