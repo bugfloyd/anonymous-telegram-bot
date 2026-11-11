@@ -17,6 +17,11 @@ export type ErrorCode =
   | 'invitation_required'
   | 'invalid_link'
   | 'link_limit'
+  | 'no_invitations_left'
+  | 'invalid_invitation'
+  | 'already_member'
+  | 'not_member'
+  | 'admin_only'
   | 'internal'
   | 'not_found'
   | 'method_not_allowed';
@@ -36,6 +41,11 @@ const CODES = new Set<string>([
   'invitation_required',
   'invalid_link',
   'link_limit',
+  'no_invitations_left',
+  'invalid_invitation',
+  'already_member',
+  'not_member',
+  'admin_only',
   'internal',
   'not_found',
   'method_not_allowed',

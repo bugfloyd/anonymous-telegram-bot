@@ -50,3 +50,12 @@ body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; 
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .row .warning { flex-basis: 100%; margin: 0; }
 .link .button.secondary { background: var(--app-bg); }
+
+.card { display: flex; flex-direction: column; gap: 0.5rem; background: var(--app-surface); border-radius: 0.5rem; padding: 0.75rem; }
+.card input { background: var(--app-bg); }
+.page h2 { font-size: 1.125rem; margin-block: 0.5rem 0; }
+.plain { margin: 0; padding-inline-start: 1.25rem; }
+.grow { flex: 1 1 8rem; }
+.spread { justify-content: space-between; align-items: baseline; }
+.code { font: 600 1.125rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.05em; }
+.highlight { outline: 2px solid var(--app-accent); }
