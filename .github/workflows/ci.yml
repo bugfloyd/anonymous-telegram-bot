@@ -31,6 +31,12 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      # For the store tests (backend/internal/dynamotest). Pinned by digest.
+      dynamodb:
+        image: amazon/dynamodb-local:3.3.2@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86
+        ports:
+          - 8000:8000
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,7 +67,19 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Wait for DynamoDB Local
+        run: |
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null http://localhost:8000 && exit 0
+            sleep 1
+          done
+          echo "::error::DynamoDB Local didn't start"
+          exit 1
+
       - name: Test
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+          DYNAMODB_REQUIRED: "1" # store tests must run, not skip
         run: go test -race ./...
 
       - name: Scan for known vulnerabilities
@@ -282,6 +300,22 @@ jobs:
             exit 1
           fi
           echo "API reachable (HTTP 404 with a JSON error)"
+
+      # A login for a device that doesn't exist: the function must have loaded
+      # its parameters and be able to read the directory table to refuse it.
+      - name: Smoke test – API refuses an unknown device
+        run: |
+          rand_id() { head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d "="; }
+          payload=$(printf '{"account":"%s","device":"%s","timestamp":%d,"nonce":"%s","signature":"%s"}' \
+            "$(rand_id)" "$(rand_id)" "$(date +%s)" "$(rand_id)" "$(head -c 64 /dev/zero | basenc -w0 --base64url | tr -d "=")")
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
+            -d "$payload" "${API_URL%/}/session")
+          status=${body##*$'\n'}
+          if [ "$status" != "401" ] || [[ "$body" != *'"error":"login_refused"'* ]]; then
+            echo "::error::Expected 401 login_refused from POST /session, got HTTP ${status}"
+            exit 1
+          fi
+          echo "API loaded its configuration and reads the directory (HTTP 401 login_refused)"
 
       - name: Smoke test – webhook is reachable
         run: |

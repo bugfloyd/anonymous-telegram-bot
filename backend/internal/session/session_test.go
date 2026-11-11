@@ -129,7 +129,7 @@ func TestIssueRejectsBadIDs(t *testing.T) {
 func signLogin(t *testing.T, key *ecdsa.PrivateKey, login Login) Login {
 	t.Helper()
 	msg := devicesig.Message(devicesig.LabelSession,
-		[]byte(login.DeviceID), []byte(strconv.FormatInt(login.Timestamp, 10)), []byte(login.Nonce))
+		[]byte(login.AccountID), []byte(login.DeviceID), []byte(strconv.FormatInt(login.Timestamp, 10)), []byte(login.Nonce))
 	digest := sha256.Sum256(msg)
 	r, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
 	if err != nil {
@@ -147,7 +147,7 @@ func TestCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	login := signLogin(t, key, Login{DeviceID: device, Timestamp: now.Unix(), Nonce: "nonce-0123456789abc"})
+	login := signLogin(t, key, Login{AccountID: account, DeviceID: device, Timestamp: now.Unix(), Nonce: "nonce-0123456789abc"})
 
 	nonces := NewMemoryNonces(func() time.Time { return now })
 	if err := Check(ctx, login, &key.PublicKey, nonces, now); err != nil {
@@ -176,11 +176,13 @@ func TestCheck(t *testing.T) {
 	}
 
 	for name, bad := range map[string]Login{
-		"other device ID": {DeviceID: ids.New(), Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature},
-		"other nonce":     {DeviceID: device, Timestamp: login.Timestamp, Nonce: "nonce-9999999999abc", Signature: login.Signature},
-		"bad device ID":   {DeviceID: "x", Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature},
-		"short nonce":     {DeviceID: device, Timestamp: login.Timestamp, Nonce: "short", Signature: login.Signature},
-		"nonce charset":   {DeviceID: device, Timestamp: login.Timestamp, Nonce: "nonce with spaces!!", Signature: login.Signature},
+		"other account ID": {AccountID: ids.New(), DeviceID: device, Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature},
+		"other device ID":  {AccountID: account, DeviceID: ids.New(), Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature},
+		"other nonce":      {AccountID: account, DeviceID: device, Timestamp: login.Timestamp, Nonce: "nonce-9999999999abc", Signature: login.Signature},
+		"bad account ID":   {AccountID: "x", DeviceID: device, Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature},
+		"bad device ID":    {AccountID: account, DeviceID: "x", Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature},
+		"short nonce":      {AccountID: account, DeviceID: device, Timestamp: login.Timestamp, Nonce: "short", Signature: login.Signature},
+		"nonce charset":    {AccountID: account, DeviceID: device, Timestamp: login.Timestamp, Nonce: "nonce with spaces!!", Signature: login.Signature},
 	} {
 		if err := Check(ctx, bad, &key.PublicKey, NewMemoryNonces(func() time.Time { return now }), now); !errors.Is(err, ErrLogin) {
 			t.Errorf("%s: err = %v", name, err)

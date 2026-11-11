@@ -87,7 +87,7 @@ func (v Verifier) Verify(raw string, now time.Time) (Data, error) {
 	if len(v.Key) != ed25519.PublicKeySize || v.BotID <= 0 {
 		return Data{}, ErrSignature
 	}
-	if !ed25519.Verify(v.Key, []byte(checkString(v.BotID, fields)), sig) {
+	if !ed25519.Verify(v.Key, []byte(CheckString(v.BotID, fields)), sig) {
 		return Data{}, ErrSignature
 	}
 
@@ -123,9 +123,9 @@ func (v Verifier) Verify(raw string, now time.Time) (Data, error) {
 	return Data{UserID: userID, StartParam: startParam, AllowsWriteToPM: user.AllowsWriteToPM, AuthDate: authDate}, nil
 }
 
-// checkString builds Telegram's data-check-string: "<bot_id>:WebAppData", then
+// CheckString builds Telegram's data-check-string: "<bot_id>:WebAppData", then
 // every field except hash and signature as key=value, sorted by key, one per line.
-func checkString(botID int64, fields map[string]string) string {
+func CheckString(botID int64, fields map[string]string) string {
 	keys := make([]string, 0, len(fields))
 	for key := range fields {
 		if key != "hash" && key != "signature" {
