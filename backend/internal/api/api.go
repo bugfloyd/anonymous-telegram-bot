@@ -101,6 +101,16 @@ type Server struct {
 
 	// Notices, if set, sends Telegram notices after deliveries.
 	Notices Notices
+	// Push, if set, tells open apps that something arrived; a Telegram
+	// notice goes out only if none took it.
+	Push Pusher
+}
+
+// Pusher reaches an account's open apps (push.Pusher).
+type Pusher interface {
+	// Push sends a content-free hint and reports whether any app took it.
+	// An empty account reaches nobody, at about the same cost.
+	Push(ctx context.Context, account string) (bool, error)
 }
 
 // Routes registers the API's routes.

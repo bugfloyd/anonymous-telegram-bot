@@ -83,6 +83,19 @@ func PlainLaunch(startParam string) bool {
 	return startParam == "" || strings.HasPrefix(startParam, RegistrationPrefix)
 }
 
+// push tells an account's open apps about a delivery. A failure only means
+// the app finds it at its next poll, so it's logged, not returned.
+func (s *Server) push(ctx context.Context, account string) bool {
+	if s.Push == nil {
+		return false
+	}
+	ok, err := s.Push.Push(ctx, account)
+	if err != nil {
+		s.Log.Warn("push failed", slog.String(logx.KeyRoute, "POST /send"), logx.ErrorKind(err))
+	}
+	return ok
+}
+
 // notify asks for a notice after a delivery. A failure only costs the
 // notice, so it's logged, not returned.
 func (s *Server) notify(ctx context.Context, account string) {

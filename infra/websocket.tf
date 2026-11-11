@@ -16,8 +16,10 @@ resource "aws_apigatewayv2_integration" "ws" {
   content_handling_strategy = "CONVERT_TO_TEXT"
 }
 
+# $default answers the app's heartbeat, so open sockets aren't closed as idle
+# (API Gateway closes them after 10 minutes without traffic).
 resource "aws_apigatewayv2_route" "ws" {
-  for_each = toset(["$connect", "$disconnect"])
+  for_each = toset(["$connect", "$disconnect", "$default"])
 
   api_id    = aws_apigatewayv2_api.ws.id
   route_key = each.key

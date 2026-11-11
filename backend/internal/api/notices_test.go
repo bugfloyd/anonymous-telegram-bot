@@ -149,3 +149,54 @@ func TestSendNotifies(t *testing.T) {
 		t.Fatalf("logs: %s", h.logs.String())
 	}
 }
+
+type memPush struct {
+	online map[string]bool
+	pushed []string
+}
+
+func (m *memPush) Push(_ context.Context, account string) (bool, error) {
+	m.pushed = append(m.pushed, account)
+	return m.online[account], nil
+}
+
+func TestSendPushesToOpenApps(t *testing.T) {
+	h := newHarness(t)
+	h.server.InviteOnly = false
+	n := &memNotices{}
+	p := &memPush{online: map[string]bool{}}
+	h.server.Notices, h.server.Push = n, p
+	owner := h.account(t, userID)
+	_, out := h.as(t, owner, http.MethodPost, "/mailboxes", map[string]any{"count": 1}, false)
+	mailbox := out["mailboxes"].([]any)[0].(string)
+	env := clientEnvelope(t)
+	send := func(mb string, quiet bool) {
+		t.Helper()
+		if status, out := h.post(t, "/send", map[string]any{"mailbox": mb, "envelope": env, "token": mintToken(t, h.now), "quiet": quiet}); status != http.StatusOK {
+			t.Fatalf("send: %d %v", status, out)
+		}
+	}
+
+	// The app is closed: pushed to nobody, so a notice.
+	send(mailbox, false)
+	account := p.pushed[0]
+	if !ids.Valid(account) || len(n.notified) != 1 || n.notified[0] != account {
+		t.Fatalf("closed app: pushed %v, notified %v", p.pushed, n.notified)
+	}
+	// Open: the push is enough; the notice request is the no-op one.
+	p.online[account] = true
+	send(mailbox, false)
+	if p.pushed[1] != account || n.notified[1] != "" {
+		t.Fatalf("open app: pushed %v, notified %v", p.pushed, n.notified)
+	}
+	// Receipts are pushed, never noticed.
+	send(mailbox, true)
+	if p.pushed[2] != account || len(n.notified) != 2 {
+		t.Fatalf("receipt: pushed %v, notified %v", p.pushed, n.notified)
+	}
+	// Unknown mailboxes make the same requests, for nobody.
+	send(ids.New(), false)
+	if p.pushed[3] != "" || n.notified[2] != "" {
+		t.Fatalf("unknown mailbox: pushed %v, notified %v", p.pushed, n.notified)
+	}
+}

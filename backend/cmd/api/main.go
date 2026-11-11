@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -23,6 +24,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/inbox"
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/notices"
+	"github.com/incognitochat/incognitochat/backend/internal/push"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata"
 	"github.com/incognitochat/incognitochat/backend/internal/tokens"
@@ -60,7 +62,7 @@ func main() {
 
 func setup(ctx context.Context) (*api.Server, error) {
 	env, err := config.Env(os.Getenv,
-		"TABLE_DIRECTORY", "TABLE_EPHEMERAL", "TABLE_MESSAGES", "NOTIFY_FUNCTION",
+		"TABLE_DIRECTORY", "TABLE_EPHEMERAL", "TABLE_MESSAGES", "NOTIFY_FUNCTION", "WS_ENDPOINT",
 		"PARAM_BOT_ID", "PARAM_SESSION_KEY", "PARAM_TELEGRAM_ID_PEPPER", "PARAM_ISSUER_KEY")
 	if err != nil {
 		return nil, err
@@ -105,6 +107,7 @@ func setup(ctx context.Context) (*api.Server, error) {
 	}
 
 	db := dynamodb.NewFromConfig(aws)
+	wsEndpoint := env["WS_ENDPOINT"]
 	now := time.Now
 	return &api.Server{
 		Telegram:   initdata.NewVerifier(botID),
@@ -121,5 +124,11 @@ func setup(ctx context.Context) (*api.Server, error) {
 		Issuer:     tokenIssuer,
 		Spent:      &ephemeral.Spent{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
 		Notices:    &notices.Client{Lambda: awslambda.NewFromConfig(aws), Function: env["NOTIFY_FUNCTION"]},
+		Push: &push.Pusher{
+			Sockets: &ephemeral.Sockets{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
+			API: apigatewaymanagementapi.NewFromConfig(aws, func(o *apigatewaymanagementapi.Options) {
+				o.BaseEndpoint = &wsEndpoint
+			}),
+		},
 	}, nil
 }
