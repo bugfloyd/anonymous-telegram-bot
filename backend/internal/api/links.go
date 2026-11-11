@@ -25,6 +25,9 @@ type createLinkRequest struct {
 	ID         string    `json:"id"`
 	SigningKey bytes64   `json:"signingKey"`
 	Keys       []linkKey `json:"keys"`
+	// Replaces, if set, is the account's link this one takes the place of,
+	// in one step: the old link stops working.
+	Replaces string `json:"replaces,omitempty"`
 }
 
 type linkKeysRequest struct {
@@ -70,7 +73,9 @@ func (s *Server) account(_ context.Context, _ httpapi.Request, c caller) httpapi
 }
 
 // createLink stores a link's bundle. The client chooses the link ID, so it
-// can sign and keep the link's keys before asking.
+// can sign and keep the link's keys before asking. An account has one link;
+// replacing it gives a new address, and the client keeps the signing key, so
+// senders' tags (and so blocks and labels) carry over.
 func (s *Server) createLink(ctx context.Context, req httpapi.Request, c caller) httpapi.Response {
 	const route = "POST /links"
 	var in createLinkRequest
@@ -90,8 +95,18 @@ func (s *Server) createLink(ctx context.Context, req httpapi.Request, c caller) 
 	}
 
 	link := directory.Link{ID: in.ID, SigningKey: in.SigningKey, Keys: keys, Mailbox: ids.New()}
-	err = s.Directory.CreateLink(ctx, c.AccountID, link, links.MaxActive)
+	if in.Replaces != "" {
+		if !links.ValidID(in.Replaces) {
+			return httpapi.Error(http.StatusNotFound, "not_found")
+		}
+		err = s.Directory.ReplaceLink(ctx, c.AccountID, in.Replaces, link)
+	} else {
+		err = s.Directory.CreateLink(ctx, c.AccountID, link, links.MaxActive)
+	}
 	switch {
+	case errors.Is(err, directory.ErrNotFound):
+		// The link to replace is gone, or someone else's.
+		return httpapi.Error(http.StatusNotFound, "not_found")
 	case errors.Is(err, directory.ErrLimit):
 		return httpapi.Error(http.StatusConflict, "link_limit")
 	case errors.Is(err, directory.ErrConflict):

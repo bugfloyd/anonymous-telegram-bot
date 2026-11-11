@@ -35,7 +35,28 @@ func linkPK(id string) string { return "L#" + id }
 // returns ErrConflict if the link ID is taken, and ErrLimit if the account
 // has max links already (or no longer exists).
 func (s *Store) CreateLink(ctx context.Context, accountID string, l Link, max int) error {
-	writes := []types.TransactWriteItem{
+	writes := append(s.newLinkWrites(accountID, l), types.TransactWriteItem{Update: &types.Update{
+		TableName:           &s.Table,
+		Key:                 key(accountPK(accountID), skAccount),
+		UpdateExpression:    aws.String("SET lc = if_not_exists(lc, :zero) + :one"),
+		ConditionExpression: aws.String("attribute_exists(ak) AND (attribute_not_exists(lc) OR lc < :max)"),
+		ExpressionAttributeValues: attrs{
+			":zero": nv(0),
+			":one":  nv(1),
+			":max":  nv(int64(max)),
+		},
+	}})
+	writes = append(writes, s.introMailboxWrites(accountID, l.ID, l.Mailbox)...)
+	reasons, err := s.transactReasons(ctx, writes)
+	if errors.Is(err, ErrConflict) && len(reasons) == len(writes) && reasons[2] == "ConditionalCheckFailed" {
+		return ErrLimit
+	}
+	return err
+}
+
+// newLinkWrites stores a link's bundle and lists it under its account.
+func (s *Store) newLinkWrites(accountID string, l Link) []types.TransactWriteItem {
+	return []types.TransactWriteItem{
 		{Put: &types.Put{
 			TableName: &s.Table,
 			Item: item(linkPK(l.ID), skLink, attrs{
@@ -50,22 +71,42 @@ func (s *Store) CreateLink(ctx context.Context, accountID string, l Link, max in
 			TableName: &s.Table,
 			Item:      item(accountPK(accountID), linkPrefix+l.ID, attrs{}),
 		}},
-		{Update: &types.Update{
-			TableName:           &s.Table,
-			Key:                 key(accountPK(accountID), skAccount),
-			UpdateExpression:    aws.String("SET lc = if_not_exists(lc, :zero) + :one"),
-			ConditionExpression: aws.String("attribute_exists(ak) AND (attribute_not_exists(lc) OR lc < :max)"),
-			ExpressionAttributeValues: attrs{
-				":zero": nv(0),
-				":one":  nv(1),
-				":max":  nv(int64(max)),
-			},
-		}},
 	}
+}
+
+// oldLinkWrites deletes an account's link, its listing and its intro mailbox.
+// The first write fails its condition unless the account owns the link.
+func (s *Store) oldLinkWrites(accountID string, old Link) []types.TransactWriteItem {
+	return []types.TransactWriteItem{
+		{Delete: &types.Delete{
+			TableName:                 &s.Table,
+			Key:                       key(linkPK(old.ID), skLink),
+			ConditionExpression:       aws.String("a = :a"),
+			ExpressionAttributeValues: attrs{":a": sv(accountID)},
+		}},
+		{Delete: &types.Delete{TableName: &s.Table, Key: key(accountPK(accountID), linkPrefix+old.ID)}},
+		{Delete: &types.Delete{TableName: &s.Table, Key: key(mailboxPK(old.Mailbox), skMailbox)}},
+		{Delete: &types.Delete{TableName: &s.Table, Key: key(accountPK(accountID), mailboxPrefix+old.Mailbox)}},
+	}
+}
+
+// ReplaceLink swaps an account's link for a new one in one step: the old
+// link and its intro mailbox go, the new one takes its place, and the link
+// count stays the same. It returns ErrNotFound unless the account owns oldID,
+// and ErrConflict if the new ID is taken.
+func (s *Store) ReplaceLink(ctx context.Context, accountID, oldID string, l Link) error {
+	if oldID == l.ID {
+		return ErrConflict
+	}
+	old, err := s.Link(ctx, oldID)
+	if err != nil {
+		return err
+	}
+	writes := append(s.oldLinkWrites(accountID, old), s.newLinkWrites(accountID, l)...)
 	writes = append(writes, s.introMailboxWrites(accountID, l.ID, l.Mailbox)...)
 	reasons, err := s.transactReasons(ctx, writes)
-	if errors.Is(err, ErrConflict) && len(reasons) == len(writes) && reasons[2] == "ConditionalCheckFailed" {
-		return ErrLimit
+	if errors.Is(err, ErrConflict) && len(reasons) > 0 && reasons[0] == "ConditionalCheckFailed" {
+		return ErrNotFound
 	}
 	return err
 }
@@ -109,27 +150,13 @@ func (s *Store) DeleteLink(ctx context.Context, accountID, id string) error {
 	if err != nil {
 		return err
 	}
-	writes := []types.TransactWriteItem{
-		{Delete: &types.Delete{
-			TableName:                 &s.Table,
-			Key:                       key(linkPK(id), skLink),
-			ConditionExpression:       aws.String("a = :a"),
-			ExpressionAttributeValues: attrs{":a": sv(accountID)},
-		}},
-		{Delete: &types.Delete{
-			TableName: &s.Table,
-			Key:       key(accountPK(accountID), linkPrefix+id),
-		}},
-		{Update: &types.Update{
-			TableName:                 &s.Table,
-			Key:                       key(accountPK(accountID), skAccount),
-			UpdateExpression:          aws.String("SET lc = lc - :one"),
-			ConditionExpression:       aws.String("lc > :zero"),
-			ExpressionAttributeValues: attrs{":zero": nv(0), ":one": nv(1)},
-		}},
-		{Delete: &types.Delete{TableName: &s.Table, Key: key(mailboxPK(l.Mailbox), skMailbox)}},
-		{Delete: &types.Delete{TableName: &s.Table, Key: key(accountPK(accountID), mailboxPrefix+l.Mailbox)}},
-	}
+	writes := append(s.oldLinkWrites(accountID, l), types.TransactWriteItem{Update: &types.Update{
+		TableName:                 &s.Table,
+		Key:                       key(accountPK(accountID), skAccount),
+		UpdateExpression:          aws.String("SET lc = lc - :one"),
+		ConditionExpression:       aws.String("lc > :zero"),
+		ExpressionAttributeValues: attrs{":zero": nv(0), ":one": nv(1)},
+	}})
 	reasons, err := s.transactReasons(ctx, writes)
 	if errors.Is(err, ErrConflict) && len(reasons) > 0 && reasons[0] == "ConditionalCheckFailed" {
 		return ErrNotFound

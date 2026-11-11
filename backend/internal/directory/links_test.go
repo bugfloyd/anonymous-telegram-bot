@@ -126,3 +126,52 @@ func TestReplaceRevokesLinks(t *testing.T) {
 		t.Fatalf("link of a replaced account: %v", err)
 	}
 }
+
+func TestReplaceLink(t *testing.T) {
+	s, _ := store(t)
+	ctx := context.Background()
+	owner := registered(t, s)
+	other := registered(t, s)
+	old := testLink(t)
+	if err := s.CreateLink(ctx, owner.ID, old, links.MaxActive); err != nil {
+		t.Fatal(err)
+	}
+	next := testLink(t)
+	next.SigningKey = old.SigningKey // the same identity, a new address
+	if err := s.ReplaceLink(ctx, other.ID, old.ID, next); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("someone else's link: %v", err)
+	}
+	if err := s.ReplaceLink(ctx, owner.ID, old.ID, next); err != nil {
+		t.Fatal(err)
+	}
+	// The old link and its intro mailbox are gone; the new one works.
+	if _, err := s.Link(ctx, old.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old link: %v", err)
+	}
+	if _, err := s.Mailbox(ctx, old.Mailbox); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("old intro mailbox: %v", err)
+	}
+	got, err := s.Link(ctx, next.ID)
+	if err != nil || got.Mailbox != next.Mailbox {
+		t.Fatalf("new link: %+v, %v", got, err)
+	}
+	if mb, err := s.Mailbox(ctx, next.Mailbox); err != nil || mb.Owner != owner.ID || mb.Link != next.ID {
+		t.Fatalf("new intro mailbox: %+v, %v", mb, err)
+	}
+	// Still one link, so another can't be added next to it.
+	if dev, _ := s.Device(ctx, owner.ID, owner.DeviceID, now); dev.Links != 1 {
+		t.Fatalf("count = %d", dev.Links)
+	}
+	if err := s.CreateLink(ctx, owner.ID, testLink(t), links.MaxActive); !errors.Is(err, ErrLimit) {
+		t.Fatalf("second link: %v", err)
+	}
+	// Replacing a link that's gone, or with a taken ID.
+	if err := s.ReplaceLink(ctx, owner.ID, old.ID, testLink(t)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("replacing a gone link: %v", err)
+	}
+	taken := testLink(t)
+	taken.ID = next.ID
+	if err := s.ReplaceLink(ctx, owner.ID, next.ID, taken); !errors.Is(err, ErrConflict) {
+		t.Fatalf("same ID: %v", err)
+	}
+}

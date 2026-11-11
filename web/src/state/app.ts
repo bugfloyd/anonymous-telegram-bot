@@ -27,7 +27,7 @@ import {
   type InvitationsInfo,
   type LevelAllowance,
 } from '../account/invitations';
-import { checkAccountInfo, createLink, listLinks, revokeLink, type AccountInfo, type LinkRecord } from '../account/links';
+import { checkAccountInfo, createLink, listLinks, replaceLink, revokeLink, type AccountInfo, type LinkRecord } from '../account/links';
 import type { Config } from '../config';
 import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
@@ -47,6 +47,7 @@ export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 
 export type HomeNotice =
   | 'blocked'
   | 'deleted'
+  | 'replaced'
   | 'created'
   | 'revoked'
   | 'limit'
@@ -621,14 +622,21 @@ export function createApp(deps: Deps) {
   /** Checks someone's link: its bundle must match the fingerprint in the link. */
   async function openLink(ref: LinkRef): Promise<void> {
     const linkScreen = (status: LinkStatus) => ({ kind: 'link' as const, status, canWrite: false, busy: false, error: null });
-    if ((await listLinks(deps.db)).some((l) => l.id === ref.id)) {
+    // Our link, or one it replaced (the same fingerprint).
+    if ((await listLinks(deps.db)).some((l) => l.id === ref.id || l.fingerprint === ref.fingerprint)) {
       screen.value = linkScreen('own');
       return;
     }
-    // Already writing to this link: continue that conversation. A new one
+    // Already writing to this person: continue that conversation. A new one
     // would gain nothing, since the owner sees the same sender tag and label.
+    // Through a replaced link, only once they've answered: before that, it
+    // still writes to the old link's mailbox, which is gone.
     const existing = (await listConversations(deps.db)).find(
-      (c) => c.role === 'sender' && c.link.id === ref.id && c.link.fingerprint === ref.fingerprint && c.status !== 'blocked',
+      (c) =>
+        c.role === 'sender' &&
+        c.status !== 'blocked' &&
+        c.link.fingerprint === ref.fingerprint &&
+        (c.link.id === ref.id || c.lastReceived !== null),
     );
     if (existing) return openConversation(existing.id);
     screen.value = linkScreen('checking');
@@ -706,6 +714,8 @@ export function createApp(deps: Deps) {
     block,
     writeToLink,
     createLink: () => linkAction(() => createLink(deps.db, session!), 'created'),
+    /** Gives the account a new link in place of its current one. */
+    replaceLink: () => linkAction(() => replaceLink(deps.db, session!), 'replaced'),
     revokeLink: (id: string) => linkAction(() => revokeLink(deps.db, session!, id), 'revoked'),
     /** Opens Telegram's share sheet for a link. */
     share: (url: string) => deps.bridge?.post('web_app_open_tg_link', { path_full: `/share/url?url=${encodeURIComponent(url)}` }),

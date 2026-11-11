@@ -195,7 +195,7 @@ export function createMessaging(deps: MessagingDeps) {
         if (!(err instanceof ApiError && err.code === 'not_found')) throw err;
       }
     }
-    if (c.role === 'owner' && c.tag) await addBlockedTag(c.link.id, c.tag);
+    if (c.role === 'owner' && c.tag) await addBlockedTag(c.link.fingerprint, c.tag);
     await putConversation(db, { ...c, status: 'blocked', unread: 0 });
   }
 
@@ -219,9 +219,9 @@ export function createMessaging(deps: MessagingDeps) {
     return new Set(Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
   }
 
-  function addBlockedTag(link: string, tag: string): Promise<void> {
+  function addBlockedTag(linkFingerprint: string, tag: string): Promise<void> {
     return withLock(META_BLOCKED, async () => {
-      await putMeta(db, META_BLOCKED, [...(await blockedTags()), `${link}:${tag}`]);
+      await putMeta(db, META_BLOCKED, [...(await blockedTags()), `${linkFingerprint}:${tag}`]);
     });
   }
 
@@ -303,7 +303,8 @@ export function createMessaging(deps: MessagingDeps) {
       if (!conv) {
         if (!message.reply) return false;
         // A new conversation from a person we blocked through this link.
-        if (message.tag && (await blockedTags()).has(`${entry.link.id}:${message.tag}`)) return false;
+        // By the link's fingerprint, which a replaced link keeps.
+        if (message.tag && (await blockedTags()).has(`${entry.link.fingerprint}:${message.tag}`)) return false;
         const secret = await accountSecret(db);
         conv = {
           id: message.conv,

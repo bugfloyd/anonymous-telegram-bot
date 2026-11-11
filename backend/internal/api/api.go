@@ -14,7 +14,7 @@
 //	session_expired                       the session token is missing or expired; log in again
 //	invitation_required                   only members and admins can own links while invite-only
 //	invalid_link                          the link ID or bundle is malformed or badly signed
-//	link_limit                            the account has the most links allowed
+//	link_limit                            the account has a link already (replace it instead)
 //	no_invitations_left                   the member has fewer invitations left than asked for
 //	invalid_invitation                    no such invitation code, or it is used up
 //	already_member                        the account already joined through an invitation
@@ -51,6 +51,7 @@ type Directory interface {
 	Device(ctx context.Context, accountID, deviceID string, now time.Time) (directory.Device, error)
 	CreateLink(ctx context.Context, accountID string, l directory.Link, max int) error
 	Link(ctx context.Context, id string) (directory.Link, error)
+	ReplaceLink(ctx context.Context, accountID, oldID string, l directory.Link) error
 	SetLinkKeys(ctx context.Context, accountID, id string, keys []links.Key) error
 	SetNotices(ctx context.Context, accountID string, sealedChat []byte, language string) error
 	DeleteLink(ctx context.Context, accountID, id string) error
