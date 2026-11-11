@@ -25,6 +25,8 @@ const (
 var (
 	// ErrAlreadyMember is returned when redeeming for an account that is a member.
 	ErrAlreadyMember = errors.New("directory: already a member")
+	// ErrOwnInvitation is returned when someone redeems a code they made.
+	ErrOwnInvitation = errors.New("directory: own invitation")
 	// ErrNotMember is returned when granting invitations to an account that isn't a member.
 	ErrNotMember = errors.New("directory: not a member")
 )
@@ -207,6 +209,9 @@ func (s *Store) Redeem(ctx context.Context, accountID, code string) (int, error)
 	it, err := s.get(ctx, codePK(k), skCode, time.Time{})
 	if err != nil {
 		return 0, err
+	}
+	if owner, _ := str(it, "o"); owner == accountID {
+		return 0, ErrOwnInvitation
 	}
 	level := int(num(it, "l")) + 1
 	writes := []types.TransactWriteItem{

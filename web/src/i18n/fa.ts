@@ -42,7 +42,8 @@ export const fa = {
   join: 'عضویت',
   noticeJoined: 'عضو شدید. حالا می‌توانید لینک خودتان را بسازید.',
   noticeInvalidInvitation: 'این کد دعوت وجود ندارد یا ظرفیتش تمام شده است.',
-  noticeAlreadyMember: 'شما قبلاً عضو شده‌اید.',
+  noticeAlreadyMember: 'شما از قبل می‌توانید لینک خودتان را بسازید و به دعوت‌نامه نیازی ندارید.',
+  noticeOwnInvitation: 'این کد دعوت خودتان است؛ آن را برای کسی بفرستید که می‌خواهید دعوتش کنید.',
   noticeRateLimited: 'تلاش‌ها بیش از حد بود. فردا دوباره امتحان کنید.',
 
   invitationsTitle: 'دعوت‌نامه‌ها',

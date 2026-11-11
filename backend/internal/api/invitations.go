@@ -166,12 +166,18 @@ func (s *Server) redeem(ctx context.Context, req httpapi.Request, c caller) http
 	if !valid {
 		return httpapi.Error(http.StatusNotFound, "invalid_invitation")
 	}
+	// Admins can create links already; a use of the code would be wasted.
+	if s.isAdmin(c.device) {
+		return httpapi.Error(http.StatusConflict, "already_member")
+	}
 	level, err := s.Directory.Redeem(ctx, c.AccountID, code)
 	switch {
 	case errors.Is(err, directory.ErrNotFound):
 		return httpapi.Error(http.StatusNotFound, "invalid_invitation")
 	case errors.Is(err, directory.ErrAlreadyMember):
 		return httpapi.Error(http.StatusConflict, "already_member")
+	case errors.Is(err, directory.ErrOwnInvitation):
+		return httpapi.Error(http.StatusConflict, "own_invitation")
 	case err != nil:
 		return s.internal(route, err)
 	}

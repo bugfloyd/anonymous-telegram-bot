@@ -40,7 +40,8 @@ export const en = {
   join: 'Join',
   noticeJoined: "You're in. You can now create your own link.",
   noticeInvalidInvitation: "That invitation code doesn't exist or is used up.",
-  noticeAlreadyMember: "You've already joined.",
+  noticeAlreadyMember: "You can already create your own link, so you don't need an invitation.",
+  noticeOwnInvitation: "That's your own invitation code: send it to the person you want to invite.",
   noticeRateLimited: 'Too many tries. Try again tomorrow.',
 
   invitationsTitle: 'Invitations',

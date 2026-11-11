@@ -17,7 +17,8 @@
 //	link_limit                            the account has a link already (replace it instead)
 //	no_invitations_left                   the member has fewer invitations left than asked for
 //	invalid_invitation                    no such invitation code, or it is used up
-//	already_member                        the account already joined through an invitation
+//	already_member                        the account already joined through an invitation, or is an admin
+//	own_invitation                        the code was made by the account redeeming it
 //	not_member                            invitations can only be granted to members
 //	admin_only                            only admins can do this
 //	invalid_envelope                      the envelope's layout can't be valid

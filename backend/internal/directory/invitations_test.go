@@ -46,6 +46,13 @@ func TestInvitations(t *testing.T) {
 	if list, err := s.Invitations(ctx, admin.ID); err != nil || len(list) != 1 || list[0] != (Invitation{Code: "abcd-efgh", Uses: 2, Left: 2}) {
 		t.Fatalf("Invitations = %+v, %v", list, err)
 	}
+	// Not by the account that made it, and that uses nothing up.
+	if _, err := s.Redeem(ctx, admin.ID, "abcd-efgh"); !errors.Is(err, ErrOwnInvitation) {
+		t.Fatalf("own code: %v", err)
+	}
+	if list, _ := s.Invitations(ctx, admin.ID); list[0].Left != 2 {
+		t.Fatalf("own redeem used the code: %+v", list)
+	}
 	if level, err := s.Redeem(ctx, alice.ID, "abcd-efgh"); err != nil || level != 1 {
 		t.Fatalf("Redeem = %d, %v", level, err)
 	}
