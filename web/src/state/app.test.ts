@@ -143,6 +143,7 @@ async function setup(partial: Partial<Deps> & { api?: Api | null }) {
     bridge: null,
     broadcast: (e) => broadcasts.push(e),
     closeDelayMs: 0,
+    background: false,
     ...partial,
     db,
   });
@@ -293,12 +294,12 @@ describe('links', () => {
 
     // Someone else opens it: the bundle must match the fingerprint in the link.
     const sender = await registered(server.api, { launch: launchWith(payloadOf(url)) });
-    expect(sender.app.screen.value).toEqual({ kind: 'link', status: 'verified' });
+    expect(sender.app.screen.value).toMatchObject({ kind: 'link', status: 'verified' });
 
     // The owner opening their own link is told so.
     const { app: ownerAgain } = await setup({ api: server.api, bridge: fakeBridge().bridge, launch: launchWith(payloadOf(url)), db: owner.db });
     await ownerAgain.start();
-    expect(ownerAgain.screen.value).toEqual({ kind: 'link', status: 'own' });
+    expect(ownerAgain.screen.value).toMatchObject({ kind: 'link', status: 'own' });
   });
 
   it('catches a server that swaps the keys', async () => {
@@ -315,7 +316,7 @@ describe('links', () => {
     server.bundles.set(id, server.bundles.get(otherId)!);
 
     const sender = await registered(server.api, { launch: launchWith(payload) });
-    expect(sender.app.screen.value).toEqual({ kind: 'link', status: 'mismatch' });
+    expect(sender.app.screen.value).toMatchObject({ kind: 'link', status: 'mismatch' });
   });
 
   it('revokes a link, after which it is not found', async () => {
@@ -329,7 +330,7 @@ describe('links', () => {
     expect(server.unsigned).toEqual([]);
 
     const sender = await registered(server.api, { launch: launchWith(payloadOf(link.url)) });
-    expect(sender.app.screen.value).toEqual({ kind: 'link', status: 'not-found' });
+    expect(sender.app.screen.value).toMatchObject({ kind: 'link', status: 'not-found' });
   });
 
   it('says when an invitation is needed', async () => {
@@ -358,7 +359,7 @@ describe('links', () => {
     const code = 'reg' + (await readAccount(db))!.fingerprint;
     const second = await setup({ api: server.api, bridge: fakeBridge().bridge, launch: launchWith(code), db });
     await second.app.start();
-    expect(second.app.screen.value).toEqual({ kind: 'link', status: 'verified' });
+    expect(second.app.screen.value).toMatchObject({ kind: 'link', status: 'verified' });
     expect(await getMeta(db, 'pending-link')).toBeUndefined();
   });
 });

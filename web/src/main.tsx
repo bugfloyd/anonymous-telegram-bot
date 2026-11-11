@@ -39,6 +39,8 @@ async function main(): Promise<void> {
   const channel = openChannel((event) => {
     // Another copy changed the account (e.g. finished registering): catch up.
     if (event.type === 'account-changed') restart();
+    // Another copy sent or received messages: redraw.
+    if (event.type === 'data-changed') void app.refresh();
   });
   const app = createApp({
     config,

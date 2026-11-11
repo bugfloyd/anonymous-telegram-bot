@@ -160,7 +160,13 @@ export function createMessaging(deps: MessagingDeps) {
     if (!token) {
       // Out of tokens: fetching right before a send is a timing hint, but
       // the wallet is normally refilled well ahead (maintain()).
-      await refillTokens(db, session, issuer, undefined, Math.floor(now() / 1000));
+      try {
+        await refillTokens(db, session, issuer, undefined, Math.floor(now() / 1000));
+      } catch (err) {
+        // The day's tokens are used up.
+        if (err instanceof ApiError && err.code === 'rate_limited') throw new NoTokens();
+        throw err;
+      }
       token = await takeToken(db, Math.floor(now() / 1000));
     }
     if (!token) throw new NoTokens();
