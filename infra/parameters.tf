@@ -23,6 +23,14 @@ ephemeral "random_password" "webhook_secret" {
   special = false
 }
 
+# Seals the Telegram chat IDs notices go to; only notify can read it. A new
+# key leaves stored chat IDs unreadable: notices stop until each app sets
+# them up again, which it does when the account says they're off.
+ephemeral "random_password" "chat_key" {
+  length  = 64
+  special = false
+}
+
 locals {
   # Versions decide when a write-only value is written again. Kept separate
   # from the values because values are ephemeral and can't drive for_each.
@@ -32,6 +40,7 @@ locals {
     "session-key"        = var.secrets_version
     "telegram-id-pepper" = var.secrets_version
     "webhook-secret"     = var.secrets_version
+    "chat-key"           = var.secrets_version
     "issuer-key"         = var.issuer_key_version
   }
 
@@ -44,6 +53,7 @@ locals {
     "session-key"        = ephemeral.random_password.session_key.result
     "telegram-id-pepper" = ephemeral.random_password.telegram_id_pepper.result
     "webhook-secret"     = ephemeral.random_password.webhook_secret.result
+    "chat-key"           = ephemeral.random_password.chat_key.result
     "issuer-key"         = var.issuer_key
   }
 }

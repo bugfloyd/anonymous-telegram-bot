@@ -371,6 +371,20 @@ jobs:
           fi
           echo "Webhook, menu button and /start command are set"
 
+      - name: Smoke test – the notify function starts
+        working-directory: infra
+        run: |
+          # An empty account is the no-op the api sends for unknown mailboxes;
+          # it proves the function reads its parameters and starts.
+          function=$(terraform output -raw notify_function_name)
+          failed=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
+            --payload '{"notify":{"account":""}}' --query FunctionError --output text "$RUNNER_TEMP/notify.json")
+          if [ "$failed" != "None" ]; then
+            echo "::error::The notify function failed"
+            exit 1
+          fi
+          echo "The notify function starts"
+
       - name: Smoke test – sockets refuse unauthenticated connections
         run: |
           status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \

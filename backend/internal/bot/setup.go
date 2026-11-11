@@ -1,19 +1,17 @@
 package bot
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
+
+	"github.com/incognitochat/incognitochat/backend/internal/telegram/botapi"
 )
 
 // DefaultAPI is Telegram's Bot API.
-const DefaultAPI = "https://api.telegram.org"
+const DefaultAPI = botapi.DefaultAPI
 
 // ErrWebhookURL is returned for a webhook address that isn't a Lambda function URL.
 var ErrWebhookURL = errors.New("bot: webhook URL must be an https Lambda function URL")
@@ -59,38 +57,9 @@ func (s Setup) Run(ctx context.Context, webhookURL string) error {
 	return nil
 }
 
-// call runs one Bot API method. Errors never include the request URL, which
-// contains the token.
+// call runs one Bot API method.
 func (s Setup) call(ctx context.Context, method string, params map[string]any) error {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return err
-	}
-	api := s.API
-	if api == "" {
-		api = DefaultAPI
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, api+"/bot"+s.Token+"/"+method, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("bot: %s: bad request", method)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := s.Client
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("bot: %s: request failed", method)
-	}
-	defer resp.Body.Close()
-	var out struct {
-		OK bool `json:"ok"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&out) != nil || !out.OK {
-		return fmt.Errorf("bot: %s failed (HTTP %d)", method, resp.StatusCode)
-	}
-	return nil
+	return botapi.Client{Token: s.Token, API: s.API, HTTP: s.Client}.Call(ctx, method, params, nil)
 }
 
 func lambdaURL(raw string) bool {

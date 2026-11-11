@@ -162,15 +162,41 @@ each mailbox's owner, to deliver, but not who writes to it.
   messages go there. Clients keep a small pool of further mailboxes
   (`POST /mailboxes`) and take one when a conversation needs it, so creating
   one never happens right before a send.
-- `POST /send {mailbox, envelope, token}` needs no login, only a send token. The server checks the
-  envelope's layout and the caps, then stores the envelope once for each of the
-  owner's devices. Unknown and discarded mailboxes get the same `200 {}`, after
-  a similar pause, and nothing is stored.
+- `POST /send {mailbox, envelope, token, quiet?}` needs no login, only a send
+  token. The server checks the envelope's layout and the caps, then stores the
+  envelope once for each of the owner's devices. Unknown and discarded
+  mailboxes get the same `200 {}`, after a similar pause, and nothing is
+  stored. `quiet` sends (seen receipts) trigger no notice.
 - `GET /inbox` returns a device's undelivered envelopes in no meaningful order;
   `POST /ack {ids}` deletes the ones it has stored. Undelivered envelopes expire
   after 30 days.
 - `POST /mailboxes/{id}/discard` ends a mailbox (a block, or an ended
   conversation); a link's intro mailbox ends with the link.
+
+## Notices
+
+The bot can tell someone that a message is waiting: a generic "New message"
+with a button that opens the app, never who wrote or what. Only the `notify`
+function holds the bot token.
+
+- The app turns notices on with `POST /notices {initData}`, sending its
+  Telegram launch data. The server accepts only a plain launch or a
+  registration launch, never one whose `start_param` names a link or an
+  invitation, and only for the account's own Telegram user. It keeps the chat
+  ID sealed (AES-256-GCM under a key only `notify` has) and the notice
+  language, nothing else. The bot needs permission to write first; the app
+  asks Telegram for it. `GET /account` says whether notices are on, and the
+  app sets them up again when they're off.
+- After each delivery that isn't `quiet`, `api` asks `notify` to send the
+  owner a notice, without waiting. `notify` sends at most one every 3 minutes
+  per account, and deletes the previous one, so the chat holds one notice at
+  most. If Telegram refuses (the bot is blocked), notices turn off.
+
+What this tells the server: that an account has a Telegram chat, which it
+already knows from registration, and when the account gets messages, which
+delivery already tells it. Quiet sends tell it which deliveries are seen
+receipts, though not whose. Telegram learns when someone gets messages, in
+3-minute steps.
 
 ## Send tokens
 

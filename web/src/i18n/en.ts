@@ -79,6 +79,8 @@ export const en = {
   tabChats: 'Chats',
   tabLinks: 'Links',
   noConversations: "No conversations yet. Share your link, or open someone else's to write to them.",
+  noticesAsk: 'Get a message from the bot when someone writes to you. It never says who, or what they wrote.',
+  noticesAllow: 'Turn on notices',
   youWrote: 'You: {text}',
   unreadCount: '{count}',
   messagePlaceholder: 'Message',

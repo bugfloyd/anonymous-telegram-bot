@@ -190,6 +190,14 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
             {tr(NOTICE_TEXT[notice])}
           </p>
         )}
+        {screen.askNotices && (
+          <div class="card">
+            <p>{tr('noticesAsk')}</p>
+            <button type="button" class="button secondary" onClick={() => app.allowNotices()}>
+              {tr('noticesAllow')}
+            </button>
+          </div>
+        )}
         {screen.conversations.length === 0 ? (
           <p class="muted">{tr('noConversations')}</p>
         ) : (

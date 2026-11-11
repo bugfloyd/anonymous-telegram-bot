@@ -37,6 +37,10 @@ async function backend() {
   const inboxes = new Map<string, { id: string; mailbox: string; envelope: string }[]>();
   const bundles = new Map<string, Record<string, unknown>>();
   const state = { tokensLeft: Infinity };
+  // What the app sent to /notices and /send, to check what it tells the server.
+  const noticeSetups: string[] = [];
+  const sends: Record<string, unknown>[] = [];
+  const noticesOn = new Set<string>();
 
   const api: Api = {
     post: (path, body, check) => api.request('POST', path, { body: JSON.stringify(body) }, check),
@@ -51,7 +55,12 @@ async function backend() {
         return check(token(a));
       }
       if (path === '/session') return check(token(body.account as string));
-      if (path === '/account') return check({ canCreateLinks: true, admin: false, links: 0, maxLinks: 5 });
+      if (path === '/account') return check({ canCreateLinks: true, admin: false, links: 0, maxLinks: 5, notices: noticesOn.has(account) });
+      if (path === '/notices') {
+        noticeSetups.push(body.initData as string);
+        noticesOn.add(account);
+        return check({});
+      }
       if (path === '/invitations') {
         return check({ inviteOnly: false, member: false, admin: false, level: 0, unlimited: false, remaining: 0, maxUses: 0, codes: [] });
       }
@@ -79,6 +88,7 @@ async function backend() {
       }
       if (path === '/send') {
         if (auth) throw new Error('sends must not carry a login');
+        sends.push(body);
         const owner = owners.get(body.mailbox as string);
         if (owner) inboxes.get(owner)!.push({ id: rand(), mailbox: body.mailbox as string, envelope: body.envelope as string });
         return check({});
@@ -92,13 +102,13 @@ async function backend() {
       throw new ApiError(404, 'not_found');
     },
   };
-  return { api, issuer, state };
+  return { api, issuer, state, noticeSetups, sends };
 }
 
 const bridge = (): Bridge => ({ transport: 'webview-proxy', post: () => {}, on: () => () => {} });
 
-function launchWith(startParam: string): Launch {
-  const initData = `auth_date=1&start_param=${startParam}&user=${encodeURIComponent('{"id":1,"allows_write_to_pm":true}')}`;
+function launchWith(startParam: string, allowsWrite = true): Launch {
+  const initData = `auth_date=1&start_param=${startParam}&user=${encodeURIComponent(`{"id":1,"allows_write_to_pm":${allowsWrite}}`)}`;
   return parseLaunch('tgWebAppData=' + encodeURIComponent(initData));
 }
 
@@ -187,6 +197,62 @@ describe('conversations in the app', () => {
     const reopened = await sender.reopen(payload);
     expect(screenOf(reopened.screen.value, 'conversation').id).toBe(conv.id);
     expect(await listConversations(sender.db)).toHaveLength(1);
+  });
+
+  it('sets up notices from plain launches only, and keeps seen receipts quiet', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    // The owner's registration launch set up notices, once.
+    expect(b.noticeSetups).toHaveLength(1);
+    expect(new URLSearchParams(b.noticeSetups[0]).get('start_param')).toMatch(/^reg/);
+    await owner.home();
+    expect(b.noticeSetups).toHaveLength(1);
+
+    // Someone who arrives through a link never sends that launch's data.
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    const before = b.noticeSetups.length;
+    await sender.reopen(payload);
+    for (const initData of b.noticeSetups) expect(new URLSearchParams(initData).get('start_param') ?? '').not.toContain(payload);
+    expect(b.noticeSetups.length).toBe(before);
+
+    // Messages notify; seen receipts don't.
+    await sender.writeToLink('hello');
+    await owner.showTab('chats');
+    await owner.sync();
+    await owner.openConversation(screenOf(owner.screen.value, 'home').conversations[0]!.id);
+    // The receipt goes in the background.
+    for (let i = 0; i < 100 && b.sends.length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+    expect(b.sends.map((s) => s.quiet === true)).toEqual([false, true]);
+  });
+
+  it('asks before setting up notices when the bot may not write yet', async () => {
+    const b = await backend();
+    const db = await openDatabase(`conv-test-${n++}`);
+    const handlers: Record<string, (data: unknown) => void> = {};
+    const posted: string[] = [];
+    const tg: Bridge = {
+      transport: 'webview-proxy',
+      post: (type: string) => void posted.push(type),
+      on: (type: string, handler: (data: never) => void) => {
+        handlers[type] = handler as (data: unknown) => void;
+        return () => {};
+      },
+    } as Bridge;
+    const deps = { config, api: b.api, db, bridge: tg, broadcast: () => {}, closeDelayMs: 0, background: false, issuer: b.issuer };
+    await createApp({ ...deps, launch: launchWith('', false) }).setUp();
+    const code = 'reg' + (await readAccount(db))!.fingerprint;
+    const app = createApp({ ...deps, launch: launchWith(code, false) });
+    await app.start();
+    // Registering asks Telegram; until it's allowed, nothing is sent and home offers it.
+    expect(posted).toContain('web_app_request_write_access');
+    expect(b.noticeSetups).toHaveLength(0);
+    expect(screenOf(app.screen.value, 'home').askNotices).toBe(true);
+    handlers.write_access_requested!({ status: 'allowed' });
+    for (let i = 0; i < 20 && b.noticeSetups.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(b.noticeSetups).toHaveLength(1);
+    expect(screenOf(app.screen.value, 'home').askNotices).toBe(false);
   });
 
   it("says when the day's tokens are used up", async () => {

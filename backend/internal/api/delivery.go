@@ -43,6 +43,8 @@ type sendRequest struct {
 	Mailbox  string `json:"mailbox"`
 	Envelope string `json:"envelope"` // base64url
 	Token    string `json:"token"`    // base64url, an anonymous send token
+	// Quiet sends trigger no Telegram notice (seen receipts).
+	Quiet bool `json:"quiet"`
 }
 
 type inboxItem struct {
@@ -157,6 +159,10 @@ func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response
 		if s.Pause != nil {
 			s.Pause()
 		}
+		if !in.Quiet {
+			// The same request a delivery makes, so the answer takes as long.
+			s.notify(ctx, "")
+		}
 		return accepted()
 	}
 	if err != nil {
@@ -177,6 +183,9 @@ func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response
 	}
 	if err := s.Inbox.Deliver(ctx, mailbox.Owner, devices, in.Mailbox, env, now); err != nil {
 		return s.internal(route, err)
+	}
+	if !in.Quiet {
+		s.notify(ctx, mailbox.Owner)
 	}
 	return accepted()
 }
