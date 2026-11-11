@@ -210,6 +210,14 @@ each mailbox's owner, to deliver, but not who writes to it.
 - `GET /inbox` returns a device's undelivered envelopes in no meaningful order;
   `POST /ack {ids}` deletes the ones it has stored. Undelivered envelopes expire
   after 30 days.
+- **Push:** an open app keeps a WebSocket (`new WebSocket(url, ["v1", token])`,
+  the session token as the second subprotocol, never in a URL). After a
+  delivery the server sends the owner's open sockets `{"t":"sync"}` and nothing
+  else; the app then fetches its inbox. The Telegram notice goes out only if
+  no socket took the push. Receipts are pushed but never noticed. The app
+  sends a heartbeat about every 5 minutes and keeps the socket only while
+  it's visible. The server keeps a socket's account and connection ID until
+  it closes (at most 2 h 10 min).
 - `POST /mailboxes/{id}/discard` ends a mailbox (a block, or an ended
   conversation); a link's intro mailbox ends with the link.
 

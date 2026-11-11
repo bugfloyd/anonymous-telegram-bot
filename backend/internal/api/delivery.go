@@ -159,8 +159,9 @@ func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response
 		if s.Pause != nil {
 			s.Pause()
 		}
+		// The same requests a delivery makes, so the answer takes as long.
+		s.push(ctx, "")
 		if !in.Quiet {
-			// The same request a delivery makes, so the answer takes as long.
 			s.notify(ctx, "")
 		}
 		return accepted()
@@ -184,8 +185,15 @@ func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response
 	if err := s.Inbox.Deliver(ctx, mailbox.Owner, devices, in.Mailbox, env, now); err != nil {
 		return s.internal(route, err)
 	}
+	// Open apps fetch at once; a notice only if none is open. Receipts are
+	// pushed too (they update check marks), but never noticed.
+	pushed := s.push(ctx, mailbox.Owner)
 	if !in.Quiet {
-		s.notify(ctx, mailbox.Owner)
+		if pushed {
+			s.notify(ctx, "")
+		} else {
+			s.notify(ctx, mailbox.Owner)
+		}
 	}
 	return accepted()
 }

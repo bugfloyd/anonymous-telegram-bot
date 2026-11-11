@@ -387,13 +387,18 @@ jobs:
 
       - name: Smoke test – sockets refuse unauthenticated connections
         run: |
-          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \
-            -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
-            -H 'Sec-WebSocket-Key: c21va2UtdGVzdC1rZXktMQ==' "https://${WS_URL#wss://}")
-          if [ "$status" != "403" ]; then
-            echo "::error::Expected HTTP 403 for an unauthenticated socket, got ${status}"
-            exit 1
-          fi
+          # Without a session token, and with a forged one (the ws function
+          # must start and check it).
+          for protocols in "" "v1, v1.forged.token"; do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \
+              -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+              -H 'Sec-WebSocket-Key: c21va2UtdGVzdC1rZXktMQ==' ${protocols:+-H "Sec-WebSocket-Protocol: ${protocols}"} \
+              "https://${WS_URL#wss://}")
+            if [ "$status" != "403" ]; then
+              echo "::error::Expected HTTP 403 for a socket with protocols '${protocols}', got ${status}"
+              exit 1
+            fi
+          done
           echo "Sockets refuse unauthenticated connections (HTTP 403)"
 
       # The dev client is built, attested and deployed by the dev site's own

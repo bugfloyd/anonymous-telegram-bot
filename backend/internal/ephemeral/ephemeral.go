@@ -1,13 +1,14 @@
-// Package ephemeral keeps short-lived records in DynamoDB: used login nonces
-// and rate counters. Every item expires through the table's TTL attribute e,
+// Package ephemeral keeps short-lived records in DynamoDB: used login nonces,
+// spent tokens, quiet periods, rate counters and open sockets. Every item expires through the table's TTL attribute e,
 // and reads treat expired items as missing because TTL deletion can lag.
 //
 //	N#<nonce>  N              a used login nonce
 //	S#<nonce>  S              a spent send token's nonce
 //	Q#<key>    Q              a quiet period (e.g. after a notice)
 //	R#<key>    <window start> a rate counter (c)
+//	C#, K#                    open sockets (sockets.go)
 //
-// Neither kind holds an account or device ID.
+// Only socket records hold an account ID, while the app is open.
 package ephemeral
 
 import (
