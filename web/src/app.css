@@ -65,7 +65,15 @@ body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; 
 .tab.active { background: var(--app-bg); color: var(--app-text); }
 .dot { display: inline-block; inline-size: 0.5rem; block-size: 0.5rem; border-radius: 50%; background: var(--app-accent); margin-inline-start: 0.375rem; vertical-align: middle; }
 .chats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.chat { inline-size: 100%; display: flex; flex-direction: column; gap: 0.125rem; padding: 0.625rem 0.25rem; border: 0; border-block-end: 1px solid var(--app-surface); background: transparent; color: var(--app-text); font: inherit; text-align: start; cursor: pointer; }
+.chat-row { position: relative; overflow: hidden; }
+.chat { position: relative; inline-size: 100%; display: flex; flex-direction: column; gap: 0.125rem; padding: 0.625rem 0.25rem; border: 0; border-block-end: 1px solid var(--app-surface); background: var(--app-bg); color: var(--app-text); font: inherit; text-align: start; cursor: pointer; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform 0.2s ease; }
+.chat-row.dragging .chat { transition: none; }
+.chat-action { position: absolute; inset-block: 0; inset-inline-end: 0; inline-size: 80px; border: 0; background: var(--app-danger); color: #ffffff; font: inherit; font-weight: 600; cursor: pointer; }
+.chat-time { display: inline-flex; align-items: center; gap: 0.25rem; flex: none; }
+.chat-time .tick { color: var(--app-accent); }
+.tick { block-size: 0.75rem; inline-size: auto; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.tick.failed { stroke: var(--app-danger); }
+.head-actions { display: flex; gap: 1.25rem; }
 .chat-top, .chat-bottom { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
 .label { font-weight: 600; }
 .preview { color: var(--app-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
@@ -77,7 +85,7 @@ body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; 
 .bubble.in { align-self: flex-start; background: var(--app-surface); border-end-start-radius: 0.25rem; }
 .bubble.out { align-self: flex-end; background: var(--app-accent); color: var(--app-on-accent); border-end-end-radius: 0.25rem; }
 .bubble .text { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
-.bubble .meta { font-size: 0.75rem; opacity: 0.75; align-self: flex-end; }
+.bubble .meta { font-size: 0.75rem; opacity: 0.75; align-self: flex-end; display: inline-flex; align-items: center; gap: 0.25rem; }
 .composer { display: flex; gap: 0.5rem; align-items: flex-end; position: sticky; inset-block-end: 0; background: var(--app-bg); padding-block: 0.5rem; }
 .composer textarea { flex: 1; font: inherit; resize: none; padding: 0.5rem 0.75rem; border-radius: 0.75rem; border: 1px solid var(--app-muted); background: var(--app-bg); color: var(--app-text); unicode-bidi: plaintext; }
 .conversation-head .label { align-self: flex-start; }

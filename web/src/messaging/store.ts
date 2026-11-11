@@ -75,3 +75,11 @@ export async function listMessages(db: Database, conv: string): Promise<MessageV
     records.map(async ({ sealed, ...rest }) => ({ ...rest, ...(await openBody(db, rest.id, sealed)) })),
   );
 }
+
+/** Deletes a conversation's messages from this device. */
+export async function deleteMessages(db: Database, conv: string): Promise<void> {
+  const tx = db.transaction('messages', 'readwrite');
+  const range = IDBKeyRange.bound([conv, 0], [conv, Number.MAX_SAFE_INTEGER]);
+  for (const id of await tx.store.index('byConversation').getAllKeys(range)) await tx.store.delete(id);
+  await tx.done;
+}

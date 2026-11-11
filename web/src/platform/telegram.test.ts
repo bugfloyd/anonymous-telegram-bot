@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { connectTelegram, TELEGRAM_WEB_ORIGIN } from './telegram';
+import { connectTelegram, openPopup, TELEGRAM_WEB_ORIGIN } from './telegram';
 
 type Listener = (e: MessageEvent) => void;
 
@@ -72,5 +72,28 @@ describe('connectTelegram', () => {
     dispatch(JSON.stringify({ eventType: 'theme_changed', eventData: { theme_params: { bg_color: '#bad111' } } }), TELEGRAM_WEB_ORIGIN, {});
     dispatch('not json');
     expect(themes).toEqual([{ bg_color: '#000000' }]);
+  });
+});
+
+describe('openPopup', () => {
+  it('resolves with the pressed button, one popup at a time', async () => {
+    const { win, posted } = fakeWindow('proxy');
+    const bridge = connectTelegram(true, win as never)!;
+    const receive = (win.Telegram as { WebView: { receiveEvent(t: string, d: unknown): void } }).WebView.receiveEvent;
+    const buttons = [
+      { id: 'delete', type: 'destructive' as const, text: 'Delete' },
+      { id: 'cancel', type: 'cancel' as const },
+    ];
+    const first = openPopup(bridge, { message: 'Sure?', buttons });
+    // A second one while it's open is refused, not stacked.
+    expect(await openPopup(bridge, { message: 'Again?', buttons })).toBeNull();
+    expect(posted.map((p) => p.type)).toEqual(['web_app_open_popup']);
+    expect(JSON.parse(posted[0]!.data!)).toEqual({ message: 'Sure?', buttons });
+    receive('popup_closed', { button_id: 'delete' });
+    expect(await first).toBe('delete');
+    // Dismissed without a button.
+    const second = openPopup(bridge, { message: 'Sure?', buttons });
+    receive('popup_closed', {});
+    expect(await second).toBeNull();
   });
 });

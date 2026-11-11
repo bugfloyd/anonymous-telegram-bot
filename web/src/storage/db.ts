@@ -53,6 +53,8 @@ export interface ConversationRecord {
   tag?: string;
   /** The ID of the last message received from them. */
   lastReceived: string | null;
+  /** Deleted on this device: out of the list, with no messages, until a new one comes or goes. */
+  hidden?: boolean;
 }
 
 /** A message, as kept on the device. Only its text is sealed; times and status are local metadata. */

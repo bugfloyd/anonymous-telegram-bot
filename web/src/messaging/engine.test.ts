@@ -300,3 +300,29 @@ describe('blocks', () => {
     expect(await sender.messaging.sync()).toBe(0);
   });
 });
+
+describe('deleting a conversation', () => {
+  it('removes it from this device only, until they write again', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi');
+    await sender.messaging.sync();
+
+    await owner.messaging.remove(conv);
+    expect(await listMessages(owner.db, conv)).toEqual([]);
+    expect((await listConversations(owner.db)).map((c) => [c.id, c.hidden, c.unread])).toEqual([[conv, true, 0]]);
+    // The other side keeps theirs, and can still write: it comes back with only the new message.
+    expect((await listMessages(sender.db, conv)).map((m) => m.text)).toEqual(['hello', 'hi']);
+    await sender.messaging.send(conv, 'still there?');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['still there?']);
+    expect((await listConversations(owner.db))[0]!.hidden).toBe(false);
+    // Replying works as before.
+    await owner.messaging.send(conv, 'yes');
+    expect(await sender.messaging.sync()).toBe(1);
+  });
+});
