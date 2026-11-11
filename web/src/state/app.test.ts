@@ -16,13 +16,22 @@ type Outcome = 'ok' | ApiError | NetworkError;
 
 /**
  * A fake server: accepts registrations and logins (or fails them as told),
- * and stores link bundles exactly as clients send them, like the real one.
+ * stores link bundles exactly as clients send them, like the real one, and
+ * keeps invitations for its one account.
  */
 function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; createLink?: Outcome[] } = {}) {
   const calls: string[] = [];
   const bundles = new Map<string, { signingKey: string; keys: unknown[] }>();
   const unsigned: string[] = [];
-  let canCreateLinks = true;
+  const state = {
+    inviteOnly: false,
+    member: false,
+    admin: false,
+    codes: new Map<string, { uses: number; left: number }>(),
+    levels: new Map<number, number>(),
+    granted: [] as { link: string; invitations: number }[],
+  };
+  let nextCode = 0;
   const take = (queue: Outcome[] | undefined) => {
     const outcome = queue?.shift() ?? 'ok';
     if (outcome !== 'ok') throw outcome;
@@ -33,6 +42,9 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
       const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
       calls.push(`${method} ${path}${body.replace ? '?replace' : ''}`);
       const signed = !!init.headers?.['X-Device-Signature'] && !!init.headers?.Authorization;
+      const needsSignature = () => {
+        if (!signed) unsigned.push(`${method} ${path}`);
+      };
       if (path === '/register') {
         take(outcomes.register);
         return check({ account: 'BBBBBBBBBBBBBBBBBBBBBB', token: 'v1.p.m', expires: Math.floor(Date.now() / 1000) + 900 });
@@ -41,9 +53,49 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
         take(outcomes.session);
         return check({ account: 'BBBBBBBBBBBBBBBBBBBBBB', token: 'v1.p.m', expires: Math.floor(Date.now() / 1000) + 900 });
       }
-      if (path === '/account') return check({ canCreateLinks, admin: false, links: bundles.size, maxLinks: 5 });
+      const canCreateLinks = !state.inviteOnly || state.member || state.admin;
+      if (path === '/account') return check({ canCreateLinks, admin: state.admin, links: bundles.size, maxLinks: 5 });
+      if (method === 'GET' && path === '/invitations') {
+        const maxUses = state.admin ? 1000 : state.member ? 2 : 0;
+        return check({
+          inviteOnly: state.inviteOnly,
+          member: state.member,
+          admin: state.admin,
+          level: state.member ? 1 : 0,
+          unlimited: state.admin,
+          remaining: state.admin ? 0 : maxUses,
+          maxUses,
+          codes: [...state.codes].map(([code, c]) => ({ code, ...c })),
+        });
+      }
+      if (method === 'POST' && path === '/invitations') {
+        needsSignature();
+        const code = `aaaa-aaa${'abcdefghjk'[nextCode++]}`;
+        state.codes.set(code, { uses: body.uses as number, left: body.uses as number });
+        return check({ code });
+      }
+      if (path === '/invitations/redeem') {
+        const c = state.codes.get(body.code as string);
+        if (!c || c.left === 0) throw new ApiError(404, 'invalid_invitation');
+        if (state.member) throw new ApiError(409, 'already_member');
+        c.left--;
+        state.member = true;
+        return check({ level: 1 });
+      }
+      if (path === '/admin/levels' && method === 'GET') return check({ levels: [...state.levels].map(([level, invitations]) => ({ level, invitations })) });
+      if (path === '/admin/levels' && method === 'PUT') {
+        needsSignature();
+        state.levels.set(body.level as number, body.invitations as number);
+        return check({});
+      }
+      if (path === '/admin/grant') {
+        needsSignature();
+        if (!bundles.has(body.link as string)) throw new ApiError(404, 'not_found');
+        state.granted.push({ link: body.link as string, invitations: body.invitations as number });
+        return check({});
+      }
       if (method === 'POST' && path === '/links') {
-        if (!signed) unsigned.push(path);
+        needsSignature();
         take(outcomes.createLink);
         bundles.set(body.id as string, { signingKey: body.signingKey as string, keys: body.keys as unknown[] });
         return check({ id: body.id });
@@ -51,20 +103,14 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
       const id = path.split('/')[2]!;
       if (method === 'GET' && bundles.has(id)) return check(bundles.get(id));
       if (method === 'DELETE' && bundles.has(id)) {
-        if (!signed) unsigned.push(path);
+        needsSignature();
         bundles.delete(id);
         return check({});
       }
       throw new ApiError(404, 'not_found');
     },
   };
-  return {
-    api,
-    calls,
-    bundles,
-    unsigned,
-    closeInvitations: () => (canCreateLinks = false),
-  };
+  return { api, calls, bundles, unsigned, state };
 }
 
 function fakeBridge() {
@@ -153,7 +199,7 @@ describe('setup', () => {
     const { app: reopened, broadcasts } = await setup({ api, bridge: second.bridge, launch: launchWith('reg' + code), db });
     await reopened.start();
     expect(home(reopened.screen.value)).toMatchObject({ offline: false, links: [], account: { canCreateLinks: true } });
-    expect(calls).toEqual(['POST /register', 'GET /account']);
+    expect(calls).toEqual(['POST /register', 'GET /account', 'GET /invitations']);
     expect(broadcasts).toContainEqual({ type: 'account-changed' });
     expect(second.posted.map((p) => p.type)).toContain('web_app_request_write_access');
     expect(await readAccount(db)).toMatchObject({ state: 'registered' });
@@ -286,7 +332,7 @@ describe('links', () => {
     const owner = await registered(server.api);
     await owner.app.createLink();
     expect(home(owner.app.screen.value)).toMatchObject({ notice: 'invitation', links: [] });
-    server.closeInvitations();
+    server.state.inviteOnly = true;
     await owner.app.home();
     expect(home(owner.app.screen.value).account?.canCreateLinks).toBe(false);
   });
@@ -309,6 +355,87 @@ describe('links', () => {
     await second.app.start();
     expect(second.app.screen.value).toEqual({ kind: 'link', status: 'verified' });
     expect(await getMeta(db, 'pending-link')).toBeUndefined();
+  });
+});
+
+describe('invitations', () => {
+  it('lets an admin invite someone, who then joins through the link', async () => {
+    const server = fakeServer();
+    server.state.inviteOnly = true;
+    server.state.admin = true;
+    const admin = await registered(server.api);
+    expect(home(admin.app.screen.value).invitations).toMatchObject({ admin: true, unlimited: true });
+
+    await admin.app.invitations();
+    expect(admin.app.screen.value.kind).toBe('invitations');
+    await admin.app.createInvitation(3);
+    const screen = admin.app.screen.value;
+    if (screen.kind !== 'invitations') throw new Error(screen.kind);
+    expect(screen.notice).toBe('created');
+    expect(screen.created).toBe('aaaa-aaaa');
+    expect(screen.info.codes[0]).toMatchObject({ code: 'aaaa-aaaa', uses: 3, left: 3, url: 'https://t.me/test_bot/dev?startapp=invaaaaaaaa' });
+    expect(server.unsigned).toEqual([]);
+
+    // Someone opens the invitation link (the fake has one account, so stop being admin).
+    server.state.admin = false;
+    const invitee = await registered(server.api, { launch: launchWith('invaaaaaaaa') });
+    expect(home(invitee.app.screen.value)).toMatchObject({ notice: 'joined', account: { canCreateLinks: true } });
+    expect(server.state.codes.get('aaaa-aaaa')!.left).toBe(2);
+  });
+
+  it('joins with a typed code, and explains a bad one', async () => {
+    const server = fakeServer();
+    server.state.inviteOnly = true;
+    server.state.codes.set('abcd-efgh', { uses: 1, left: 1 });
+    const user = await registered(server.api);
+    expect(home(user.app.screen.value).invitations).toMatchObject({ member: false, inviteOnly: true });
+
+    await user.app.redeem('nope');
+    expect(home(user.app.screen.value).notice).toBe('invalid-invitation');
+    await user.app.redeem(' ABCD EFGH ');
+    expect(home(user.app.screen.value).notice).toBe('joined');
+    await user.app.redeem('abcd-efgh');
+    expect(home(user.app.screen.value).notice).toBe('invalid-invitation'); // used up
+  });
+
+  it('remembers an invitation opened before setup', async () => {
+    const server = fakeServer();
+    server.state.inviteOnly = true;
+    server.state.codes.set('abcd-efgh', { uses: 1, left: 1 });
+    const db = await openDatabase(`app-test-${n++}`);
+    const first = await setup({ api: server.api, bridge: fakeBridge().bridge, launch: launchWith('invabcdefgh'), db });
+    await first.app.start();
+    await first.app.setUp();
+    const code = 'reg' + (await readAccount(db))!.fingerprint;
+    const second = await setup({ api: server.api, bridge: fakeBridge().bridge, launch: launchWith(code), db });
+    await second.app.start();
+    expect(home(second.app.screen.value).notice).toBe('joined');
+  });
+
+  it('lets admins set allowances and grant extra invitations by link', async () => {
+    const server = fakeServer();
+    server.state.inviteOnly = true;
+    server.state.admin = true;
+    const bridge = fakeBridge();
+    const admin = await registered(server.api, { bridge: bridge.bridge });
+    await admin.app.createLink();
+    const memberLink = home(admin.app.screen.value).links[0]!;
+
+    await admin.app.admin();
+    expect(admin.app.screen.value.kind).toBe('admin');
+    expect(bridge.posted.at(-1)).toEqual({ type: 'web_app_setup_back_button', data: { is_visible: true } });
+    await admin.app.setLevel(1, 5);
+    expect(admin.app.screen.value).toMatchObject({ kind: 'admin', notice: 'saved', levels: [{ level: 1, invitations: 5 }] });
+
+    await admin.app.grant('not a link', 2);
+    expect(admin.app.screen.value).toMatchObject({ notice: 'bad-link' });
+    await admin.app.grant(memberLink.url, 2);
+    expect(admin.app.screen.value).toMatchObject({ notice: 'granted' });
+    expect(server.state.granted).toEqual([{ link: memberLink.id, invitations: 2 }]);
+    expect(server.unsigned).toEqual([]);
+
+    await admin.app.home();
+    expect(bridge.posted.at(-1)).toEqual({ type: 'web_app_setup_back_button', data: { is_visible: false } });
   });
 });
 

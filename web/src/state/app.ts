@@ -15,9 +15,21 @@ import {
   SetupMismatch,
   takePendingLink,
 } from '../account/account';
+import {
+  checkCreated,
+  checkInvitations,
+  checkLevels,
+  checkRedeemed,
+  invitationUrl,
+  normalizeCode,
+  parseInvitationPayload,
+  type InvitationCode,
+  type InvitationsInfo,
+  type LevelAllowance,
+} from '../account/invitations';
 import { checkAccountInfo, createLink, listLinks, revokeLink, type AccountInfo, type LinkRecord } from '../account/links';
 import type { Config } from '../config';
-import { ApiError, NetworkError, type Api } from '../net/api';
+import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
@@ -28,7 +40,26 @@ import type { SyncEvent } from '../sync/locks';
 export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 'generic';
 
 /** A short message on the home screen after an action. */
-export type HomeNotice = 'created' | 'revoked' | 'limit' | 'invitation' | 'network' | 'generic';
+export type HomeNotice =
+  | 'created'
+  | 'revoked'
+  | 'limit'
+  | 'invitation'
+  | 'joined'
+  | 'invalid-invitation'
+  | 'already-member'
+  | 'rate-limited'
+  | 'network'
+  | 'generic';
+
+export type InvitationsNotice = 'created' | 'none-left' | 'network' | 'generic';
+
+export type AdminNotice = 'saved' | 'granted' | 'not-member' | 'not-found' | 'bad-link' | 'network' | 'generic';
+
+/** An invitation code with its shareable URL. */
+export interface InvitationView extends InvitationCode {
+  url: string;
+}
 
 /** What opening someone's link found. */
 export type LinkStatus = 'checking' | 'verified' | 'own' | 'not-found' | 'mismatch' | 'network';
@@ -41,7 +72,24 @@ export type Screen =
   | { kind: 'reopening' }
   | { kind: 'registering' }
   | { kind: 'confirm-replace'; busy: boolean }
-  | { kind: 'home'; offline: boolean; account: AccountInfo | null; links: LinkView[]; busy: boolean; notice: HomeNotice | null }
+  | {
+      kind: 'home';
+      offline: boolean;
+      account: AccountInfo | null;
+      invitations: InvitationsInfo | null;
+      links: LinkView[];
+      busy: boolean;
+      notice: HomeNotice | null;
+    }
+  | {
+      kind: 'invitations';
+      info: Omit<InvitationsInfo, 'codes'> & { codes: InvitationView[] };
+      busy: boolean;
+      notice: InvitationsNotice | null;
+      /** The code just created, to highlight. */
+      created: string | null;
+    }
+  | { kind: 'admin'; levels: LevelAllowance[]; busy: boolean; notice: AdminNotice | null }
   | { kind: 'link'; status: LinkStatus }
   | { kind: 'replaced' }
   | { kind: 'error'; error: ErrorKind };
@@ -69,8 +117,12 @@ const CLOSE_DELAY_MS = 400;
 export function createApp(deps: Deps) {
   const screen = signal<Screen>({ kind: 'loading' });
   const session: Session | null = deps.api ? createSession(deps.db, deps.api) : null;
-  // The link this launch was opened with is shown once, not on every restart.
-  let launchLink: LinkRef | null = parsePayload(deps.launch.startParam);
+  // What this launch was opened with (a link or an invitation) is handled
+  // once, not on every restart.
+  let launchParam: string | null = isRegistrationLaunch(deps.launch.startParam) ? null : deps.launch.startParam || null;
+  deps.bridge?.on('back_button_pressed', () => void showHome());
+
+  const backButton = (visible: boolean) => deps.bridge?.post('web_app_setup_back_button', { is_visible: visible });
   // What "try again" does from the error screen.
   let retry: () => Promise<void> = () => start();
 
@@ -120,9 +172,17 @@ export function createApp(deps: Deps) {
       // Offline or the server is down: the device still works on what it has.
       offline = true;
     }
-    const ref = launchLink ?? parsePayload((await takePendingLink(deps.db)) ?? '');
-    launchLink = null;
+    return continueLaunch(offline);
+  }
+
+  /** After logging in or registering: go where the launch (or a launch before setup) pointed. */
+  async function continueLaunch(offline: boolean): Promise<void> {
+    const param = launchParam ?? (await takePendingLink(deps.db)) ?? '';
+    launchParam = null;
+    const ref = parsePayload(param);
     if (ref) return openLink(ref);
+    const code = parseInvitationPayload(param);
+    if (code && !offline) return redeem(code);
     return showHome({ offline });
   }
 
@@ -138,16 +198,111 @@ export function createApp(deps: Deps) {
     const { config, db } = deps;
     let offline = options.offline ?? false;
     let account: AccountInfo | null = null;
+    let invitations: InvitationsInfo | null = null;
     if (!offline) {
       try {
-        account = await session!.call('GET', '/account', undefined, checkAccountInfo);
+        [account, invitations] = await Promise.all([
+          session!.call('GET', '/account', undefined, checkAccountInfo),
+          session!.call('GET', '/invitations', undefined, checkInvitations),
+        ]);
       } catch (err) {
         if (handleGone(err)) return;
         offline = true;
       }
     }
     const links = (await listLinks(db)).map((l) => ({ ...l, url: linkUrl(config!.botUsername, config!.appName, l) }));
-    screen.value = { kind: 'home', offline, account, links, busy: false, notice: options.notice ?? null };
+    backButton(false);
+    screen.value = { kind: 'home', offline, account, invitations, links, busy: false, notice: options.notice ?? null };
+  }
+
+  /** Joins with an invitation code (typed, pasted, or from an invitation link). */
+  async function redeem(input: string): Promise<void> {
+    const code = normalizeCode(input);
+    if (!code) return showHome({ notice: 'invalid-invitation' });
+    const current = screen.value;
+    if (current.kind === 'home') screen.value = { ...current, busy: true, notice: null };
+    let notice: HomeNotice = 'joined';
+    try {
+      await session!.call('POST', '/invitations/redeem', { code }, checkRedeemed);
+    } catch (err) {
+      if (handleGone(err)) return;
+      if (err instanceof ApiError && err.code === 'invalid_invitation') notice = 'invalid-invitation';
+      else if (err instanceof ApiError && err.code === 'already_member') notice = 'already-member';
+      else if (err instanceof ApiError && err.code === 'rate_limited') notice = 'rate-limited';
+      else if (err instanceof NetworkError) notice = 'network';
+      else notice = 'generic';
+    }
+    return showHome({ notice });
+  }
+
+  async function openInvitations(notice: InvitationsNotice | null = null, created: string | null = null): Promise<void> {
+    const { config } = deps;
+    let info: InvitationsInfo;
+    try {
+      info = await session!.call('GET', '/invitations', undefined, checkInvitations);
+    } catch (err) {
+      if (handleGone(err)) return;
+      return showHome({ notice: err instanceof NetworkError ? 'network' : 'generic' });
+    }
+    const codes = info.codes.map((c) => ({ ...c, url: invitationUrl(config!.botUsername, config!.appName, c.code) }));
+    backButton(true);
+    screen.value = { kind: 'invitations', info: { ...info, codes }, busy: false, notice, created };
+  }
+
+  async function createInvitation(uses: number): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'invitations' || current.busy) return;
+    screen.value = { ...current, busy: true, notice: null };
+    try {
+      const code = await session!.call('POST', '/invitations', { uses }, checkCreated, { sign: true });
+      return openInvitations('created', code);
+    } catch (err) {
+      if (handleGone(err)) return;
+      const notice: InvitationsNotice =
+        err instanceof ApiError && err.code === 'no_invitations_left' ? 'none-left' : err instanceof NetworkError ? 'network' : 'generic';
+      return openInvitations(notice);
+    }
+  }
+
+  async function openAdmin(notice: AdminNotice | null = null): Promise<void> {
+    let levels: LevelAllowance[];
+    try {
+      levels = await session!.call('GET', '/admin/levels', undefined, checkLevels);
+    } catch (err) {
+      if (handleGone(err)) return;
+      return showHome({ notice: err instanceof NetworkError ? 'network' : 'generic' });
+    }
+    backButton(true);
+    screen.value = { kind: 'admin', levels, busy: false, notice };
+  }
+
+  /** Runs an admin change, then shows the admin screen again with its outcome. */
+  async function adminAction(action: () => Promise<unknown>, done: AdminNotice): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'admin' || current.busy) return;
+    screen.value = { ...current, busy: true, notice: null };
+    let notice: AdminNotice = done;
+    try {
+      await action();
+    } catch (err) {
+      if (handleGone(err)) return;
+      if (err instanceof ApiError && err.code === 'not_member') notice = 'not-member';
+      else if (err instanceof ApiError && err.code === 'not_found') notice = 'not-found';
+      else if (err instanceof NetworkError) notice = 'network';
+      else notice = 'generic';
+    }
+    return openAdmin(notice);
+  }
+
+  /** Grants a member extra invitations, naming them by one of their links. */
+  function grant(linkText: string, invitations: number): Promise<void> {
+    const ref = parsePayload(startParamOf(linkText));
+    if (!ref) {
+      const current = screen.value;
+      if (current.kind === 'admin') screen.value = { ...current, notice: 'bad-link' };
+      return Promise.resolve();
+    }
+    return adminAction(() => session!.call('POST', '/admin/grant', { link: ref.id, invitations }, checkObject, { sign: true }), 'granted');
   }
 
   /** Runs a link action from the home screen, then shows home again with its outcome. */
@@ -216,11 +371,9 @@ export function createApp(deps: Deps) {
     }
     deps.broadcast({ type: 'account-changed' });
     if (!deps.launch.allowsWriteToPm) deps.bridge?.post('web_app_request_write_access');
-    // A link opened before setup: continue there.
-    launchLink = null;
-    const ref = parsePayload((await takePendingLink(deps.db)) ?? '');
-    if (ref) return openLink(ref);
-    return showHome();
+    // A link or invitation opened before setup: continue there.
+    launchParam = null;
+    return continueLaunch(false);
   }
 
   return {
@@ -238,10 +391,27 @@ export function createApp(deps: Deps) {
     revokeLink: (id: string) => linkAction(() => revokeLink(deps.db, session!, id), 'revoked'),
     /** Opens Telegram's share sheet for a link. */
     share: (url: string) => deps.bridge?.post('web_app_open_tg_link', { path_full: `/share/url?url=${encodeURIComponent(url)}` }),
+    redeem,
+    invitations: () => openInvitations(),
+    createInvitation,
+    admin: () => openAdmin(),
+    setLevel: (level: number, invitations: number) =>
+      adminAction(() => session!.call('PUT', '/admin/levels', { level, invitations }, checkObject, { sign: true }), 'saved'),
+    grant,
   };
 }
 
 export type App = ReturnType<typeof createApp>;
+
+/** The start parameter in a pasted t.me link, or the text itself. */
+function startParamOf(text: string): string {
+  const trimmed = text.trim();
+  try {
+    return new URL(trimmed).searchParams.get('startapp') ?? '';
+  } catch {
+    return trimmed;
+  }
+}
 
 /** Whether the typed confirmation matches the phrase, ignoring case and spacing. */
 export function confirmationMatches(typed: string, phrase: string): boolean {
