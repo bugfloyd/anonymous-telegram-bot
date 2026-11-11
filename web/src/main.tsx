@@ -1,9 +1,14 @@
 import { render } from 'preact';
 import { App } from './app';
+import { config } from './config';
 import { applyLanguage, pickLanguage } from './i18n';
+import { createApi } from './net/api';
 import { isTelegramLaunch, parseLaunch } from './platform/launch';
 import { connectTelegram } from './platform/telegram';
 import { applyTheme } from './platform/theme';
+import { createApp } from './state/app';
+import { openDatabase, requestPersistence } from './storage/db';
+import { openChannel } from './sync/locks';
 import './app.css';
 
 // Launch data is read once: a reload can lose the URL fragment.
@@ -20,5 +25,28 @@ if (telegram) {
   telegram.post('web_app_request_theme');
 }
 
-const root = document.getElementById('app');
-if (root) render(<App launch={launch} language={language} />, root);
+async function main(): Promise<void> {
+  const root = document.getElementById('app');
+  if (!root) return;
+  const db = await openDatabase();
+  void requestPersistence();
+
+  let restart = (): void => {};
+  const channel = openChannel((event) => {
+    // Another copy changed the account (e.g. finished registering): catch up.
+    if (event.type === 'account-changed') restart();
+  });
+  const app = createApp({
+    config,
+    api: config ? createApi(config.apiUrl) : null,
+    db,
+    launch,
+    bridge: telegram,
+    broadcast: (event) => channel?.send(event),
+  });
+  restart = () => void app.start();
+  render(<App app={app} language={language} />, root);
+  await app.start();
+}
+
+void main();

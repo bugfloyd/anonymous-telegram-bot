@@ -197,9 +197,15 @@ jobs:
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           AWS_REGION: ${{ vars.AWS_REGION }}
           CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS }}
+          BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          PAGES_REPO: ${{ vars.PAGES_REPO }}
+          PAGES_URL: ${{ vars.PAGES_URL }}
+          PAGES_DEPLOY_KEY: ${{ secrets.DEV_PAGES_DEPLOY_KEY }}
         run: |
           missing=0
-          for name in BOT_TOKEN AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS; do
+          for name in BOT_TOKEN AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS \
+            BOT_USERNAME APP_NAME PAGES_REPO PAGES_URL PAGES_DEPLOY_KEY; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is not set in the dev environment"
               missing=1
@@ -336,3 +342,68 @@ jobs:
             exit 1
           fi
           echo "Sockets refuse unauthenticated connections (HTTP 403)"
+
+      # The dev client: built with this environment's API and bot, then pushed
+      # to the dev Pages repository (its own GitHub org, so it never shares an
+      # origin, and with it stored keys, with production). The deploy key can
+      # write to that one repository only.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the dev client
+        working-directory: web
+        env:
+          VITE_API_URL: ${{ env.API_URL }}
+          VITE_BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          VITE_APP_NAME: ${{ vars.APP_NAME }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Publish the dev client
+        env:
+          PAGES_REPO: ${{ vars.PAGES_REPO }}
+          PAGES_DEPLOY_KEY: ${{ secrets.DEV_PAGES_DEPLOY_KEY }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/pages_key"
+          printf '%s\n' "$PAGES_DEPLOY_KEY" > "$key"
+          # GitHub's published host key (https://api.github.com/meta).
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          trap 'rm -f "$key"' EXIT
+
+          site="$RUNNER_TEMP/site"
+          git clone -q --depth 1 "git@github.com:${PAGES_REPO}.git" "$site"
+          # Replace everything but the repository's own README and .nojekyll.
+          find "$site" -mindepth 1 -maxdepth 1 ! -name .git ! -name README.md ! -name .nojekyll -exec rm -rf {} +
+          cp -R web/dist/. "$site/"
+          cd "$site"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The dev client is unchanged"
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "Deploy ${GITHUB_SHA}"
+          git push -q origin HEAD:main
+          echo "Published the dev client built from ${GITHUB_SHA}"
+
+      - name: Wait for the dev client to go live
+        env:
+          PAGES_URL: ${{ vars.PAGES_URL }}
+        run: |
+          want=$(sha256sum web/dist/index.html | cut -d' ' -f1)
+          for _ in $(seq 1 36); do
+            got=$(curl -sS --max-time 10 "${PAGES_URL%/}/?v=${GITHUB_SHA}" | sha256sum | cut -d' ' -f1)
+            if [ "$got" = "$want" ]; then
+              echo "The dev client is live"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The dev site didn't serve the new build within 6 minutes"
+          exit 1

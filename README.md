@@ -67,6 +67,25 @@ gh secret set BOT_TOKEN --env dev
 gh variable set CLIENT_ORIGINS --env dev --body '["https://<client-origin>"]'
 ```
 
+The dev client is published to its own GitHub Pages site, in a separate
+GitHub organization: sites of one owner share an origin, and with it the keys
+stored in the browser, so dev must never share production's. It needs the
+bot's username and the Mini App's short name (BotFather `/newapp`, pointing at
+the dev site), and a deploy key with write access to the dev site's
+repository:
+
+```shell
+gh variable set BOT_USERNAME --env dev --body <bot username>
+gh variable set APP_NAME --env dev --body <mini app short name>
+gh variable set PAGES_REPO --env dev --body <org>/<org>.github.io
+gh variable set PAGES_URL --env dev --body https://<org>.github.io/
+gh secret set DEV_PAGES_DEPLOY_KEY --env dev < <private key>
+```
+
+The client takes these at build time (`VITE_API_URL`, `VITE_BOT_USERNAME`,
+`VITE_APP_NAME`); the API's origin is added to the page's Content Security
+Policy. A build without them works but can't reach a backend.
+
 Secrets (the bot token, the session key, the Telegram ID pepper, the webhook
 secret) are written to SSM through Terraform write-only arguments, so they
 never land in Terraform state or plans. Each function's role can read only the

@@ -30,7 +30,15 @@ describe('parseLaunch', () => {
 
   it('handles a page opened outside Telegram', () => {
     const launch = parseLaunch('');
-    expect(launch).toEqual({ initData: '', version: '', platform: '', startParam: '', themeParams: {}, userLanguage: '' });
+    expect(launch).toEqual({
+      initData: '',
+      version: '',
+      platform: '',
+      startParam: '',
+      themeParams: {},
+      userLanguage: '',
+      allowsWriteToPm: false,
+    });
     expect(isTelegramLaunch(launch)).toBe(false);
   });
 
@@ -40,6 +48,13 @@ describe('parseLaunch', () => {
     expect(user('{"id":1,"language_code":"<script>"}')).toBe('');
     expect(user('{"id":1}')).toBe('');
     expect(user('not json')).toBe('');
+  });
+
+  it('reads whether the bot may already message the user', () => {
+    const allows = (u: string) => parseLaunch('tgWebAppData=' + encodeURIComponent('user=' + encodeURIComponent(u))).allowsWriteToPm;
+    expect(allows('{"id":1,"allows_write_to_pm":true}')).toBe(true);
+    expect(allows('{"id":1,"allows_write_to_pm":"true"}')).toBe(false);
+    expect(allows('{"id":1}')).toBe(false);
   });
 
   it('drops malformed or non-colour theme values', () => {

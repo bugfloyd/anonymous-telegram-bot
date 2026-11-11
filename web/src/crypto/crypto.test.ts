@@ -62,6 +62,16 @@ describe('keys', () => {
     expect(await fingerprint(a.publicKey)).toBe(fa);
     expect(await fingerprint(b.publicKey)).not.toBe(fa);
   });
+
+  it('fingerprints exactly like the backend', async () => {
+    // backend/internal/devicesig: TestFingerprintMatchesClient.
+    const key = await importSigningPublicKey(
+      fromHex(
+        '043e4cd596e64fe0d4dac5cce1479f58b981e24664c49c89e823be92673cd970d130b3038618a2156d3db3edccde5a6f271cb346dd868dc771d0ba2812a1197cb1',
+      ),
+    );
+    expect(await fingerprint(key)).toBe('IVVfe8yQuoQPEcsZWUQBwjazebJkrBLkm1Q7ec-It2M');
+  });
 });
 
 describe('vault', () => {
