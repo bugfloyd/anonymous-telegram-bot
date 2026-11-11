@@ -14,6 +14,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"math/big"
@@ -21,9 +22,15 @@ import (
 
 // Labels for each kind of signed message.
 const (
-	LabelSession  = "incognitochat/v2/session"
-	LabelRegister = "incognitochat/v2/register"
+	LabelSession     = "incognitochat/v2/session"
+	LabelRegister    = "incognitochat/v2/register"
+	LabelDeviceList  = "incognitochat/v2/device-list"
+	LabelFingerprint = "incognitochat/v2/fingerprint"
 )
+
+// Suite is the algorithm suite (P-256, HKDF-SHA256, AES-256-GCM). It's part
+// of every fingerprint, so a later suite can never produce the same one.
+const Suite = 0x01
 
 const (
 	publicKeyLen = 65
@@ -35,6 +42,8 @@ var (
 	ErrPublicKey = errors.New("devicesig: invalid public key")
 	// ErrSignature is returned when a signature doesn't verify.
 	ErrSignature = errors.New("devicesig: invalid signature")
+	// ErrMessage is returned by Parse for bytes Message can't have produced.
+	ErrMessage = errors.New("devicesig: malformed message")
 )
 
 // ParsePublicKey parses a 65-byte uncompressed P-256 point, as WebCrypto
@@ -67,12 +76,55 @@ func Message(label string, parts ...[]byte) []byte {
 	return out
 }
 
+// Parse splits an encoded message back into its label and parts. Only the
+// exact encoding is accepted: no lengths past the end, nothing after the
+// last part.
+func Parse(msg []byte) (string, [][]byte, error) {
+	if len(msg) < 2 {
+		return "", nil, ErrMessage
+	}
+	n := int(binary.BigEndian.Uint16(msg))
+	msg = msg[2:]
+	if len(msg) < n {
+		return "", nil, ErrMessage
+	}
+	label := string(msg[:n])
+	msg = msg[n:]
+	var parts [][]byte
+	for len(msg) > 0 {
+		if len(msg) < 4 {
+			return "", nil, ErrMessage
+		}
+		size := binary.BigEndian.Uint32(msg)
+		msg = msg[4:]
+		if uint64(len(msg)) < uint64(size) {
+			return "", nil, ErrMessage
+		}
+		parts = append(parts, msg[:size:size])
+		msg = msg[size:]
+	}
+	return label, parts, nil
+}
+
+// Fingerprint is a public key's fingerprint, as the client computes it: the
+// SHA-256 of Message(LabelFingerprint, [Suite], raw), as 43 base64url
+// characters. raw is the 65-byte point.
+func Fingerprint(raw []byte) string {
+	digest := sha256.Sum256(Message(LabelFingerprint, []byte{Suite}, raw))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
 // Verify checks a P1363 signature over Message(label, parts...).
 func Verify(pub *ecdsa.PublicKey, signature []byte, label string, parts ...[]byte) error {
+	return VerifyEncoded(pub, signature, Message(label, parts...))
+}
+
+// VerifyEncoded checks a P1363 signature over an already encoded message.
+func VerifyEncoded(pub *ecdsa.PublicKey, signature, msg []byte) error {
 	if pub == nil || len(signature) != signatureLen {
 		return ErrSignature
 	}
-	digest := sha256.Sum256(Message(label, parts...))
+	digest := sha256.Sum256(msg)
 	r := new(big.Int).SetBytes(signature[:32])
 	s := new(big.Int).SetBytes(signature[32:])
 	if !ecdsa.Verify(pub, digest[:], r, s) {

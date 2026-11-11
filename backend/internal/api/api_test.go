@@ -1,0 +1,548 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/incognitochat/incognitochat/backend/internal/devicelist"
+	"github.com/incognitochat/incognitochat/backend/internal/devicesig"
+	"github.com/incognitochat/incognitochat/backend/internal/directory"
+	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
+	"github.com/incognitochat/incognitochat/backend/internal/ids"
+	"github.com/incognitochat/incognitochat/backend/internal/logx"
+	"github.com/incognitochat/incognitochat/backend/internal/session"
+	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata/initdatatest"
+)
+
+const (
+	botID  = 123456
+	userID = 7357135791
+)
+
+var start = time.Unix(1_800_000_000, 0)
+
+// ---- in-memory stores ----
+
+type memAccount struct {
+	key      []byte
+	replaced bool
+	devices  map[string][]byte
+}
+
+type memDirectory struct {
+	mu       sync.Mutex
+	telegram map[string]string
+	accounts map[string]*memAccount
+	fail     error
+}
+
+func newMemDirectory() *memDirectory {
+	return &memDirectory{telegram: map[string]string{}, accounts: map[string]*memAccount{}}
+}
+
+func (m *memDirectory) ByTelegram(_ context.Context, th string) (directory.Account, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail != nil {
+		return directory.Account{}, m.fail
+	}
+	id, ok := m.telegram[th]
+	if !ok {
+		return directory.Account{}, directory.ErrNotFound
+	}
+	a := m.accounts[id]
+	devices := map[string][]byte{}
+	for k, v := range a.devices {
+		devices[k] = v
+	}
+	return directory.Account{ID: id, Key: a.key, Devices: devices}, nil
+}
+
+func (m *memDirectory) put(n directory.NewAccount) {
+	m.telegram[n.TelegramHash] = n.ID
+	m.accounts[n.ID] = &memAccount{key: n.AccountKey, devices: map[string][]byte{n.DeviceID: n.DeviceKey}}
+}
+
+func (m *memDirectory) Create(_ context.Context, n directory.NewAccount) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.telegram[n.TelegramHash]; ok {
+		return directory.ErrConflict
+	}
+	m.put(n)
+	return nil
+}
+
+func (m *memDirectory) Replace(_ context.Context, old directory.Account, n directory.NewAccount, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.telegram[n.TelegramHash] != old.ID {
+		return directory.ErrConflict
+	}
+	m.accounts[old.ID].replaced = true
+	m.put(n)
+	return nil
+}
+
+func (m *memDirectory) Device(_ context.Context, account, device string, _ time.Time) (directory.Device, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[account]
+	if !ok || a.devices[device] == nil {
+		return directory.Device{}, directory.ErrNotFound
+	}
+	return directory.Device{Key: a.devices[device], Replaced: a.replaced}, nil
+}
+
+type memLimiter struct {
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func (l *memLimiter) Allow(_ context.Context, key string, limit int, _ time.Duration) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.counts[key] >= limit {
+		return false, nil
+	}
+	l.counts[key]++
+	return true, nil
+}
+
+// ---- test server and client ----
+
+type harness struct {
+	server *Server
+	router *httpapi.Router
+	dir    *memDirectory
+	logs   *bytes.Buffer
+	now    time.Time
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	issuer, err := session.NewIssuer(map[byte][]byte{1: bytes.Repeat([]byte("k"), 32)}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &harness{dir: newMemDirectory(), logs: &bytes.Buffer{}, now: start}
+	h.server = &Server{
+		Telegram:  initdatatest.Verifier(botID),
+		Sessions:  issuer,
+		Directory: h.dir,
+		Nonces:    session.NewMemoryNonces(func() time.Time { return h.now }),
+		Limits:    &memLimiter{counts: map[string]int{}},
+		Pepper:    []byte("pepper-pepper-pepper-pepper-pepper"),
+		Log:       logx.New(h.logs, "api"),
+		Now:       func() time.Time { return h.now },
+	}
+	h.router = httpapi.NewRouter()
+	h.server.Routes(h.router)
+	return h
+}
+
+func (h *harness) post(t *testing.T, path string, body any) (int, map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req httpapi.Request
+	req.RawPath = path
+	req.RequestContext.HTTP.Method = http.MethodPost
+	req.Headers = map[string]string{"content-type": "application/json"}
+	req.Body = string(raw)
+	resp, err := h.router.Serve(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(resp.Body), &out); err != nil {
+		t.Fatalf("response body %q: %v", resp.Body, err)
+	}
+	return resp.StatusCode, out
+}
+
+// device is a client install: its keys, as the web client creates them.
+type device struct {
+	ak, dsk *ecdsa.PrivateKey
+	id      string
+	account string
+}
+
+func randomBytes(t *testing.T, n int) []byte {
+	t.Helper()
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func newDevice(t *testing.T) *device {
+	t.Helper()
+	ak, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	dsk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	return &device{ak: ak, dsk: dsk, id: ids.New()}
+}
+
+func raw(t *testing.T, k *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	b, err := k.PublicKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func signP1363(t *testing.T, k *ecdsa.PrivateKey, msg []byte) []byte {
+	t.Helper()
+	digest := sha256.Sum256(msg)
+	r, s, err := ecdsa.Sign(rand.Reader, k, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig := make([]byte, 64)
+	r.FillBytes(sig[:32])
+	s.FillBytes(sig[32:])
+	return sig
+}
+
+func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+func launch(t *testing.T, user int64, startParam string, authDate time.Time) string {
+	t.Helper()
+	fields := map[string]string{
+		"auth_date":     strconv.FormatInt(authDate.Unix(), 10),
+		"chat_instance": "-1",
+		"chat_type":     "sender",
+		"user":          `{"id":` + strconv.FormatInt(user, 10) + `,"first_name":"A","allows_write_to_pm":true}`,
+	}
+	if startParam != "" {
+		fields["start_param"] = startParam
+	}
+	return initdatatest.Sign(botID, fields)
+}
+
+func (d *device) firstList(t *testing.T, issued time.Time) devicelist.List {
+	issued = issued.Truncate(time.Hour)
+	return devicelist.List{
+		Seq:     1,
+		Issued:  issued,
+		Expires: issued.Add(devicelist.MaxValidity),
+		Entries: []devicelist.Entry{{DeviceID: d.id, Key: raw(t, d.dsk), Added: issued}},
+	}
+}
+
+// registration builds a /register body; change can alter it before signing.
+func (d *device) registration(t *testing.T, now time.Time, change func(r map[string]any, list *devicelist.List, initData *string)) map[string]any {
+	t.Helper()
+	initData := launch(t, userID, RegistrationPrefix+devicesig.Fingerprint(raw(t, d.ak)), now.Add(-30*time.Second))
+	list := d.firstList(t, now)
+	body := map[string]any{}
+	if change != nil {
+		change(body, &list, &initData)
+	}
+	listBytes := devicelist.Encode(list)
+	parts := RegisterParts(initData, raw(t, d.ak), d.id, raw(t, d.dsk))
+	msg := devicesig.Message(devicesig.LabelRegister, parts...)
+	defaults := map[string]any{
+		"initData":      initData,
+		"accountKey":    b64(raw(t, d.ak)),
+		"device":        d.id,
+		"deviceKey":     b64(raw(t, d.dsk)),
+		"deviceList":    b64(listBytes),
+		"deviceListSig": b64(signP1363(t, d.ak, listBytes)),
+		"accountSig":    b64(signP1363(t, d.ak, msg)),
+		"deviceSig":     b64(signP1363(t, d.dsk, msg)),
+	}
+	for k, v := range defaults {
+		if _, set := body[k]; !set {
+			body[k] = v
+		}
+	}
+	return body
+}
+
+func (d *device) login(t *testing.T, now time.Time) map[string]any {
+	t.Helper()
+	login := session.Login{
+		AccountID: d.account,
+		DeviceID:  d.id,
+		Timestamp: now.Unix(),
+		Nonce:     b64(randomBytes(t, 16)),
+	}
+	sig := signP1363(t, d.dsk, devicesig.Message(devicesig.LabelSession, session.LoginParts(login)...))
+	return map[string]any{
+		"account":   login.AccountID,
+		"device":    login.DeviceID,
+		"timestamp": login.Timestamp,
+		"nonce":     login.Nonce,
+		"signature": b64(sig),
+	}
+}
+
+func (h *harness) register(t *testing.T, d *device, replace bool) (int, map[string]any) {
+	t.Helper()
+	body := d.registration(t, h.now, nil)
+	if replace {
+		body["replace"] = true
+	}
+	status, out := h.post(t, "/register", body)
+	if status == http.StatusOK {
+		d.account = out["account"].(string)
+	}
+	return status, out
+}
+
+func wantError(t *testing.T, status int, out map[string]any, wantStatus int, code string) {
+	t.Helper()
+	if status != wantStatus || out["error"] != code {
+		t.Fatalf("got %d %v, want %d %s", status, out, wantStatus, code)
+	}
+}
+
+// ---- tests ----
+
+func TestRegisterAndLogIn(t *testing.T) {
+	h := newHarness(t)
+	d := newDevice(t)
+
+	status, out := h.register(t, d, false)
+	if status != http.StatusOK {
+		t.Fatalf("register: %d %v", status, out)
+	}
+	claims, err := h.server.Sessions.Verify(out["token"].(string), h.now)
+	if err != nil || claims.AccountID != d.account || claims.DeviceID != d.id {
+		t.Fatalf("token: %+v, %v", claims, err)
+	}
+	if int64(out["expires"].(float64)) != claims.Expires.Unix() {
+		t.Fatalf("expires = %v, token says %v", out["expires"], claims.Expires.Unix())
+	}
+
+	// The directory holds a keyed hash, never the Telegram user ID.
+	for th := range h.dir.telegram {
+		if strings.Contains(th, strconv.Itoa(userID)) || th != directory.TelegramHash(h.server.Pepper, userID) {
+			t.Fatalf("telegram hash %q", th)
+		}
+	}
+
+	status, out = h.post(t, "/session", d.login(t, h.now))
+	if status != http.StatusOK || out["account"] != d.account {
+		t.Fatalf("login: %d %v", status, out)
+	}
+}
+
+func TestRegisterRetryIsIdempotent(t *testing.T) {
+	h := newHarness(t)
+	d := newDevice(t)
+	body := d.registration(t, h.now, nil)
+	status, first := h.post(t, "/register", body)
+	if status != http.StatusOK {
+		t.Fatalf("first: %d %v", status, first)
+	}
+	status, again := h.post(t, "/register", body)
+	if status != http.StatusOK || again["account"] != first["account"] {
+		t.Fatalf("retry: %d %v, first account %v", status, again, first["account"])
+	}
+	if len(h.dir.accounts) != 1 {
+		t.Fatalf("%d accounts", len(h.dir.accounts))
+	}
+}
+
+func TestReplaceAccount(t *testing.T) {
+	h := newHarness(t)
+	old := newDevice(t)
+	if status, out := h.register(t, old, false); status != http.StatusOK {
+		t.Fatalf("register: %d %v", status, out)
+	}
+
+	// Setting up again with new keys needs an explicit replace.
+	fresh := newDevice(t)
+	status, out := h.register(t, fresh, false)
+	wantError(t, status, out, http.StatusConflict, "account_exists")
+
+	if status, out := h.register(t, fresh, true); status != http.StatusOK || fresh.account == old.account {
+		t.Fatalf("replace: %d %v", status, out)
+	}
+
+	// The old device is told, loudly, once its signature checks out.
+	status, out = h.post(t, "/session", old.login(t, h.now))
+	wantError(t, status, out, http.StatusGone, "account_replaced")
+
+	// Without a valid signature it learns nothing.
+	forged := old.login(t, h.now)
+	forged["signature"] = b64(make([]byte, 64))
+	status, out = h.post(t, "/session", forged)
+	wantError(t, status, out, http.StatusUnauthorized, "login_refused")
+
+	if status, out := h.post(t, "/session", fresh.login(t, h.now)); status != http.StatusOK {
+		t.Fatalf("new device login: %d %v", status, out)
+	}
+}
+
+func TestRegisterRateLimit(t *testing.T) {
+	h := newHarness(t)
+	for i := range RegistrationsPerDay {
+		if status, out := h.register(t, newDevice(t), true); status != http.StatusOK {
+			t.Fatalf("registration %d: %d %v", i+1, status, out)
+		}
+	}
+	status, out := h.register(t, newDevice(t), true)
+	wantError(t, status, out, http.StatusTooManyRequests, "rate_limited")
+}
+
+func TestRegisterRejects(t *testing.T) {
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	tests := []struct {
+		name   string
+		change func(t *testing.T, d *device, r map[string]any, list *devicelist.List, initData *string)
+		status int
+		code   string
+	}{
+		{"launch without start_param", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			*initData = launch(t, userID, "", start)
+		}, http.StatusUnauthorized, "init_data_rejected"},
+		{"launch from a link", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			*initData = launch(t, userID, "aBcDeFgHiJkLmNoPqRsTuV", start)
+		}, http.StatusUnauthorized, "init_data_rejected"},
+		{"another account key's code", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			*initData = launch(t, userID, RegistrationPrefix+devicesig.Fingerprint(raw(t, other)), start)
+		}, http.StatusUnauthorized, "init_data_rejected"},
+		{"old launch", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			*initData = launch(t, userID, RegistrationPrefix+devicesig.Fingerprint(raw(t, d.ak)), start.Add(-11*time.Minute))
+		}, http.StatusUnauthorized, "init_data_rejected"},
+		{"tampered launch", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			*initData = strings.Replace(*initData, "first_name%22%3A%22A", "first_name%22%3A%22B", 1)
+		}, http.StatusUnauthorized, "init_data_rejected"},
+		{"account signature by another key", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			r["accountSig"] = b64(signP1363(t, other, devicesig.Message(devicesig.LabelRegister,
+				RegisterParts(*initData, raw(t, d.ak), d.id, raw(t, d.dsk))...)))
+		}, http.StatusUnauthorized, "signature_rejected"},
+		{"device signature over another launch", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			r["deviceSig"] = b64(signP1363(t, d.dsk, devicesig.Message(devicesig.LabelRegister,
+				RegisterParts(*initData+"x", raw(t, d.ak), d.id, raw(t, d.dsk))...)))
+		}, http.StatusUnauthorized, "signature_rejected"},
+		{"session signature instead", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, initData *string) {
+			r["deviceSig"] = b64(signP1363(t, d.dsk, devicesig.Message(devicesig.LabelSession,
+				RegisterParts(*initData, raw(t, d.ak), d.id, raw(t, d.dsk))...)))
+		}, http.StatusUnauthorized, "signature_rejected"},
+		{"list not first", func(t *testing.T, d *device, _ map[string]any, list *devicelist.List, _ *string) {
+			list.Seq = 2
+		}, http.StatusBadRequest, "invalid_device_list"},
+		{"list names another device", func(t *testing.T, d *device, _ map[string]any, list *devicelist.List, _ *string) {
+			list.Entries[0].DeviceID = ids.New()
+		}, http.StatusBadRequest, "invalid_device_list"},
+		{"list with a second device", func(t *testing.T, d *device, _ map[string]any, list *devicelist.List, _ *string) {
+			list.Entries = append(list.Entries, devicelist.Entry{DeviceID: ids.New(), Key: raw(t, other), Added: list.Issued})
+		}, http.StatusBadRequest, "invalid_device_list"},
+		{"stale list", func(t *testing.T, d *device, _ map[string]any, list *devicelist.List, _ *string) {
+			*list = d.firstList(t, start.Add(-3*time.Hour))
+		}, http.StatusBadRequest, "invalid_device_list"},
+		{"list signed by the device key", func(t *testing.T, d *device, r map[string]any, list *devicelist.List, _ *string) {
+			r["deviceListSig"] = b64(signP1363(t, d.dsk, devicelist.Encode(*list)))
+		}, http.StatusBadRequest, "invalid_device_list"},
+		{"bad device ID", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, _ *string) {
+			r["device"] = "short"
+		}, http.StatusBadRequest, "bad_request"},
+		{"bad account key", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, _ *string) {
+			r["accountKey"] = b64(bytes.Repeat([]byte{4}, 65))
+		}, http.StatusBadRequest, "bad_request"},
+		{"padded base64", func(t *testing.T, d *device, r map[string]any, _ *devicelist.List, _ *string) {
+			r["deviceKey"] = base64.URLEncoding.EncodeToString(raw(t, d.dsk))
+		}, http.StatusBadRequest, "bad_request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			d := newDevice(t)
+			body := d.registration(t, h.now, func(r map[string]any, list *devicelist.List, initData *string) {
+				tt.change(t, d, r, list, initData)
+			})
+			status, out := h.post(t, "/register", body)
+			wantError(t, status, out, tt.status, tt.code)
+			if len(h.dir.accounts) != 0 {
+				t.Fatal("an account was stored")
+			}
+		})
+	}
+}
+
+func TestSessionRejects(t *testing.T) {
+	h := newHarness(t)
+	d := newDevice(t)
+	if status, out := h.register(t, d, false); status != http.StatusOK {
+		t.Fatalf("register: %d %v", status, out)
+	}
+
+	login := d.login(t, h.now)
+	if status, out := h.post(t, "/session", login); status != http.StatusOK {
+		t.Fatalf("login: %d %v", status, out)
+	}
+	status, out := h.post(t, "/session", login)
+	wantError(t, status, out, http.StatusUnauthorized, "login_refused") // replayed
+
+	stale := d.login(t, h.now.Add(-2*time.Minute))
+	status, out = h.post(t, "/session", stale)
+	wantError(t, status, out, http.StatusUnauthorized, "login_refused")
+
+	unknown := newDevice(t)
+	unknown.account = d.account
+	status, out = h.post(t, "/session", unknown.login(t, h.now))
+	wantError(t, status, out, http.StatusUnauthorized, "login_refused")
+
+	otherAccount := d.login(t, h.now)
+	otherAccount["account"] = ids.New()
+	status, out = h.post(t, "/session", otherAccount)
+	wantError(t, status, out, http.StatusUnauthorized, "login_refused")
+
+	bad := d.login(t, h.now)
+	bad["account"] = "x"
+	status, out = h.post(t, "/session", bad)
+	wantError(t, status, out, http.StatusBadRequest, "bad_request")
+}
+
+func TestRequiresJSON(t *testing.T) {
+	h := newHarness(t)
+	var req httpapi.Request
+	req.RawPath = "/session"
+	req.RequestContext.HTTP.Method = http.MethodPost
+	req.Headers = map[string]string{"content-type": "text/plain"}
+	req.Body = "{}"
+	resp, _ := h.router.Serve(context.Background(), req)
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestInternalErrorsLogNothingAboutTheRequest(t *testing.T) {
+	h := newHarness(t)
+	h.dir.fail = errors.New("table " + strconv.Itoa(userID) + " unavailable")
+	d := newDevice(t)
+	status, out := h.register(t, d, false)
+	wantError(t, status, out, http.StatusInternalServerError, "internal")
+
+	logs := h.logs.String()
+	if !strings.Contains(logs, `"route":"POST /register"`) || !strings.Contains(logs, `"status":500`) {
+		t.Fatalf("logs = %s", logs)
+	}
+	for _, secret := range []string{strconv.Itoa(userID), d.id, "unavailable", b64(raw(t, d.ak))} {
+		if strings.Contains(logs, secret) {
+			t.Fatalf("logs contain %q: %s", secret, logs)
+		}
+	}
+}

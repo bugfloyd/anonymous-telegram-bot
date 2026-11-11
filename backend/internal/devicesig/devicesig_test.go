@@ -118,3 +118,45 @@ func TestParsePublicKeyRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestFingerprintMatchesClient(t *testing.T) {
+	// Computed with WebCrypto, as web/src/crypto/keys.ts does.
+	const want = "IVVfe8yQuoQPEcsZWUQBwjazebJkrBLkm1Q7ec-It2M"
+	if got := Fingerprint(mustHex(t, webCryptoPublicKey)); got != want {
+		t.Fatalf("Fingerprint = %s, want %s", got, want)
+	}
+}
+
+func TestParse(t *testing.T) {
+	label, parts, err := Parse(mustHex(t, webCryptoMessage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if label != LabelSession || len(parts) != len(webCryptoParts) {
+		t.Fatalf("Parse = %q, %d parts", label, len(parts))
+	}
+	for i := range parts {
+		if !bytes.Equal(parts[i], webCryptoParts[i]) {
+			t.Fatalf("part %d = %q, want %q", i, parts[i], webCryptoParts[i])
+		}
+	}
+
+	empty := Message("x", []byte{}, nil)
+	if _, parts, err := Parse(empty); err != nil || len(parts) != 2 || len(parts[0]) != 0 {
+		t.Fatalf("empty parts: %v, %d", err, len(parts))
+	}
+
+	full := mustHex(t, webCryptoMessage)
+	for _, bad := range [][]byte{
+		nil,
+		{0x00},
+		{0x00, 0x05, 'a'},                     // label past the end
+		append(bytes.Clone(full), 0x00),       // trailing byte
+		append(bytes.Clone(full), 0, 0, 0, 9), // part past the end
+		full[:len(full)-1],                    // truncated part
+	} {
+		if _, _, err := Parse(bad); err == nil {
+			t.Errorf("Parse(%x) accepted", bad)
+		}
+	}
+}

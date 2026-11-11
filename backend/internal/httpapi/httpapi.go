@@ -19,12 +19,23 @@ import (
 // MaxBody is the largest request body DecodeJSON accepts.
 const MaxBody = 64 << 10
 
-// ErrBadRequest is returned by DecodeJSON for any body it won't accept.
-var ErrBadRequest = errors.New("httpapi: bad request")
+var (
+	// ErrBadRequest is returned by DecodeJSON for any body it won't accept.
+	ErrBadRequest = errors.New("httpapi: bad request")
+	// ErrMediaType is returned by DecodeJSON for a body that isn't JSON.
+	ErrMediaType = errors.New("httpapi: not application/json")
+)
 
 // DecodeJSON decodes the request body into v. It accepts exactly one JSON
 // value of at most MaxBody bytes, with no unknown fields and nothing after it.
+//
+// The request must say it is application/json. Browsers send such requests
+// across origins only after a CORS preflight, which the function URL answers
+// for the app's own origin alone.
 func DecodeJSON(req Request, v any) error {
+	if !isJSON(req.Headers) {
+		return ErrMediaType
+	}
 	body := []byte(req.Body)
 	if req.IsBase64Encoded {
 		decoded, err := base64.StdEncoding.DecodeString(req.Body)
@@ -45,6 +56,24 @@ func DecodeJSON(req Request, v any) error {
 		return ErrBadRequest
 	}
 	return nil
+}
+
+// DecodeError is the response for an error from DecodeJSON.
+func DecodeError(err error) Response {
+	if errors.Is(err, ErrMediaType) {
+		return Error(http.StatusUnsupportedMediaType, "unsupported_media_type")
+	}
+	return Error(http.StatusBadRequest, "bad_request")
+}
+
+func isJSON(headers map[string]string) bool {
+	for name, value := range headers {
+		if strings.EqualFold(name, "content-type") {
+			mediaType, _, _ := strings.Cut(value, ";")
+			return strings.EqualFold(strings.TrimSpace(mediaType), "application/json")
+		}
+	}
+	return false
 }
 
 // Request is a function URL request.

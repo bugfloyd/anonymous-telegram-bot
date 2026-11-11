@@ -36,6 +36,14 @@ go test -race ./...
 ../scripts/build-lambdas.sh   # prints the SHA-256 of each bundle
 ```
 
+The DynamoDB store tests skip unless DynamoDB Local is running (CI always runs
+them):
+
+```shell
+podman run --rm -d -p 8000:8000 docker.io/amazon/dynamodb-local:3.3.2
+DYNAMODB_ENDPOINT=http://localhost:8000 go test -race ./...
+```
+
 Web (Node is pinned in `web/.nvmrc`):
 
 ```shell

@@ -1,6 +1,6 @@
 // Package session handles device logins and the short-lived tokens they get.
 //
-// A device logs in by signing (device ID, timestamp, nonce) with its own P-256
+// A device logs in by signing (account ID, device ID, timestamp, nonce) with its own P-256
 // key. The server checks the timestamp is fresh, the signature, and that the
 // nonce hasn't been used, then issues a token valid for TTL. Tokens are an
 // HMAC over the account, the device and an expiry, so checking one needs no
@@ -145,6 +145,7 @@ type NonceStore interface {
 
 // Login is a device's signed login request.
 type Login struct {
+	AccountID string
 	DeviceID  string
 	Timestamp int64 // Unix seconds
 	Nonce     string
@@ -155,15 +156,14 @@ type Login struct {
 // recorded once the signature is valid, so unsigned requests can't fill the
 // nonce store.
 func Check(ctx context.Context, login Login, pub *ecdsa.PublicKey, nonces NonceStore, now time.Time) error {
-	if !ids.Valid(login.DeviceID) || !validNonce(login.Nonce) {
+	if !ids.Valid(login.AccountID) || !ids.Valid(login.DeviceID) || !validNonce(login.Nonce) {
 		return ErrLogin
 	}
 	at := time.Unix(login.Timestamp, 0)
 	if at.Before(now.Add(-MaxSkew)) || at.After(now.Add(MaxSkew)) {
 		return ErrLogin
 	}
-	if devicesig.Verify(pub, login.Signature, devicesig.LabelSession,
-		[]byte(login.DeviceID), []byte(strconv.FormatInt(login.Timestamp, 10)), []byte(login.Nonce)) != nil {
+	if devicesig.Verify(pub, login.Signature, devicesig.LabelSession, LoginParts(login)...) != nil {
 		return ErrLogin
 	}
 	fresh, err := nonces.Use(ctx, login.Nonce, now.Add(NonceTTL))
@@ -174,6 +174,17 @@ func Check(ctx context.Context, login Login, pub *ecdsa.PublicKey, nonces NonceS
 		return ErrLogin
 	}
 	return nil
+}
+
+// LoginParts are the signed parts of a login: account ID, device ID, the
+// timestamp in decimal, and the nonce.
+func LoginParts(login Login) [][]byte {
+	return [][]byte{
+		[]byte(login.AccountID),
+		[]byte(login.DeviceID),
+		[]byte(strconv.FormatInt(login.Timestamp, 10)),
+		[]byte(login.Nonce),
+	}
 }
 
 // validNonce accepts 16 to 64 base64url characters (96 to 384 bits).

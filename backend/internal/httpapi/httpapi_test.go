@@ -61,6 +61,12 @@ func TestJSONHeaders(t *testing.T) {
 	}
 }
 
+var jsonHeaders = map[string]string{"content-type": "application/json"}
+
+func jsonRequest(body string) Request {
+	return Request{Headers: jsonHeaders, Body: body}
+}
+
 func TestDecodeJSON(t *testing.T) {
 	type body struct {
 		Name string `json:"name"`
@@ -71,16 +77,19 @@ func TestDecodeJSON(t *testing.T) {
 		ok     bool
 		result string
 	}{
-		{"plain", Request{Body: `{"name":"a"}`}, true, "a"},
-		{"base64", Request{Body: "eyJuYW1lIjoiYiJ9", IsBase64Encoded: true}, true, "b"},
-		{"whitespace after", Request{Body: "{\"name\":\"c\"}\n "}, true, "c"},
-		{"unknown field", Request{Body: `{"name":"a","x":1}`}, false, ""},
-		{"two values", Request{Body: `{"name":"a"}{"name":"b"}`}, false, ""},
-		{"trailing garbage", Request{Body: `{"name":"a"} x`}, false, ""},
-		{"empty", Request{Body: ""}, false, ""},
-		{"bad base64", Request{Body: "%%%", IsBase64Encoded: true}, false, ""},
-		{"too large", Request{Body: `{"name":"` + strings.Repeat("a", MaxBody) + `"}`}, false, ""},
-		{"wrong type", Request{Body: `{"name":5}`}, false, ""},
+		{"plain", jsonRequest(`{"name":"a"}`), true, "a"},
+		{"base64", Request{Headers: jsonHeaders, Body: "eyJuYW1lIjoiYiJ9", IsBase64Encoded: true}, true, "b"},
+		{"whitespace after", jsonRequest("{\"name\":\"c\"}\n "), true, "c"},
+		{"charset parameter", Request{Headers: map[string]string{"Content-Type": "Application/JSON; charset=utf-8"}, Body: `{"name":"d"}`}, true, "d"},
+		{"unknown field", jsonRequest(`{"name":"a","x":1}`), false, ""},
+		{"two values", jsonRequest(`{"name":"a"}{"name":"b"}`), false, ""},
+		{"trailing garbage", jsonRequest(`{"name":"a"} x`), false, ""},
+		{"empty", jsonRequest(""), false, ""},
+		{"bad base64", Request{Headers: jsonHeaders, Body: "%%%", IsBase64Encoded: true}, false, ""},
+		{"too large", jsonRequest(`{"name":"` + strings.Repeat("a", MaxBody) + `"}`), false, ""},
+		{"wrong type", jsonRequest(`{"name":5}`), false, ""},
+		{"no content type", Request{Body: `{"name":"a"}`}, false, ""},
+		{"text/plain", Request{Headers: map[string]string{"content-type": "text/plain"}, Body: `{"name":"a"}`}, false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,6 +102,15 @@ func TestDecodeJSON(t *testing.T) {
 				t.Fatalf("accepted: %+v", got)
 			}
 		})
+	}
+}
+
+func TestDecodeError(t *testing.T) {
+	if got := DecodeError(DecodeJSON(Request{Body: "{}"}, &struct{}{})).StatusCode; got != http.StatusUnsupportedMediaType {
+		t.Errorf("no content type: status %d", got)
+	}
+	if got := DecodeError(DecodeJSON(jsonRequest("x"), &struct{}{})).StatusCode; got != http.StatusBadRequest {
+		t.Errorf("bad body: status %d", got)
 	}
 }
 

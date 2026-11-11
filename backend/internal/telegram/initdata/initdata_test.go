@@ -27,7 +27,7 @@ func verifier() Verifier {
 // signature over the data-check-string, and an (ignored) hash.
 func sign(t *testing.T, fields map[string]string) string {
 	t.Helper()
-	sig := ed25519.Sign(testKey, []byte(checkString(botID, fields)))
+	sig := ed25519.Sign(testKey, []byte(CheckString(botID, fields)))
 	q := url.Values{}
 	for k, v := range fields {
 		q.Set(k, v)
@@ -122,9 +122,9 @@ func TestVerifyRejects(t *testing.T) {
 }
 
 func TestCheckString(t *testing.T) {
-	got := checkString(7, map[string]string{"b": "2", "a": "1", "hash": "x", "signature": "y", "chat_instance": "3", "chat": "4"})
+	got := CheckString(7, map[string]string{"b": "2", "a": "1", "hash": "x", "signature": "y", "chat_instance": "3", "chat": "4"})
 	want := "7:WebAppData\na=1\nb=2\nchat=4\nchat_instance=3"
 	if got != want {
-		t.Fatalf("checkString =\n%s\nwant\n%s", got, want)
+		t.Fatalf("CheckString =\n%s\nwant\n%s", got, want)
 	}
 }
