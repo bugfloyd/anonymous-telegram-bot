@@ -9,7 +9,12 @@ import type { SyncEvent } from '../sync/locks';
 import { confirmationMatches, createApp, type Deps, type Screen } from './app';
 
 let n = 0;
-const config = { apiUrl: 'https://api.example', botUsername: 'test_bot', appName: 'dev' };
+const config = {
+  apiUrl: 'https://api.example',
+  botUsername: 'test_bot',
+  appName: 'dev',
+  issuer: { name: 'test', spki: new Uint8Array(0), keyId: new Uint8Array(32) },
+};
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 type Outcome = 'ok' | ApiError | NetworkError;

@@ -67,3 +67,35 @@ func TestLimiter(t *testing.T) {
 		t.Fatal("next window refused")
 	}
 }
+
+func TestAllowN(t *testing.T) {
+	client := dynamotest.Client(t)
+	l := &Limiter{DB: client, Table: dynamotest.Table(t, client), Now: func() time.Time { return start }}
+	ctx := context.Background()
+	for _, tc := range []struct {
+		n    int
+		want bool
+	}{{3, true}, {2, true}, {1, false}, {0, false}, {6, false}} {
+		if ok, err := l.AllowN(ctx, "k", tc.n, 5, time.Hour); err != nil || ok != tc.want {
+			t.Fatalf("AllowN(%d) = %v, %v; want %v", tc.n, ok, err, tc.want)
+		}
+	}
+}
+
+func TestSpent(t *testing.T) {
+	client := dynamotest.Client(t)
+	clock := start
+	sp := &Spent{DB: client, Table: dynamotest.Table(t, client), Now: func() time.Time { return clock }}
+	ctx := context.Background()
+	nonce := []byte("0123456789abcdef0123456789abcdef")
+	if ok, err := sp.Spend(ctx, nonce, start.Add(time.Hour)); !ok || err != nil {
+		t.Fatalf("first spend: %v, %v", ok, err)
+	}
+	if ok, _ := sp.Spend(ctx, nonce, start.Add(time.Hour)); ok {
+		t.Fatal("double spend accepted")
+	}
+	clock = start.Add(2 * time.Hour)
+	if ok, _ := sp.Spend(ctx, nonce, clock.Add(time.Hour)); !ok {
+		t.Fatal("record outlived its expiry")
+	}
+}

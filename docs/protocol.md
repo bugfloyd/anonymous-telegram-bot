@@ -162,7 +162,7 @@ each mailbox's owner, to deliver, but not who writes to it.
   messages go there. Clients keep a small pool of further mailboxes
   (`POST /mailboxes`) and take one when a conversation needs it, so creating
   one never happens right before a send.
-- `POST /send {mailbox, envelope}` needs no login. The server checks the
+- `POST /send {mailbox, envelope, token}` needs no login, only a send token. The server checks the
   envelope's layout and the caps, then stores the envelope once for each of the
   owner's devices. Unknown and discarded mailboxes get the same `200 {}`, after
   a similar pause, and nothing is stored.
@@ -171,6 +171,31 @@ each mailbox's owner, to deliver, but not who writes to it.
   after 30 days.
 - `POST /mailboxes/{id}/discard` ends a mailbox (a block, or an ended
   conversation); a link's intro mailbox ends with the link.
+
+## Send tokens
+
+Every `POST /send` spends one anonymous token, so the server can limit sends
+without learning who sends. Tokens are RSA blind signatures (RFC 9474,
+RSABSSA-SHA384-PSS-Deterministic) in the shape of Privacy Pass token type 2
+(RFC 9578):
+
+```
+token     = u16(0x0002) ‖ nonce (32) ‖ challenge (32) ‖ key ID (32) ‖ authenticator (256)
+challenge = SHA-256(Message("incognitochat/v2/send-token", [0x01], u64(epoch)))
+key ID    = SHA-256(issuer public key as SubjectPublicKeyInfo, DER)
+epoch     = floor(unix seconds / 604800)
+```
+
+The authenticator is an RSA-PSS signature (SHA-384, MGF1-SHA-384, 48-byte
+salt) over the first 98 bytes, by a 2048-bit issuer key. A logged-in device
+blinds token inputs, gets them signed (`POST /tokens`, at most 50 a request and
+200 a day), and unblinds them; the issuer never sees the tokens it signs.
+
+A token is accepted in its own week and the next, and only once: the server
+remembers spent nonces until then. A send refused for a cap doesn't spend its
+token. Clients only accept the issuer key their build names
+(`VITE_ISSUER_KEY`), one of those published in `web/issuer-keys.json`, so the
+server can't hand different users different keys to tell them apart.
 
 ## Test vectors
 
@@ -183,3 +208,5 @@ each mailbox's owner, to deliver, but not who writes to it.
 | Link keys | `backend/internal/links`, `web/src/protocol/link.test.ts` |
 | HPKE (RFC 9180 Appendix A, AES-128-GCM and AES-256-GCM) | `web/src/crypto/hpke-vectors.json` |
 | Envelope layout (sealed by the client) | `backend/internal/envelope/testdata` |
+| Blind RSA (RFC 9474 Appendix A, PSS-Deterministic) | `web/src/crypto/blindrsa-vectors.json`, `backend/internal/tokens/testdata` |
+| Send-token challenge | `backend/internal/tokens`, `web/src/protocol/token.test.ts` |

@@ -26,6 +26,25 @@ variable "bot_token" {
   }
 }
 
+variable "issuer_key" {
+  description = "Send-token issuer's RSA-2048 private key (PKCS#8 PEM). Ephemeral: written to SSM, never stored in Terraform state or plan files. Its public key is published in web/issuer-keys.json."
+  type        = string
+  sensitive   = true
+  ephemeral   = true
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^-----BEGIN PRIVATE KEY-----\\n[A-Za-z0-9+/=\\n]+-----END PRIVATE KEY-----\\n?$", var.issuer_key))
+    error_message = "issuer_key must be a PKCS#8 PEM private key."
+  }
+}
+
+variable "issuer_key_version" {
+  description = "Increase to push a changed issuer key into SSM"
+  type        = number
+  default     = 1
+}
+
 variable "bot_token_version" {
   description = "Increase to push a changed bot token into SSM (write-only values can't be compared with what's stored)"
   type        = number

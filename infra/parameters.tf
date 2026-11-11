@@ -32,6 +32,7 @@ locals {
     "session-key"        = var.secrets_version
     "telegram-id-pepper" = var.secrets_version
     "webhook-secret"     = var.secrets_version
+    "issuer-key"         = var.issuer_key_version
   }
 
   # The bot ID is the token's numeric prefix. Writing it here means nobody
@@ -43,6 +44,7 @@ locals {
     "session-key"        = ephemeral.random_password.session_key.result
     "telegram-id-pepper" = ephemeral.random_password.telegram_id_pepper.result
     "webhook-secret"     = ephemeral.random_password.webhook_secret.result
+    "issuer-key"         = var.issuer_key
   }
 }
 

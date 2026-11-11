@@ -76,6 +76,16 @@ out of the public deploy logs; the API keeps only their keyed hashes:
 gh secret set ADMIN_TELEGRAM_IDS --env dev --body '<id>,<id>'
 ```
 
+Sends are paid for with anonymous tokens signed by an issuer key: an RSA-2048
+private key in a secret, whose public key is published in
+`web/issuer-keys.json` (the client only accepts that one):
+
+```shell
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out issuer.pem
+openssl pkey -in issuer.pem -pubout -outform DER | basenc -w0 --base64url  # the "spki" to publish
+gh secret set ISSUER_KEY --env dev < issuer.pem && shred -u issuer.pem
+```
+
 The dev client is published to its own GitHub Pages site, in a separate
 GitHub organization: sites of one owner share an origin, and with it the keys
 stored in the browser, so dev must never share production's. The site's own

@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.14
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.73.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.81.3
+	github.com/cloudflare/circl v1.6.5
 )
 
 require (
