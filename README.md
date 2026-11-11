@@ -78,21 +78,17 @@ gh secret set ADMIN_TELEGRAM_IDS --env dev --body '<id>,<id>'
 
 The dev client is published to its own GitHub Pages site, in a separate
 GitHub organization: sites of one owner share an origin, and with it the keys
-stored in the browser, so dev must never share production's. It needs the
-bot's username and the Mini App's short name (BotFather `/newapp`, pointing at
-the dev site), and a deploy key with write access to the dev site's
-repository:
+stored in the browser, so dev must never share production's. The site's own
+workflow builds, attests and deploys each `v2` commit; CI only starts it, with
+a token that can do nothing else. See [hosting/](hosting/README.md), and check
+the live site with:
 
 ```shell
-gh variable set BOT_USERNAME --env dev --body <bot username>
-gh variable set APP_NAME --env dev --body <mini app short name>
-gh variable set PAGES_REPO --env dev --body <org>/<org>.github.io
-gh variable set PAGES_URL --env dev --body https://<org>.github.io/
-gh secret set DEV_PAGES_DEPLOY_KEY --env dev < <private key>
+scripts/verify-site.sh https://incognitochat-dev.github.io incognitochat-dev/incognitochat-dev.github.io --rebuild
 ```
 
-The client takes these at build time (`VITE_API_URL`, `VITE_BOT_USERNAME`,
-`VITE_APP_NAME`); the API's origin is added to the page's Content Security
+The client takes its settings at build time (`VITE_API_URL`, `VITE_BOT_USERNAME`,
+`VITE_APP_NAME`, the hosting repository's variables); the API's origin is added to the page's Content Security
 Policy. A build without them works but can't reach a backend.
 
 Secrets (the bot token, the session key, the Telegram ID pepper, the webhook
