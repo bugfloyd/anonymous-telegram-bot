@@ -6,6 +6,15 @@
 
 const PREFIX = 'incognitochat:';
 
+// Each local profile (one per Telegram account, storage/profile.ts) has its
+// own locks and channel, like its own database.
+let namespace = '';
+
+/** Scopes locks and the channel to one local profile. Call once at start. */
+export function useProfile(profile: string): void {
+  namespace = profile ? `${profile}:` : '';
+}
+
 export interface LockManagerLike {
   request<T>(name: string, options: { mode: 'exclusive' }, callback: () => Promise<T>): Promise<T>;
 }
@@ -20,7 +29,7 @@ function defaultLocks(): LockManagerLike | undefined {
  */
 export function withLock<T>(name: string, fn: () => Promise<T>, locks: LockManagerLike | undefined = defaultLocks()): Promise<T> {
   if (!locks) return fn();
-  return locks.request(PREFIX + name, { mode: 'exclusive' }, fn);
+  return locks.request(PREFIX + namespace + name, { mode: 'exclusive' }, fn);
 }
 
 export type SyncEvent = { type: 'account-changed' } | { type: 'keys-changed' } | { type: 'data-changed' };
@@ -28,7 +37,7 @@ export type SyncEvent = { type: 'account-changed' } | { type: 'keys-changed' } |
 /** A channel to the other copies of the app. Returns null where unsupported. */
 export function openChannel(onEvent: (event: SyncEvent) => void): { send(event: SyncEvent): void; close(): void } | null {
   if (typeof BroadcastChannel === 'undefined') return null;
-  const channel = new BroadcastChannel(PREFIX + 'sync');
+  const channel = new BroadcastChannel(PREFIX + namespace + 'sync');
   channel.onmessage = (e: MessageEvent<unknown>) => {
     const data = e.data as { type?: unknown } | null;
     if (data && (data.type === 'account-changed' || data.type === 'keys-changed' || data.type === 'data-changed')) {

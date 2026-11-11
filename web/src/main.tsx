@@ -8,7 +8,8 @@ import { connectTelegram } from './platform/telegram';
 import { applyTheme } from './platform/theme';
 import { createApp } from './state/app';
 import { openDatabase, requestPersistence } from './storage/db';
-import { openChannel } from './sync/locks';
+import { databaseName, profileFor } from './storage/profile';
+import { openChannel, useProfile } from './sync/locks';
 import './app.css';
 
 // Launch data is read once: a reload can lose the URL fragment.
@@ -28,7 +29,10 @@ if (telegram) {
 async function main(): Promise<void> {
   const root = document.getElementById('app');
   if (!root) return;
-  const db = await openDatabase();
+  // Each Telegram account on this app gets its own local profile.
+  const profile = await profileFor(launch.userId);
+  useProfile(profile);
+  const db = await openDatabase(databaseName(profile));
   void requestPersistence();
 
   let restart = (): void => {};

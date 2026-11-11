@@ -15,8 +15,14 @@ export interface Launch {
   themeParams: Record<string, string>;
   /** The language Telegram reports for the user ('' if none). */
   userLanguage: string;
-  /** Whether the user already lets the bot message them. Nothing else is read from the user. */
+  /** Whether the user already lets the bot message them. */
   allowsWriteToPm: boolean;
+  /**
+   * The Telegram user's ID ('' outside Telegram). Only used on the device, to
+   * keep each Telegram account's data apart (storage/profile.ts); it is never
+   * sent anywhere. Nothing else is read from the user.
+   */
+  userId: string;
 }
 
 /** Parses launch parameters from a URL fragment (with or without the leading '#') and query string. */
@@ -36,16 +42,22 @@ export function parseLaunch(fragment: string, search = ''): Launch {
   };
 }
 
-function parseUser(raw: string | null): { userLanguage: string; allowsWriteToPm: boolean } {
-  const none = { userLanguage: '', allowsWriteToPm: false };
+function parseUser(raw: string | null): { userLanguage: string; allowsWriteToPm: boolean; userId: string } {
+  const none = { userLanguage: '', allowsWriteToPm: false, userId: '' };
   if (!raw) return none;
   try {
     const user: unknown = JSON.parse(raw);
     if (!user || typeof user !== 'object') return none;
-    const { language_code: code, allows_write_to_pm: allows } = user as { language_code?: unknown; allows_write_to_pm?: unknown };
+    const {
+      language_code: code,
+      allows_write_to_pm: allows,
+      id,
+    } = user as { language_code?: unknown; allows_write_to_pm?: unknown; id?: unknown };
     return {
       userLanguage: typeof code === 'string' && /^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})?$/.test(code) ? code : '',
       allowsWriteToPm: allows === true,
+      // Telegram user IDs fit in 52 bits, so they are exact as JS numbers.
+      userId: Number.isSafeInteger(id) && (id as number) > 0 ? String(id) : '',
     };
   } catch {
     return none;
