@@ -205,3 +205,54 @@ func TestMemoryNoncesExpire(t *testing.T) {
 		t.Fatal("use after expiry refused")
 	}
 }
+
+func signRequest(t *testing.T, key *ecdsa.PrivateKey, r SignedRequest) SignedRequest {
+	t.Helper()
+	digest := sha256.Sum256(devicesig.Message(devicesig.LabelRequest, RequestParts(r)...))
+	rr, s, err := ecdsa.Sign(rand.Reader, key, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Signature = make([]byte, 64)
+	rr.FillBytes(r.Signature[:32])
+	s.FillBytes(r.Signature[32:])
+	return r
+}
+
+func TestCheckRequest(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ctx := context.Background()
+	r := signRequest(t, key, SignedRequest{
+		AccountID: account, DeviceID: device, Method: "POST", Path: "/links",
+		Body: []byte(`{"id":"x"}`), Timestamp: now.Unix(), Nonce: "nonce-request-0123",
+	})
+	nonces := NewMemoryNonces(func() time.Time { return now })
+	if err := CheckRequest(ctx, r, &key.PublicKey, nonces, now); err != nil {
+		t.Fatalf("valid request refused: %v", err)
+	}
+	if err := CheckRequest(ctx, r, &key.PublicKey, nonces, now); !errors.Is(err, ErrLogin) {
+		t.Fatal("replayed request accepted")
+	}
+
+	for name, change := range map[string]func(*SignedRequest){
+		"other body":   func(r *SignedRequest) { r.Body = []byte(`{"id":"y"}`) },
+		"other path":   func(r *SignedRequest) { r.Path = "/links/x" },
+		"other method": func(r *SignedRequest) { r.Method = "DELETE" },
+		"stale":        func(r *SignedRequest) { r.Timestamp -= 120 },
+	} {
+		bad := r
+		bad.Nonce = "nonce-" + strings.ReplaceAll(name, " ", "-") + "-0123"
+		bad = signRequest(t, key, bad)
+		change(&bad)
+		if err := CheckRequest(ctx, bad, &key.PublicKey, NewMemoryNonces(func() time.Time { return now }), now); !errors.Is(err, ErrLogin) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+
+	// A login signature is never a request signature.
+	login := signLogin(t, key, Login{AccountID: account, DeviceID: device, Timestamp: now.Unix(), Nonce: "nonce-login-012345"})
+	asRequest := SignedRequest{AccountID: account, DeviceID: device, Timestamp: login.Timestamp, Nonce: login.Nonce, Signature: login.Signature}
+	if err := CheckRequest(ctx, asRequest, &key.PublicKey, NewMemoryNonces(func() time.Time { return now }), now); !errors.Is(err, ErrLogin) {
+		t.Fatal("login signature accepted for a request")
+	}
+}

@@ -70,15 +70,28 @@ func setup(ctx context.Context) (*api.Server, error) {
 		return nil, err
 	}
 
+	// Admins are recognised by the keyed hash of their Telegram ID, the same
+	// one their account stores, so the plain IDs go no further than here.
+	adminIDs, err := config.TelegramIDs(os.Getenv("ADMIN_TELEGRAM_IDS"))
+	if err != nil {
+		return nil, err
+	}
+	admins := make(map[string]bool, len(adminIDs))
+	for _, id := range adminIDs {
+		admins[directory.TelegramHash(pepper, id)] = true
+	}
+
 	db := dynamodb.NewFromConfig(aws)
 	now := time.Now
 	return &api.Server{
-		Telegram:  initdata.NewVerifier(botID),
-		Sessions:  issuer,
-		Directory: &directory.Store{DB: db, Table: env["TABLE_DIRECTORY"]},
-		Nonces:    &ephemeral.Nonces{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
-		Limits:    &ephemeral.Limiter{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
-		Pepper:    pepper,
-		Now:       now,
+		Telegram:   initdata.NewVerifier(botID),
+		Sessions:   issuer,
+		Directory:  &directory.Store{DB: db, Table: env["TABLE_DIRECTORY"]},
+		Nonces:     &ephemeral.Nonces{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
+		Limits:     &ephemeral.Limiter{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
+		Pepper:     pepper,
+		Now:        now,
+		InviteOnly: config.InviteOnly(os.Getenv("INVITE_ONLY")),
+		Admins:     admins,
 	}, nil
 }

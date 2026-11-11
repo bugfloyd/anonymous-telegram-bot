@@ -276,6 +276,9 @@ jobs:
           TF_VAR_secrets_version: ${{ vars.SECRETS_VERSION || '1' }}
           TF_VAR_client_origins: ${{ vars.CLIENT_ORIGINS }}
           TF_VAR_deletion_protection: ${{ vars.DELETION_PROTECTION || 'true' }}
+          TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
+          # A secret only so that it is masked in these public logs.
+          TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
         run: terraform plan -out=tfplan
 
       - name: Terraform apply

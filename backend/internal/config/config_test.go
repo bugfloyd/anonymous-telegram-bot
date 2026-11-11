@@ -66,3 +66,26 @@ func TestLoad(t *testing.T) {
 		t.Fatal("accepted an empty parameter")
 	}
 }
+
+func TestInviteOnly(t *testing.T) {
+	for value, want := range map[string]bool{"": true, "true": true, "yes": true, "false": false, " FALSE ": false} {
+		if InviteOnly(value) != want {
+			t.Errorf("InviteOnly(%q) = %v", value, !want)
+		}
+	}
+}
+
+func TestTelegramIDs(t *testing.T) {
+	got, err := TelegramIDs(" 12, 34 ,,56")
+	if err != nil || len(got) != 3 || got[0] != 12 || got[2] != 56 {
+		t.Fatalf("TelegramIDs = %v, %v", got, err)
+	}
+	if got, err := TelegramIDs(""); err != nil || len(got) != 0 {
+		t.Fatalf("empty: %v, %v", got, err)
+	}
+	for _, bad := range []string{"12,abc", "-5", "0", "1.5"} {
+		if _, err := TelegramIDs(bad); err == nil {
+			t.Errorf("TelegramIDs(%q) accepted", bad)
+		}
+	}
+}

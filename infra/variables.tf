@@ -48,6 +48,24 @@ variable "client_origins" {
   }
 }
 
+variable "invite_only" {
+  description = "While true, only accounts that joined through an invitation, and admins, can own links"
+  type        = bool
+  default     = true
+}
+
+variable "admin_telegram_ids" {
+  description = "Comma-separated Telegram user IDs of admins. The api function keeps only their keyed hashes"
+  type        = string
+  default     = ""
+  sensitive   = true
+
+  validation {
+    condition     = can(regex("^[0-9, ]*$", var.admin_telegram_ids))
+    error_message = "admin_telegram_ids must be comma-separated numeric Telegram user IDs."
+  }
+}
+
 variable "lambda_dir" {
   description = "Directory with the Lambda bundles built by scripts/build-lambdas.sh"
   type        = string

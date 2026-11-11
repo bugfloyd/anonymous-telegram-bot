@@ -6,6 +6,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -64,4 +65,27 @@ func Load(ctx context.Context, client Parameters, names ...string) (map[string]s
 		}
 	}
 	return values, nil
+}
+
+// InviteOnly reads the INVITE_ONLY setting: on unless explicitly "false".
+func InviteOnly(value string) bool {
+	return !strings.EqualFold(strings.TrimSpace(value), "false")
+}
+
+// TelegramIDs reads a comma-separated list of Telegram user IDs, such as the
+// admins. An empty list is fine; a malformed entry is an error.
+func TelegramIDs(value string) ([]int64, error) {
+	var out []int64
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 {
+			return nil, fmt.Errorf("config: %q is not a Telegram user ID", part)
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
