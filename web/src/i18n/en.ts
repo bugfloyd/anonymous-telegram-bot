@@ -15,9 +15,33 @@ export const en = {
   reopenAgain: 'Nothing happened? Tap again',
   registering: 'Setting up…',
 
-  readyTitle: "You're set up",
-  readyBody: 'Your account is ready on this device. Links come in the next update.',
   offline: "Can't reach the server right now.",
+
+  homeTitle: 'Your links',
+  homeIntro:
+    "Share a link so people can message you anonymously. Each link has its own keys, so two of your links can't be matched to each other.",
+  linksCount: '{count} of {max} links',
+  newLink: 'New link',
+  noLinks: "You don't have a link yet.",
+  needInvitation: "You need an invitation to get your own link. You can still write to other people's links.",
+  copy: 'Copy',
+  copied: 'Copied',
+  share: 'Share',
+  revoke: 'Revoke',
+  revokeConfirm: 'Revoke this link? Nobody will be able to start a new conversation through it.',
+  revokeYes: 'Revoke link',
+  noticeCreated: 'Your new link is ready.',
+  noticeRevoked: 'The link was revoked.',
+  noticeLimit: 'You have the most links allowed. Revoke one to make a new one.',
+
+  linkTitle: 'Anonymous link',
+  linkChecking: 'Checking this link…',
+  linkVerified: 'This link is genuine: its keys match it. Writing to it comes in the next update.',
+  linkOwn: 'This is your own link.',
+  linkNotFound: "This link doesn't exist, or its owner revoked it.",
+  linkMismatch:
+    "This link's keys don't match the link. Someone may be trying to intercept your messages. Don't use it.",
+  goHome: 'Go to your links',
 
   replaceTitle: 'You already have an account',
   replaceBody:

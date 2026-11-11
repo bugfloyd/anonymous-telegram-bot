@@ -11,6 +11,8 @@ import { concat, utf8 } from './encoding';
 export const LABEL_SESSION = 'incognitochat/v2/session';
 export const LABEL_REGISTER = 'incognitochat/v2/register';
 export const LABEL_DEVICE_LIST = 'incognitochat/v2/device-list';
+export const LABEL_REQUEST = 'incognitochat/v2/request';
+export const LABEL_LINK_KEY = 'incognitochat/v2/link-key';
 
 const ECDSA: EcdsaParams = { name: 'ECDSA', hash: 'SHA-256' };
 

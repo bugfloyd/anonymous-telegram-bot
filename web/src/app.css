@@ -43,3 +43,10 @@ body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; 
 .spinner { inline-size: 1.5rem; block-size: 1.5rem; border: 3px solid var(--app-surface); border-block-start-color: var(--app-accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+.links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.link { display: flex; flex-direction: column; gap: 0.5rem; background: var(--app-surface); border-radius: 0.5rem; padding: 0.75rem; }
+.link-url { font: 0.875rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0.5rem; border-radius: 0.375rem; border: 1px solid var(--app-muted); background: var(--app-bg); color: var(--app-text); inline-size: 100%; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.row .warning { flex-basis: 100%; margin: 0; }
+.link .button.secondary { background: var(--app-bg); }

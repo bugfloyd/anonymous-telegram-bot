@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
 import { fromBase64Url, fromHex, toHex } from '../crypto/encoding';
 import { importSigningPublicKey } from '../crypto/keys';
-import { LABEL_REGISTER, LABEL_SESSION, message, verify } from '../crypto/signing';
+import { LABEL_REGISTER, LABEL_REQUEST, LABEL_SESSION, message, verify } from '../crypto/signing';
 import { ApiError, type Api } from '../net/api';
 import { getKeyPair, getMeta, openDatabase } from '../storage/db';
 import {
@@ -15,6 +15,7 @@ import {
   registerParts,
   registrationPath,
   rememberLink,
+  requestParts,
   SetupMismatch,
 } from './account';
 
@@ -22,6 +23,8 @@ import {
 const KEY = '043e4cd596e64fe0d4dac5cce1479f58b981e24664c49c89e823be92673cd970d130b3038618a2156d3db3edccde5a6f271cb346dd868dc771d0ba2812a1197cb1';
 const REGISTER =
   '0019696e636f676e69746f636861742f76322f726567697374657200000020ed6cc20d3628da6bf65e3033d5628dafcd44b7194eaac0d218b37621ab1b6c7300000041043e4cd596e64fe0d4dac5cce1479f58b981e24664c49c89e823be92673cd970d130b3038618a2156d3db3edccde5a6f271cb346dd868dc771d0ba2812a1197cb1000000164141414141414141414141414141414141414141414100000041043e4cd596e64fe0d4dac5cce1479f58b981e24664c49c89e823be92673cd970d130b3038618a2156d3db3edccde5a6f271cb346dd868dc771d0ba2812a1197cb1';
+const REQUEST =
+  '0018696e636f676e69746f636861742f76322f726571756573740000001642424242424242424242424242424242424242424242000000164141414141414141414141414141414141414141414100000004504f5354000000062f6c696e6b730000000a31383030303030303030000000126e6f6e63652d30313233343536373839616200000020015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862';
 const LOGIN =
   '0018696e636f676e69746f636861742f76322f73657373696f6e000000164242424242424242424242424242424242424242424200000016414141414141414141414141414141414141414141410000000a31383030303030303030000000126e6f6e63652d303132333435363738396162';
 
@@ -35,6 +38,7 @@ function fakeServer(options: { exists?: boolean; replaced?: boolean } = {}) {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   let deviceKey: Uint8Array<ArrayBuffer> | undefined;
   const api: Api = {
+    request: (_method, path, init, check) => api.post(path, JSON.parse(init.body ?? '{}'), check),
     async post(path, body, check) {
       const b = body as Record<string, string>;
       calls.push({ path, body: b });
@@ -69,6 +73,11 @@ describe('signed messages match the backend', () => {
     const key = fromHex(KEY);
     const parts = await registerParts('auth_date=1800000000&start_param=reg&user=%7B%7D', key, 'AAAAAAAAAAAAAAAAAAAAAA', key);
     expect(toHex(message(LABEL_REGISTER, ...parts))).toBe(REGISTER);
+  });
+
+  it('request', async () => {
+    const parts = await requestParts(ACCOUNT_ID, 'AAAAAAAAAAAAAAAAAAAAAA', 'POST', '/links', NOW, 'nonce-0123456789ab', '{"a":1}');
+    expect(toHex(message(LABEL_REQUEST, ...parts))).toBe(REQUEST);
   });
 
   it('login', () => {
