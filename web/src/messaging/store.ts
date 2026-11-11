@@ -63,9 +63,18 @@ export async function addMessage(db: Database, record: Omit<MessageRecord, 'seal
   await db.put('messages', { ...record, sealed: await sealBody(db, record.id, body) });
 }
 
-export async function setMessageStatus(db: Database, id: string, status: MessageRecord['status']): Promise<void> {
+/** Sets a message's status; with from, only if it has that status now. */
+export async function setMessageStatus(db: Database, id: string, status: MessageRecord['status'], from?: MessageRecord['status']): Promise<void> {
   const record = await db.get('messages', id);
-  if (record) await db.put('messages', { ...record, status });
+  if (record && (from === undefined || record.status === from)) await db.put('messages', { ...record, status });
+}
+
+/** Marks one of our messages in a conversation as seen, if it was sent; returns whether it did. */
+export async function markOwnSeen(db: Database, conv: string, id: string): Promise<boolean> {
+  const record = await db.get('messages', id);
+  if (!record || record.conv !== conv || !record.out || (record.status !== 'sent' && record.status !== 'sending')) return false;
+  await db.put('messages', { ...record, status: 'seen' });
+  return true;
 }
 
 /** A conversation's messages, oldest first, with their text. */

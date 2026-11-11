@@ -1,6 +1,6 @@
 import { useSignal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
@@ -265,11 +265,81 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
   );
 }
 
+/** How close to the end of a chat still counts as being at the end, in px. */
+const AT_END = 80;
+const isAtEnd = () => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - AT_END;
+const scrollToEnd = (behavior: ScrollBehavior = 'auto') => window.scrollTo({ top: document.documentElement.scrollHeight, behavior });
+const visible = () => document.visibilityState === 'visible';
+
+/**
+ * Keeps a chat where Telegram would: it opens at the newest message, and
+ * jumps there when you send. New messages scroll into view only if you were
+ * already at the end; otherwise you stay where you are and a button shows
+ * how many came in. Messages count as seen only once they're in view.
+ */
+function useChatScroll(app: AppState, id: string, messages: { id: string; out: boolean }[]) {
+  const atEnd = useRef(true);
+  const shown = useRef<{ conv: string; last: string | null } | null>(null);
+  // Scrolled away from the end, and how many new messages came in since.
+  const away = useSignal(false);
+  const fresh = useSignal(0);
+
+  const arrived = () => {
+    atEnd.current = true;
+    away.value = false;
+    fresh.value = 0;
+    if (visible()) app.markSeen();
+  };
+
+  useEffect(() => {
+    const onScroll = () => {
+      const now = isAtEnd();
+      if (now && !atEnd.current) arrived();
+      atEnd.current = now;
+      away.value = !now;
+    };
+    // The keyboard opening shrinks the view: stay at the end if we were.
+    const onResize = () => atEnd.current && scrollToEnd();
+    const onVisible = () => visible() && atEnd.current && app.markSeen();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const last = messages[messages.length - 1]?.id ?? null;
+    const before = shown.current;
+    shown.current = { conv: id, last };
+    if (before?.conv !== id) {
+      // Just opened: start at the newest message.
+      scrollToEnd();
+      atEnd.current = true;
+      away.value = false;
+      fresh.value = 0;
+      return;
+    }
+    if (last === before.last) return;
+    const added = messages.slice(messages.findIndex((m) => m.id === before.last) + 1);
+    if (added.some((m) => m.out) || atEnd.current) {
+      scrollToEnd();
+      arrived();
+    } else {
+      fresh.value += added.length;
+    }
+  }, [id, messages]);
+
+  return { away: away.value, fresh: fresh.value, toEnd: () => scrollToEnd('smooth') };
+}
+
 function Conversation({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'conversation' }> }) {
-  const tr = (key: Key) => t(language, key);
-  const end = useRef<HTMLDivElement>(null);
+  const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const confirmingBlock = useSignal(false);
-  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [screen.messages.length]);
+  const scroll = useChatScroll(app, screen.id, screen.messages);
   const time = new Intl.DateTimeFormat(locale(language), { hour: 'numeric', minute: '2-digit' });
   return (
     <main class="page conversation">
@@ -312,19 +382,33 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           </li>
         ))}
       </ol>
-      <div ref={end} />
-      {screen.ended ? (
-        <p class="notice">{tr('conversationEnded')}</p>
-      ) : (
-        <>
-          {screen.error && (
-            <p class="notice" role="alert">
-              {tr(SEND_ERROR_TEXT[screen.error])}
-            </p>
-          )}
-          <Composer language={language} busy={screen.busy} onSend={app.sendMessage} />
-        </>
-      )}
+      <div class="conversation-foot">
+        {(scroll.away || scroll.fresh > 0) && (
+          <button
+            type="button"
+            class="to-end"
+            onClick={scroll.toEnd}
+            aria-label={scroll.fresh > 0 ? tr('newMessages', { count: scroll.fresh }) : tr('toLatest')}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M3.5 6l4.5 4.5L12.5 6" />
+            </svg>
+            {scroll.fresh > 0 && <span class="badge">{t(language, 'unreadCount', { count: scroll.fresh })}</span>}
+          </button>
+        )}
+        {screen.ended ? (
+          <p class="notice">{tr('conversationEnded')}</p>
+        ) : (
+          <>
+            {screen.error && (
+              <p class="notice" role="alert">
+                {tr(SEND_ERROR_TEXT[screen.error])}
+              </p>
+            )}
+            <Composer language={language} busy={screen.busy} onSend={app.sendMessage} />
+          </>
+        )}
+      </div>
     </main>
   );
 }

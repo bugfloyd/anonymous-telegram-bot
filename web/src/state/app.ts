@@ -287,8 +287,8 @@ export function createApp(deps: Deps) {
     if (current.kind === 'home' && !current.busy) {
       screen.value = { ...current, conversations: await conversations() };
     } else if (current.kind === 'conversation' && !current.busy) {
+      // Not marked seen here: only once they're in view (markSeen, from the screen).
       screen.value = { ...current, messages: await listMessages(deps.db, current.id) };
-      seen(current.id);
     }
   }
 
@@ -699,6 +699,11 @@ export function createApp(deps: Deps) {
     },
     retry: () => retry(),
     home: () => showHome(),
+    /** The open conversation's newest messages are in view: tell the other side. */
+    markSeen: () => {
+      const current = currentScreen();
+      if (current.kind === 'conversation') seen(current.id);
+    },
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     deleteConversation,

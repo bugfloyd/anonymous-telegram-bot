@@ -329,6 +329,23 @@ describe('conversations in the app', () => {
     expect(screenOf((await sender.reopen(newPayload)).screen.value, 'conversation').id).toBe(conv);
   });
 
+  it("updates the writer's open chat when the other side reads it", async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    await sender.writeToLink('hello');
+    expect(screenOf(sender.screen.value, 'conversation').messages.map((m) => m.status)).toEqual(['sent']);
+    await owner.showTab('chats');
+    await owner.sync();
+    await owner.openConversation(screenOf(owner.screen.value, 'home').conversations[0]!.id);
+    // The receipt goes in the background; nothing else arrives with it.
+    for (let i = 0; i < 100 && b.sends.length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+    await sender.sync();
+    expect(screenOf(sender.screen.value, 'conversation').messages.map((m) => m.status)).toEqual(['seen']);
+  });
+
   it("says when the day's tokens are used up", async () => {
     const b = await backend();
     const owner = await person(b);

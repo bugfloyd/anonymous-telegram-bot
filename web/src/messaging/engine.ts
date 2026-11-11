@@ -22,7 +22,7 @@ import { withLock } from '../sync/locks';
 import { conversationKey, createConversationKey, hasLinkKey, indexKey, keyFinder, lookupKey } from './keys';
 import { POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessages, getConversation, hasMessage, listMessages, putConversation, setMessageStatus } from './store';
+import { addMessage, deleteMessages, getConversation, hasMessage, listMessages, markOwnSeen, putConversation, setMessageStatus } from './store';
 
 const DAY = 24 * 3600 * 1000;
 /** Messages sent longer ago than this, or later than now plus a day, are dropped (design §10). */
@@ -128,7 +128,8 @@ export function createMessaging(deps: MessagingDeps) {
     await onStored?.();
     try {
       await transmit(conversation.id, { kind: 'message', id, at, text, ...(replyTo ? { replyTo } : {}) });
-      await setMessageStatus(db, id, 'sent');
+      // Unless their receipt came in first.
+      await setMessageStatus(db, id, 'sent', 'sending');
     } catch (err) {
       await setMessageStatus(db, id, 'failed');
       throw err;
@@ -263,7 +264,11 @@ export function createMessaging(deps: MessagingDeps) {
     return token;
   }
 
-  /** Fetches, opens and stores new messages, then confirms them. Returns how many arrived. */
+  /**
+   * Fetches, opens and stores new messages and receipts, then confirms them.
+   * Returns how many changed something shown: new messages, seen receipts
+   * that marked ours, ends.
+   */
   function sync(): Promise<number> {
     return withLock('messaging-sync', async () => {
       let received = 0;
@@ -279,7 +284,7 @@ export function createMessaging(deps: MessagingDeps) {
     });
   }
 
-  /** Handles one inbox item; returns whether it was a new message. */
+  /** Handles one inbox item; returns whether it changed anything shown (a new message, a receipt, an end). */
   async function receive(item: InboxItem): Promise<boolean> {
     let message: Message;
     let keyId: Uint8Array;
@@ -334,7 +339,7 @@ export function createMessaging(deps: MessagingDeps) {
     conv = { ...conv, peerKey: message.from, sendTo: message.reply ?? conv.sendTo, lastReceived: message.id };
     // Shown no later than it arrived, so a fast clock can't push a message above newer ones.
     const at = Math.min(message.at, t);
-    let isNew = false;
+    let changed = false;
     if (message.kind === 'message' && message.text) {
       await addMessage(
         db,
@@ -345,20 +350,16 @@ export function createMessaging(deps: MessagingDeps) {
       conv.lastAt = Math.max(conv.lastAt, at);
       // Something new brings a deleted conversation back.
       conv.hidden = false;
-      isNew = true;
+      changed = true;
     } else if (message.kind === 'seen') {
       // They opened these: our messages in this conversation only.
-      for (const id of message.seen ?? []) await markOwnSeen(conv.id, id);
+      for (const id of message.seen ?? []) if (await markOwnSeen(db, conv.id, id)) changed = true;
     } else if (message.kind === 'end') {
+      changed = conv.status !== 'ended';
       conv.status = 'ended';
     }
     await putConversation(db, conv);
-    return isNew;
-  }
-
-  async function markOwnSeen(conv: string, id: string): Promise<void> {
-    const mine = (await listMessages(db, conv)).find((m) => m.id === id && m.out);
-    if (mine && (mine.status === 'sent' || mine.status === 'sending')) await setMessageStatus(db, id, 'seen');
+    return changed;
   }
 
   async function markRead(conv: string): Promise<void> {
