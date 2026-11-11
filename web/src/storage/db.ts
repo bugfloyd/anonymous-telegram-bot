@@ -8,7 +8,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 export const DB_NAME = 'incognitochat';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export interface StoredKeyPair {
   privateKey: CryptoKey;
@@ -22,6 +22,46 @@ interface Schema extends DBSchema {
   vault: { key: string; value: Uint8Array<ArrayBuffer> };
   /** Small app state: account and device IDs, settings. */
   meta: { key: string; value: unknown };
+  /** Conversations (messaging/store.ts). */
+  conversations: { key: string; value: ConversationRecord };
+  /** Message history, text encrypted under the device's storage key (messaging/store.ts). */
+  messages: { key: string; value: MessageRecord; indexes: { byConversation: [string, number] } };
+}
+
+/** A conversation, as kept on the device. */
+export interface ConversationRecord {
+  id: string;
+  /** owner: someone wrote to our link; sender: we wrote to someone's link. */
+  role: 'owner' | 'sender';
+  /** The link the conversation came through. */
+  link: { id: string; fingerprint: string };
+  label: string;
+  /** The other side's current public key (65 bytes, base64url): for a sender before any reply, the link's key. */
+  peerKey: string;
+  /** Our current conversation public key; null for an owner who hasn't replied yet. */
+  myKey: string | null;
+  /** The mailbox we write to. */
+  sendTo: string;
+  /** The mailbox they write to us at; null for an owner who hasn't replied yet (they write to the link). */
+  myMailbox: string | null;
+  /** Unix ms of the latest message, for ordering. */
+  lastAt: number;
+  unread: number;
+  status: 'active' | 'ended';
+  /** The ID of the last message received from them. */
+  lastReceived: string | null;
+}
+
+/** A message, as kept on the device. Only its text is sealed; times and status are local metadata. */
+export interface MessageRecord {
+  id: string;
+  conv: string;
+  /** Unix ms shown: the sender's time, but never later than when it arrived. */
+  at: number;
+  out: boolean;
+  status: 'sending' | 'sent' | 'failed' | 'received';
+  /** AES-GCM under the storage key: nonce ‖ ciphertext of {text, replyTo}. */
+  sealed: Uint8Array<ArrayBuffer>;
 }
 
 export type Database = IDBPDatabase<Schema>;
@@ -32,6 +72,12 @@ const upgrades: ((db: IDBPDatabase<Schema>) => void)[] = [
     db.createObjectStore('keys');
     db.createObjectStore('vault');
     db.createObjectStore('meta');
+  },
+  // Version 2: messaging.
+  (db) => {
+    db.createObjectStore('conversations', { keyPath: 'id' });
+    const messages = db.createObjectStore('messages', { keyPath: 'id' });
+    messages.createIndex('byConversation', ['conv', 'at']);
   },
 ];
 

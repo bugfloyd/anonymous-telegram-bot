@@ -13,6 +13,7 @@ import { hourFloor } from '../protocol/device-list';
 import { KEY_VALIDITY_SECONDS, keyParts, newLinkId, type LinkRef } from '../protocol/link';
 import { deleteSealed, getKey, getMeta, putMeta, putSealed, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
+import { indexKey, unindexKeys } from '../messaging/keys';
 
 const META_LINKS = 'links';
 const KEY_VAULT = 'vault-key';
@@ -22,8 +23,8 @@ const ID = /^[A-Za-z0-9_-]{11}$/;
 const FP = /^[A-Za-z0-9_-]{43}$/;
 
 export interface LinkRecord extends LinkRef {
-  /** Validity windows of the encryption keys sealed for this link. */
-  keys: { from: number; until: number }[];
+  /** The encryption keys sealed for this link: validity window and public key (base64url). */
+  keys: { from: number; until: number; pub?: string }[];
 }
 
 /** What the server says about this account's links. */
@@ -44,7 +45,7 @@ export function checkAccountInfo(value: unknown): AccountInfo {
 
 /** Vault names for a link's keys. */
 const signingName = (id: string) => `link:${id}:signing`;
-const keyName = (id: string, from: number) => `link:${id}:key:${from}`;
+export const keyName = (id: string, from: number) => `link:${id}:key:${from}`;
 
 export async function listLinks(db: Database): Promise<LinkRecord[]> {
   const value = await getMeta<unknown>(db, META_LINKS);
@@ -102,8 +103,10 @@ export function createLink(db: Database, session: Session, now: () => number = (
         if (err instanceof ApiError && err.code === 'conflict' && attempt < ID_ATTEMPTS) continue;
         throw err;
       }
-      const record: LinkRecord = { id, fingerprint: fp, keys: [{ from, until }] };
+      const record: LinkRecord = { id, fingerprint: fp, keys: [{ from, until, pub: toBase64Url(encryptionKey) }] };
       await putMeta(db, META_LINKS, [...(await listLinks(db)), record]);
+      // First messages to the link are wrapped to this key.
+      await indexKey(db, encryptionKey, { name: keyName(id, from), link: { id, fingerprint: fp } });
       return record;
     }
   });
@@ -124,6 +127,7 @@ export function revokeLink(db: Database, session: Session, id: string): Promise<
       META_LINKS,
       links.filter((l) => l.id !== id),
     );
+    await unindexKeys(db, (e) => e.link?.id === id);
     await deleteSealed(db, signingName(id));
     for (const k of record?.keys ?? []) await deleteSealed(db, keyName(id, k.from));
   });

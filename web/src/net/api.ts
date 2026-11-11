@@ -22,6 +22,9 @@ export type ErrorCode =
   | 'already_member'
   | 'not_member'
   | 'admin_only'
+  | 'invalid_envelope'
+  | 'mailbox_limit'
+  | 'invalid_token'
   | 'internal'
   | 'not_found'
   | 'method_not_allowed';
@@ -46,6 +49,9 @@ const CODES = new Set<string>([
   'already_member',
   'not_member',
   'admin_only',
+  'invalid_envelope',
+  'mailbox_limit',
+  'invalid_token',
   'internal',
   'not_found',
   'method_not_allowed',

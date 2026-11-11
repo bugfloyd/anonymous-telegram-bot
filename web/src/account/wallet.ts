@@ -19,7 +19,7 @@ export const TOKEN_BATCH = 20;
 /** Refill when fewer than this many are left. */
 export const LOW_WATER = 10;
 
-interface StoredToken {
+export interface StoredToken {
   token: string;
   epoch: number;
 }
@@ -78,12 +78,12 @@ export function refillTokens(db: Database, session: Session, issuer: TokenIssuer
 }
 
 /** Takes one token to spend (the oldest still accepted), or null if none are left. */
-export function takeToken(db: Database, now = nowSeconds()): Promise<string | null> {
+export function takeToken(db: Database, now = nowSeconds()): Promise<StoredToken | null> {
   return withLock(LOCK, async () => {
     const tokens = usable(await stored(db), now).sort((a, b) => a.epoch - b.epoch);
     const next = tokens.shift();
     await putMeta(db, META_TOKENS, tokens);
-    return next?.token ?? null;
+    return next ?? null;
   });
 }
 
