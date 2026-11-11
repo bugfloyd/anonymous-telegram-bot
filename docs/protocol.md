@@ -62,6 +62,13 @@ Signed requests carry `X-Device-Signature: <timestamp>.<nonce>.<signature>`
 next to the session token. Nonces are 16–64 base64url characters and are used
 once; timestamps must be within 60 seconds of the server's clock.
 
+**One device per account.** Setting up on a second device replaces the
+account (after a typed confirmation); there is no device linking or sync. A
+device without an account may ask `POST /accounts/lookup {initData}` whether
+its Telegram user has one, to say "your account is on another device" instead
+of offering setup. Like notices, it accepts only a plain or registration
+launch, never one that names a link or an invitation, and stores nothing.
+
 **Device list** (`incognitochat/v2/device-list`), parts in order: suite
 (1 byte), sequence number (8), SHA-256 of the previous list (32; zeros for the
 first), issued (8), expires (8, at most 30 days later), then per device: ID

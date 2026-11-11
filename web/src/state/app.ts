@@ -38,8 +38,11 @@ import { createSession, type Session } from '../net/session';
 import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
 import { openPopup, type Bridge, type PopupButton } from '../platform/telegram';
-import type { Database } from '../storage/db';
+import { deleteMeta, getMeta, putMeta, type Database } from '../storage/db';
 import type { SyncEvent } from '../sync/locks';
+
+/** Set when someone chose to start over on this device, so the setup that follows asks to confirm. */
+const META_START_OVER = 'start-over';
 
 export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 'generic';
 
@@ -94,6 +97,8 @@ export type Screen =
   | { kind: 'reopening' }
   | { kind: 'registering' }
   | { kind: 'confirm-replace'; busy: boolean }
+  /** This Telegram account is set up on another device (one device per account). */
+  | { kind: 'elsewhere' }
   | {
       kind: 'home';
       tab: 'chats' | 'links';
@@ -218,8 +223,44 @@ export function createApp(deps: Deps) {
       screen.value = { kind: 'welcome', mismatch: true };
       return;
     }
-    if (launch.startParam) await rememberLink(db, launch.startParam);
+    if (launch.startParam) {
+      await rememberLink(db, launch.startParam);
+    } else if (!account && (await accountElsewhere())) {
+      // Say so rather than offer setup, which would replace that account.
+      screen.value = { kind: 'elsewhere' };
+      return;
+    }
     screen.value = { kind: 'welcome', mismatch: false };
+  }
+
+  /**
+   * Whether this Telegram account is set up on another device. Asked only on
+   * a plain launch: launch data that names a link would tell the server whose
+   * link this is. If the answer can't be had, setup shows as usual.
+   */
+  async function accountElsewhere(): Promise<boolean> {
+    if (!noticeLaunch || deps.launch.startParam !== '') return false;
+    try {
+      const out = await deps.api!.post('/accounts/lookup', { initData: deps.launch.initData }, checkObject);
+      return out.exists === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * "Start over on this device", from the other-device screen: on a
+   * registration launch, straight to the typed confirmation; otherwise set up
+   * first, and the confirmation comes when the server says the account exists.
+   */
+  async function startOver(): Promise<void> {
+    const account = await readAccount(deps.db);
+    if (account?.state === 'pending' && deps.launch.startParam === REGISTRATION_PREFIX + account.fingerprint) {
+      screen.value = { kind: 'confirm-replace', busy: false };
+      return;
+    }
+    await putMeta(deps.db, META_START_OVER, true);
+    return setUp();
   }
 
   /** A registered device: log in, then show the link it was opened with, or home. */
@@ -672,7 +713,12 @@ export function createApp(deps: Deps) {
       session!.use(await register(deps.db, deps.api!, deps.launch, { replace }));
     } catch (err) {
       if (err instanceof SetupMismatch) screen.value = { kind: 'welcome', mismatch: true };
-      else if (err instanceof ApiError && err.code === 'account_exists') screen.value = { kind: 'confirm-replace', busy: false };
+      else if (err instanceof ApiError && err.code === 'account_exists') {
+        // Set up on another device: say so, unless starting over was chosen already.
+        const chosen = (await getMeta<unknown>(deps.db, META_START_OVER)) === true;
+        await deleteMeta(deps.db, META_START_OVER);
+        screen.value = chosen ? { kind: 'confirm-replace', busy: false } : { kind: 'elsewhere' };
+      }
       // The launch data is only accepted for 10 minutes: reopen for a fresh one.
       else if (err instanceof ApiError && err.code === 'init_data_rejected') fail('expired', () => setUp());
       else if (err instanceof ApiError && err.code === 'rate_limited') fail('rate-limited', () => runRegister(replace));
@@ -695,8 +741,10 @@ export function createApp(deps: Deps) {
     setUpAgain: () => setUp({ restart: true }),
     confirmReplace: () => runRegister(true),
     cancelReplace: () => {
-      screen.value = { kind: 'welcome', mismatch: false };
+      screen.value = { kind: 'elsewhere' };
     },
+    startOver,
+    close: () => deps.bridge?.post('web_app_close'),
     retry: () => retry(),
     home: () => showHome(),
     /** The open conversation's newest messages are in view: tell the other side. */

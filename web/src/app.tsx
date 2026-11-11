@@ -102,6 +102,16 @@ export function App({ app, language }: { app: AppState; language: Language }) {
       );
     case 'registering':
       return <Page title={tr('appName')} body={tr('registering')} busy />;
+    case 'elsewhere':
+      return (
+        <Page title={tr('elsewhereTitle')} body={tr('elsewhereBody')}>
+          <Button onClick={app.close}>{tr('closeApp')}</Button>
+          <p class="muted">{tr('elsewhereLost')}</p>
+          <Button kind="secondary" onClick={app.startOver}>
+            {tr('elsewhereStartOver')}
+          </Button>
+        </Page>
+      );
     case 'confirm-replace':
       return <ConfirmReplace app={app} language={language} busy={screen.busy} />;
     case 'home':

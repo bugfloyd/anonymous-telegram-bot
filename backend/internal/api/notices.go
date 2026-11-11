@@ -49,7 +49,7 @@ func (s *Server) setNotices(ctx context.Context, req httpapi.Request, c caller) 
 		return httpapi.Error(http.StatusNotFound, "not_found")
 	}
 	launch, err := s.Telegram.Verify(in.InitData, s.Now())
-	if err != nil || !NoticeLaunch(launch.StartParam) ||
+	if err != nil || !PlainLaunch(launch.StartParam) ||
 		directory.TelegramHash(s.Pepper, launch.UserID) != c.device.TelegramHash {
 		return httpapi.Error(http.StatusUnauthorized, "init_data_rejected")
 	}
@@ -75,10 +75,11 @@ func (s *Server) setNotices(ctx context.Context, req httpapi.Request, c caller) 
 	return accepted()
 }
 
-// NoticeLaunch reports whether launch data with this start_param may be used
-// to set up notices: a plain launch or a registration, never a link or an
-// invitation.
-func NoticeLaunch(startParam string) bool {
+// PlainLaunch reports whether launch data with this start_param may be sent
+// to the server outside registration (notices, account lookups): a plain
+// launch or a registration, never one that names a link or an invitation,
+// which would tell the server whose link someone opened.
+func PlainLaunch(startParam string) bool {
 	return startParam == "" || strings.HasPrefix(startParam, RegistrationPrefix)
 }
 
