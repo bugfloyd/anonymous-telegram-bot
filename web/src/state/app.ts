@@ -37,7 +37,7 @@ import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
-import type { Bridge } from '../platform/telegram';
+import { openPopup, type Bridge, type PopupButton } from '../platform/telegram';
 import type { Database } from '../storage/db';
 import type { SyncEvent } from '../sync/locks';
 
@@ -46,6 +46,7 @@ export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 
 /** A short message on the home screen after an action. */
 export type HomeNotice =
   | 'blocked'
+  | 'deleted'
   | 'created'
   | 'revoked'
   | 'limit'
@@ -73,7 +74,7 @@ export interface ConversationView {
   lastAt: number;
   status: 'active' | 'ended';
   /** The latest message, if any. */
-  last: { text: string; out: boolean } | null;
+  last: { text: string; out: boolean; status: MessageView['status'] } | null;
 }
 
 /** An invitation code with its shareable URL. */
@@ -291,9 +292,9 @@ export function createApp(deps: Deps) {
   }
 
   async function conversations(): Promise<ConversationView[]> {
-    // Blocked conversations are gone from the list.
+    // Blocked and deleted conversations are gone from the list.
     const list = (await listConversations(deps.db)).filter(
-      (c): c is typeof c & { status: 'active' | 'ended' } => c.status !== 'blocked',
+      (c): c is typeof c & { status: 'active' | 'ended' } => c.status !== 'blocked' && !c.hidden,
     );
     return Promise.all(
       list.map(async (c) => {
@@ -306,7 +307,7 @@ export function createApp(deps: Deps) {
           unread: c.unread,
           lastAt: c.lastAt,
           status: c.status,
-          last: last ? { text: last.text, out: last.out } : null,
+          last: last ? { text: last.text, out: last.out, status: last.status } : null,
         };
       }),
     );
@@ -340,6 +341,26 @@ export function createApp(deps: Deps) {
     }
     deps.broadcast({ type: 'data-changed' });
     return showHome({ tab: 'chats', notice: 'blocked' });
+  }
+
+  /**
+   * Deletes a conversation from this device (and first blocks it, if asked),
+   * then shows the list.
+   */
+  async function deleteConversation(id: string, alsoBlock: boolean): Promise<void> {
+    if (!messaging) return;
+    const current = screen.value;
+    if ((current.kind === 'home' || current.kind === 'conversation') && current.busy) return;
+    if (current.kind === 'home' || current.kind === 'conversation') screen.value = { ...current, busy: true };
+    try {
+      if (alsoBlock) await messaging.block(id);
+      await messaging.remove(id);
+    } catch (err) {
+      if (handleGone(err)) return;
+      return showHome({ tab: 'chats', notice: err instanceof NetworkError ? 'network' : 'generic' });
+    }
+    deps.broadcast({ type: 'data-changed' });
+    return showHome({ tab: 'chats', notice: alsoBlock ? 'blocked' : 'deleted' });
   }
 
   async function openConversation(id: string): Promise<void> {
@@ -672,6 +693,11 @@ export function createApp(deps: Deps) {
     home: () => showHome(),
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
+    deleteConversation,
+    /** Shows a native popup; resolves with the button pressed, or null. */
+    popup: (params: { title?: string; message: string; buttons: PopupButton[] }) =>
+      deps.bridge ? openPopup(deps.bridge, params) : Promise.resolve(null),
+    haptic: () => deps.bridge?.post('web_app_trigger_haptic_feedback', { type: 'impact', impact_style: 'medium' }),
     showTab: (t: 'chats' | 'links') => showHome({ tab: t }),
     sync,
     refresh,

@@ -3,6 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
+import type { MessageView } from './messaging/store';
 import {
   confirmationMatches,
   type AdminNotice,
@@ -35,6 +36,7 @@ const LINK_TEXT: Record<LinkStatus, Key> = {
 
 const NOTICE_TEXT: Record<HomeNotice, Key> = {
   blocked: 'noticeBlocked',
+  deleted: 'noticeDeleted',
   created: 'noticeCreated',
   revoked: 'noticeRevoked',
   limit: 'noticeLimit',
@@ -164,6 +166,8 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
   const canCreate = !offline && !!account?.canCreateLinks && links.length < max;
   const mayJoin = !!invitations && invitations.inviteOnly && !invitations.member && !invitations.admin;
   const mayInvite = !!invitations && invitations.inviteOnly && (invitations.member || invitations.admin);
+  // The chat swiped open to show its Delete button.
+  const revealed = useSignal<string | null>(null);
   const tabs = (
     <div class="tabs" role="tablist">
       {(['chats', 'links'] as const).map((tabName) => (
@@ -203,22 +207,14 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
         ) : (
           <ul class="chats">
             {screen.conversations.map((c) => (
-              <li key={c.id}>
-                <button type="button" class="chat" onClick={() => void app.openConversation(c.id)}>
-                  <span class="chat-top">
-                    <bdi dir="ltr" class="label">
-                      {c.label}
-                    </bdi>
-                    <span class="muted">{relativeTime(language, new Date(c.lastAt))}</span>
-                  </span>
-                  <span class="chat-bottom">
-                    <span class="preview" dir="auto">
-                      {c.last ? (c.last.out ? tr('youWrote', { text: c.last.text }) : c.last.text) : ''}
-                    </span>
-                    {c.unread > 0 && <span class="badge">{t(language, 'unreadCount', { count: c.unread })}</span>}
-                  </span>
-                </button>
-              </li>
+              <ChatRow
+                key={c.id}
+                app={app}
+                language={language}
+                chat={c}
+                revealed={revealed.value === c.id}
+                onReveal={(id) => (revealed.value = id)}
+              />
             ))}
           </ul>
         )}
@@ -294,9 +290,14 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             </Button>
           </div>
         ) : (
-          <button type="button" class="link-button" onClick={() => (confirmingBlock.value = true)}>
-            {tr('block')}
-          </button>
+          <div class="head-actions">
+            <button type="button" class="link-button" disabled={screen.busy} onClick={() => void confirmDelete(app, language, screen.id)}>
+              {tr('delete')}
+            </button>
+            <button type="button" class="link-button" disabled={screen.busy} onClick={() => (confirmingBlock.value = true)}>
+              {tr('block')}
+            </button>
+          </div>
         )}
       </header>
       <ol class="messages">
@@ -306,13 +307,8 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
               {m.text}
             </span>
             <span class="meta">
-              {m.status === 'failed'
-                ? tr('notSent')
-                : m.status === 'sending'
-                  ? tr('sending')
-                  : m.status === 'seen'
-                    ? `${time.format(new Date(m.at))} · ${tr('seen')}`
-                    : time.format(new Date(m.at))}
+              <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
+              {m.out && <Ticks status={m.status} language={language} />}
             </span>
           </li>
         ))}
@@ -331,6 +327,193 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
         </>
       )}
     </main>
+  );
+}
+
+/** Asks, in Telegram's own popup, whether to delete a conversation from this device, or delete and block it. */
+async function confirmDelete(app: AppState, language: Language, id: string): Promise<void> {
+  const choice = await app.popup({
+    message: t(language, 'deleteConfirm'),
+    buttons: [
+      { id: 'delete', type: 'destructive', text: t(language, 'delete') },
+      { id: 'block', type: 'destructive', text: t(language, 'deleteAndBlock') },
+      { id: 'cancel', type: 'cancel' },
+    ],
+  });
+  if (choice === 'delete' || choice === 'block') await app.deleteConversation(id, choice === 'block');
+}
+
+/** Telegram-style delivery marks: a clock while sending, one check when sent, two once seen. */
+function Ticks({ status, language }: { status: MessageView['status']; language: Language }) {
+  switch (status) {
+    case 'sending':
+      return (
+        <svg class="tick" viewBox="0 0 12 12" role="img" aria-label={t(language, 'sending')}>
+          <circle cx="6" cy="6" r="4.75" />
+          <path d="M6 3.5V6l1.75 1.25" />
+        </svg>
+      );
+    case 'sent':
+      return (
+        <svg class="tick" viewBox="0 0 16 12" role="img" aria-label={t(language, 'sent')}>
+          <path d="M1.5 6.5l3.5 3.5L14.5 1.5" />
+        </svg>
+      );
+    case 'seen':
+      return (
+        <svg class="tick" viewBox="0 0 20 12" role="img" aria-label={t(language, 'seen')}>
+          <path d="M1.5 6.5l3.5 3.5L14.5 1.5" />
+          <path d="M9.5 9.5l.5.5L18.5 1.5" />
+        </svg>
+      );
+    case 'failed':
+      return (
+        <svg class="tick failed" viewBox="0 0 12 12" role="img" aria-label={t(language, 'notSent')}>
+          <circle cx="6" cy="6" r="4.75" />
+          <path d="M6 3.5v3M6 8.5v.01" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+/** The Delete button behind a swiped chat, in px. */
+const ACTION_WIDTH = 80;
+const LONG_PRESS_MS = 500;
+/** How far a finger moves before it counts as a swipe or a scroll, in px. */
+const SLOP = 10;
+
+type Gesture = { x: number; y: number; pointer: number; mode: 'pending' | 'swipe' | 'scroll'; base: number; timer: number; pressed: boolean };
+
+/**
+ * A chat in the list. Tap opens it; swiping it toward the start reveals
+ * Delete; a long press (or a right click) asks to delete it straight away.
+ */
+function ChatRow({
+  app,
+  language,
+  chat: c,
+  revealed,
+  onReveal,
+}: {
+  app: AppState;
+  language: Language;
+  chat: Extract<Screen, { kind: 'home' }>['conversations'][number];
+  revealed: boolean;
+  onReveal: (id: string | null) => void;
+}) {
+  const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
+  const gesture = useRef<Gesture | null>(null);
+  const suppressClick = useRef(false);
+  // How far the chat is pulled aside while dragging; null when not dragging.
+  const dragging = useSignal<number | null>(null);
+  const shown = dragging.value ?? (revealed ? ACTION_WIDTH : 0);
+  // Swipes go toward the inline start: left in English, right in Persian.
+  const direction = () => (document.documentElement.dir === 'rtl' ? -1 : 1);
+
+  const longPress = () => {
+    const g = gesture.current;
+    if (g && (g.pressed || g.mode !== 'pending')) return;
+    if (g) {
+      g.pressed = true;
+      clearTimeout(g.timer);
+      suppressClick.current = true;
+    }
+    onReveal(null);
+    app.haptic();
+    void confirmDelete(app, language, c.id);
+  };
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    gesture.current = {
+      x: e.clientX,
+      y: e.clientY,
+      pointer: e.pointerId,
+      mode: 'pending',
+      base: revealed ? ACTION_WIDTH : 0,
+      timer: window.setTimeout(longPress, LONG_PRESS_MS),
+      pressed: false,
+    };
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    const g = gesture.current;
+    if (!g || e.pointerId !== g.pointer || g.pressed) return;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    if (g.mode === 'pending') {
+      if (Math.abs(dx) < SLOP && Math.abs(dy) < SLOP) return;
+      clearTimeout(g.timer);
+      g.mode = Math.abs(dx) > Math.abs(dy) ? 'swipe' : 'scroll';
+      if (g.mode === 'swipe') (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    }
+    if (g.mode === 'swipe') dragging.value = Math.min(ACTION_WIDTH, Math.max(0, g.base - dx * direction()));
+  };
+  const onPointerEnd = (e: PointerEvent) => {
+    const g = gesture.current;
+    if (!g || e.pointerId !== g.pointer) return;
+    clearTimeout(g.timer);
+    gesture.current = null;
+    if (g.mode !== 'swipe') return;
+    suppressClick.current = true;
+    const open = (dragging.value ?? 0) > ACTION_WIDTH / 2;
+    dragging.value = null;
+    onReveal(open ? c.id : null);
+  };
+  const onClick = () => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    if (revealed) return onReveal(null);
+    void app.openConversation(c.id);
+  };
+
+  return (
+    <li class={dragging.value === null ? 'chat-row' : 'chat-row dragging'}>
+      <button
+        type="button"
+        class="chat-action"
+        tabIndex={shown > 0 ? 0 : -1}
+        aria-hidden={shown === 0}
+        onClick={() => {
+          onReveal(null);
+          void confirmDelete(app, language, c.id);
+        }}
+      >
+        {tr('delete')}
+      </button>
+      <button
+        type="button"
+        class="chat"
+        style={{ transform: `translateX(${-shown * direction()}px)` }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          longPress();
+        }}
+        onClick={onClick}
+      >
+        <span class="chat-top">
+          <bdi dir="ltr" class="label">
+            {c.label}
+          </bdi>
+          <span class="muted chat-time">
+            {c.last?.out && <Ticks status={c.last.status} language={language} />}
+            {relativeTime(language, new Date(c.lastAt))}
+          </span>
+        </span>
+        <span class="chat-bottom">
+          <span class="preview" dir="auto">
+            {c.last ? (c.last.out ? tr('youWrote', { text: c.last.text }) : c.last.text) : ''}
+          </span>
+          {c.unread > 0 && <span class="badge">{t(language, 'unreadCount', { count: c.unread })}</span>}
+        </span>
+      </button>
+    </li>
   );
 }
 

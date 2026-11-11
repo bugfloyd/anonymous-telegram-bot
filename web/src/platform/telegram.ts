@@ -20,6 +20,7 @@ export interface IncomingEvents {
   write_access_requested: { status: 'allowed' | 'cancelled' };
   fullscreen_changed: { is_fullscreen: boolean };
   visibility_changed: { is_visible: boolean };
+  popup_closed: { button_id?: string };
 }
 
 /** Events we send. */
@@ -34,11 +35,19 @@ export interface OutgoingEvents {
   web_app_request_content_safe_area: undefined;
   web_app_setup_back_button: { is_visible: boolean };
   web_app_request_write_access: undefined;
+  web_app_open_popup: PopupParams;
   web_app_open_tg_link: { path_full: string };
   web_app_trigger_haptic_feedback:
     | { type: 'impact'; impact_style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' }
     | { type: 'notification'; notification_type: 'error' | 'success' | 'warning' }
     | { type: 'selection_change' };
+}
+
+/** A native Telegram popup: up to three buttons; ok, close and cancel take no text. */
+export interface PopupParams {
+  title?: string;
+  message: string;
+  buttons: PopupButton[];
 }
 
 type Handler<K extends keyof IncomingEvents> = (data: IncomingEvents[K]) => void;
@@ -130,4 +139,25 @@ export function connectTelegram(inTelegram: boolean, win: TelegramWindow = windo
 
   if (inIframe) bridge.post('iframe_ready', { reload_supported: true });
   return bridge;
+}
+
+export type PopupButton = { id: string; type: 'default' | 'destructive'; text: string } | { id: string; type: 'ok' | 'close' | 'cancel' };
+
+const popupsOpen = new WeakSet<Bridge>();
+
+/**
+ * Shows a native popup and resolves with the pressed button's ID, or null if
+ * it was dismissed (or another popup is already open).
+ */
+export function openPopup(bridge: Bridge, params: { title?: string; message: string; buttons: PopupButton[] }): Promise<string | null> {
+  if (popupsOpen.has(bridge)) return Promise.resolve(null);
+  popupsOpen.add(bridge);
+  return new Promise((resolve) => {
+    const off = bridge.on('popup_closed', (data) => {
+      off();
+      popupsOpen.delete(bridge);
+      resolve(data.button_id || null);
+    });
+    bridge.post('web_app_open_popup', params as PopupParams);
+  });
 }

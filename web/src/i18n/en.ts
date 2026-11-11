@@ -94,6 +94,11 @@ export const en = {
   errorNoTokens: "You've sent a lot today. Try again tomorrow.",
   errorTooFast: 'Too many messages to this person right now. Try again in a minute.',
   seen: 'Seen',
+  sent: 'Sent',
+  delete: 'Delete',
+  deleteAndBlock: 'Delete and block',
+  deleteConfirm: "Delete this conversation from this device? They keep their copy and aren't told. If they write again, it comes back.",
+  noticeDeleted: 'Conversation deleted from this device.',
   block: 'Block',
   blockConfirmOwner:
     "Block this person? You won't get messages from them again, here or in new conversations through this link. They won't be told.",

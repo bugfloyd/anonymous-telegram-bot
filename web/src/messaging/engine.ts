@@ -22,7 +22,7 @@ import { withLock } from '../sync/locks';
 import { conversationKey, createConversationKey, hasLinkKey, indexKey, keyFinder, lookupKey } from './keys';
 import { POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, getConversation, hasMessage, listMessages, putConversation, setMessageStatus } from './store';
+import { addMessage, deleteMessages, getConversation, hasMessage, listMessages, putConversation, setMessageStatus } from './store';
 
 const DAY = 24 * 3600 * 1000;
 /** Messages sent longer ago than this, or later than now plus a day, are dropped (design §10). */
@@ -124,7 +124,7 @@ export function createMessaging(deps: MessagingDeps) {
     const id = newId();
     const at = now();
     await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text, ...(replyTo ? { replyTo } : {}) });
-    await putConversation(db, { ...conversation, lastAt: at });
+    await putConversation(db, { ...conversation, lastAt: at, hidden: false });
     await onStored?.();
     try {
       await transmit(conversation.id, { kind: 'message', id, at, text, ...(replyTo ? { replyTo } : {}) });
@@ -197,6 +197,21 @@ export function createMessaging(deps: MessagingDeps) {
     }
     if (c.role === 'owner' && c.tag) await addBlockedTag(c.link.id, c.tag);
     await putConversation(db, { ...c, status: 'blocked', unread: 0 });
+  }
+
+  /**
+   * Deletes a conversation from this device only: its messages go, and it
+   * leaves the list. The other side keeps theirs and isn't told. Its keys
+   * and mailbox stay, so if they write again it comes back, as in Telegram;
+   * block() is for never hearing from them again.
+   */
+  async function remove(conv: string): Promise<void> {
+    await withLock(`send:${conv}`, async () => {
+      const c = await getConversation(db, conv);
+      if (!c) return;
+      await deleteMessages(db, conv);
+      await putConversation(db, { ...c, unread: 0, hidden: true });
+    });
   }
 
   async function blockedTags(): Promise<Set<string>> {
@@ -327,6 +342,8 @@ export function createMessaging(deps: MessagingDeps) {
       );
       conv.unread += 1;
       conv.lastAt = Math.max(conv.lastAt, at);
+      // Something new brings a deleted conversation back.
+      conv.hidden = false;
       isNew = true;
     } else if (message.kind === 'seen') {
       // They opened these: our messages in this conversation only.
@@ -382,7 +399,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sync, markRead, markSeen, block, maintain };
+  return { startConversation, send, sync, markRead, markSeen, block, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

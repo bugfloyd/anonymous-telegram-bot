@@ -255,6 +255,41 @@ describe('conversations in the app', () => {
     expect(screenOf(app.screen.value, 'home').askNotices).toBe(false);
   });
 
+  it('deletes a conversation from the list, and brings it back when they write again', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    await sender.writeToLink('hello');
+    await owner.showTab('chats');
+    await owner.sync();
+    const id = screenOf(owner.screen.value, 'home').conversations[0]!.id;
+
+    await owner.deleteConversation(id, false);
+    const home = screenOf(owner.screen.value, 'home');
+    expect(home.notice).toBe('deleted');
+    expect(home.conversations).toEqual([]);
+
+    // The sender still has theirs, and writing again brings it back with only the new message.
+    await sender.sendMessage('anyone?');
+    await owner.sync();
+    const back = screenOf(owner.screen.value, 'home').conversations;
+    expect(back.map((c) => [c.id, c.last?.text, c.unread])).toEqual([[id, 'anyone?', 1]]);
+  });
+
+  it('shows the delivery state of the last message in the list', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    await sender.writeToLink('hello');
+    await sender.home();
+    await sender.showTab('chats');
+    expect(screenOf(sender.screen.value, 'home').conversations[0]!.last).toMatchObject({ out: true, status: 'sent' });
+  });
+
   it("says when the day's tokens are used up", async () => {
     const b = await backend();
     const owner = await person(b);
