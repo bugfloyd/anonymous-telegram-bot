@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { openChannel, withLock, type SyncEvent } from './locks';
+import { openChannel, useProfile, withLock, type SyncEvent } from './locks';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -56,5 +56,21 @@ describe('openChannel', () => {
     expect(received).toEqual([{ type: 'keys-changed' }]);
     a!.close();
     b!.close();
+  });
+});
+
+describe('profiles', () => {
+  it('keep channels apart', async () => {
+    const received: SyncEvent[] = [];
+    useProfile('p1');
+    const a = openChannel(() => {});
+    useProfile('p2');
+    const b = openChannel((e) => received.push(e));
+    a!.send({ type: 'account-changed' });
+    await sleep(20);
+    expect(received).toEqual([]);
+    a!.close();
+    b!.close();
+    useProfile('');
   });
 });

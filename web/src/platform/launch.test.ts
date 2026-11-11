@@ -38,6 +38,7 @@ describe('parseLaunch', () => {
       themeParams: {},
       userLanguage: '',
       allowsWriteToPm: false,
+      userId: '',
     });
     expect(isTelegramLaunch(launch)).toBe(false);
   });
@@ -48,6 +49,15 @@ describe('parseLaunch', () => {
     expect(user('{"id":1,"language_code":"<script>"}')).toBe('');
     expect(user('{"id":1}')).toBe('');
     expect(user('not json')).toBe('');
+  });
+
+  it('reads the user ID only when it is a plain positive integer', () => {
+    const id = (u: string) => parseLaunch('tgWebAppData=' + encodeURIComponent('user=' + encodeURIComponent(u))).userId;
+    expect(id('{"id":123456789,"first_name":"A"}')).toBe('123456789');
+    expect(id('{"id":"123"}')).toBe('');
+    expect(id('{"id":-5}')).toBe('');
+    expect(id('{"id":1.5}')).toBe('');
+    expect(id('{}')).toBe('');
   });
 
   it('reads whether the bot may already message the user', () => {
