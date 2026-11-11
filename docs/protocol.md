@@ -163,6 +163,29 @@ the owner and carries its reply mailbox; from then on each side writes for the
 other's latest conversation key. Both sides rotate their own conversation key
 about weekly, each conversation on its own schedule.
 
+## Key rotation
+
+Encryption keys are replaced about weekly and old private keys deleted, so a
+key stolen later can't open envelopes someone kept from long before.
+
+- **Our conversation key:** every 6 to 9 days, on each conversation's own
+  random schedule, the next message or receipt in it comes from a new key
+  (its `from`); nothing is sent just to rotate. Not before the other side has
+  written to us, since until then they know us by our first key alone.
+- **A link's encryption key:** every 6 to 9 days, when the app opens, the
+  owner publishes a new key (`PUT /links/{id}/keys`); the bundle then lists
+  only the new key. A sender the owner hasn't answered yet fetches the bundle
+  again before writing if the key it has is over an hour old.
+- **Deleting old keys:** an old conversation key is deleted 35 days after the
+  other side first writes to the new one; an old link key 35 days after it is
+  replaced (or after the link is). Undelivered envelopes expire after 30 days,
+  so nothing that can still arrive is written for a deleted key. If the other
+  side never writes to the new key, the old one stays.
+- Blocking a conversation deletes its keys at the next upkeep.
+
+Rotation is invisible to users: labels come from sender tags, not keys, and
+the history kept on the device is sealed under the device's storage key.
+
 ## Delivery
 
 The server routes by **mailbox** (16 random bytes), never by account. It knows

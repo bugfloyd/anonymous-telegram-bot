@@ -23,11 +23,9 @@ import { hourFloor } from '../protocol/device-list';
 import { KEY_VALIDITY_SECONDS, keyParts, newLinkId, type LinkRef } from '../protocol/link';
 import { deleteSealed, getKey, getMeta, getSealed, putMeta, putSealed, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
-import { indexKey, unindexKeys } from '../messaging/keys';
+import { indexKey, KEY_RETENTION_MS, scheduleKeyDeletion, unindexKeys } from '../messaging/keys';
 
 const META_LINKS = 'links';
-/** Links replaced by a new one, kept with their keys until messages sent before can no longer arrive. */
-const META_RETIRED = 'links-retired';
 /** The account's link signing key (sealed), and its public key (meta). */
 const SIGNING = 'link-signing';
 const META_SIGNING_PUBLIC = 'link-signing-public';
@@ -40,7 +38,14 @@ const FP = /^[A-Za-z0-9_-]{43}$/;
 export interface LinkRecord extends LinkRef {
   /** The encryption keys sealed for this link: validity window and public key (base64url). */
   keys: { from: number; until: number; pub?: string }[];
+  /** Unix seconds when the link next gets a new encryption key (weekly, jittered). */
+  rotateAt?: number;
 }
+
+/** Link encryption keys are replaced every 6 to 9 days (design D11). */
+const ROTATE_MIN = 6 * 24 * 3600;
+const ROTATE_SPREAD = 3 * 24 * 3600;
+const nextRotation = (now: number) => now + ROTATE_MIN + Math.floor(Math.random() * ROTATE_SPREAD);
 
 /** What the server says about this account's links. */
 export interface AccountInfo {
@@ -160,18 +165,91 @@ async function makeLink(db: Database, session: Session, now: () => number, repla
       if (err instanceof ApiError && err.code === 'conflict' && attempt < ID_ATTEMPTS) continue;
       throw err;
     }
-    const record: LinkRecord = { id, fingerprint: signing.fp, keys: [{ from, until, pub: toBase64Url(encryptionKey) }] };
+    const record: LinkRecord = {
+      id,
+      fingerprint: signing.fp,
+      keys: [{ from, until, pub: toBase64Url(encryptionKey) }],
+      rotateAt: nextRotation(now()),
+    };
     await putMeta(db, META_LINKS, [...(await listLinks(db)).filter((l) => l.id !== replaces?.id), record]);
     if (replaces) {
-      // Its keys stay a while: first messages sent before the replacement
-      // may still be waiting in the inbox.
-      const retired = await getMeta<unknown>(db, META_RETIRED);
-      await putMeta(db, META_RETIRED, [...(Array.isArray(retired) ? retired : []), { ...replaces, retiredAt: now() }]);
+      // Its keys stay until first messages sent before the replacement can
+      // no longer be waiting in the inbox.
+      await scheduleKeyDeletion(db, (e) => e.link?.id === replaces.id, now() * 1000 + KEY_RETENTION_MS);
     }
     // First messages to the link are wrapped to this key.
     await indexKey(db, encryptionKey, { name: keyName(id, from), link: { id, fingerprint: signing.fp } });
     return record;
   }
+}
+
+/**
+ * Gives the link a new encryption key when its turn comes (design D11). The
+ * bundle then lists only the new key, so new first messages go to it; the
+ * old key is kept until anything written to it has expired from the inbox.
+ * Senders not answered yet fetch the current key before writing again. Run
+ * at upkeep; `now` in Unix seconds. Returns whether it rotated.
+ */
+export function rotateLinkKey(db: Database, session: Session, now: number): Promise<boolean> {
+  return withLock(LOCK, async () => {
+    const links = await listLinks(db);
+    const link = links[links.length - 1];
+    if (!link) return false;
+    const save = (changed: LinkRecord) => putMeta(db, META_LINKS, links.map((l) => (l.id === changed.id ? changed : l)));
+    if (link.rotateAt === undefined) {
+      // A link from before rotation: start its schedule.
+      await save({ ...link, rotateAt: nextRotation(now) });
+      return false;
+    }
+    if (now < link.rotateAt) return false;
+    const vaultKey = await getKey(db, KEY_VAULT);
+    if (!vaultKey) return false;
+    const signingKey = await signingKeyFor(db, vaultKey, link);
+    if (!signingKey) return false;
+
+    const encryption = await generateCopyableAgreementKey();
+    const encryptionKey = await exportPublicKey(encryption.publicKey);
+    // Back-dated like a new link's, but never to before the key it replaces,
+    // since senders take the newest.
+    const newest = Math.max(...link.keys.map((k) => k.from));
+    const from = Math.min(hourFloor(now), Math.max(hourFloor(now) - 3600 * Math.floor(Math.random() * 12), newest + 3600));
+    const until = from + KEY_VALIDITY_SECONDS;
+    const signature = await sign(signingKey, LABEL_LINK_KEY, ...keyParts(encryptionKey, from, until));
+    const name = keyName(link.id, from);
+    await putSealed(db, name, await seal(vaultKey, encryption.privateKey, name));
+    try {
+      await session.call(
+        'PUT',
+        `/links/${link.id}/keys`,
+        { keys: [{ key: toBase64Url(encryptionKey), from, until, signature: toBase64Url(signature) }] },
+        checkObject,
+        { sign: true },
+      );
+    } catch (err) {
+      await deleteSealed(db, name);
+      // Gone (replaced or revoked elsewhere): nothing to rotate.
+      if (err instanceof ApiError && err.code === 'not_found') return false;
+      throw err;
+    }
+    await indexKey(db, encryptionKey, { name, link: { id: link.id, fingerprint: link.fingerprint } });
+    await scheduleKeyDeletion(db, (e) => e.link?.id === link.id && e.name !== name, now * 1000 + KEY_RETENTION_MS);
+    await save({
+      ...link,
+      // Keys deleted long ago drop off the record.
+      keys: [...link.keys.filter((k) => k.until + KEY_RETENTION_MS / 1000 > now), { from, until, pub: toBase64Url(encryptionKey) }],
+      rotateAt: nextRotation(now),
+    });
+    return true;
+  });
+}
+
+/** The private key that signs this link's encryption keys. */
+async function signingKeyFor(db: Database, vaultKey: CryptoKey, link: LinkRecord): Promise<CryptoKey | null> {
+  const account = await linkSigningKey(db, vaultKey);
+  if (account.fp === link.fingerprint) return account.privateKey;
+  // A link made when each had its own signing key.
+  const sealed = await getSealed(db, signingName(link.id));
+  return sealed ? unseal(vaultKey, sealed, signingName(link.id), SIGNING_IMPORT, ['sign']) : null;
 }
 
 /**
