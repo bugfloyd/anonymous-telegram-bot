@@ -13,8 +13,10 @@ export interface Launch {
   startParam: string;
   /** Theme colours from Telegram, if any. */
   themeParams: Record<string, string>;
-  /** The language Telegram reports for the user ('' if none). Nothing else is read from the user. */
+  /** The language Telegram reports for the user ('' if none). */
   userLanguage: string;
+  /** Whether the user already lets the bot message them. Nothing else is read from the user. */
+  allowsWriteToPm: boolean;
 }
 
 /** Parses launch parameters from a URL fragment (with or without the leading '#') and query string. */
@@ -30,18 +32,23 @@ export function parseLaunch(fragment: string, search = ''): Launch {
     // The signed value wins; the URL copies are only a fallback.
     startParam: signed.get('start_param') ?? query.get('tgWebAppStartParam') ?? hash.get('tgWebAppStartParam') ?? '',
     themeParams: parseTheme(hash.get('tgWebAppThemeParams')),
-    userLanguage: parseUserLanguage(signed.get('user')),
+    ...parseUser(signed.get('user')),
   };
 }
 
-function parseUserLanguage(raw: string | null): string {
-  if (!raw) return '';
+function parseUser(raw: string | null): { userLanguage: string; allowsWriteToPm: boolean } {
+  const none = { userLanguage: '', allowsWriteToPm: false };
+  if (!raw) return none;
   try {
     const user: unknown = JSON.parse(raw);
-    const code = user && typeof user === 'object' ? (user as { language_code?: unknown }).language_code : undefined;
-    return typeof code === 'string' && /^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})?$/.test(code) ? code : '';
+    if (!user || typeof user !== 'object') return none;
+    const { language_code: code, allows_write_to_pm: allows } = user as { language_code?: unknown; allows_write_to_pm?: unknown };
+    return {
+      userLanguage: typeof code === 'string' && /^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})?$/.test(code) ? code : '',
+      allowsWriteToPm: allows === true,
+    };
   } catch {
-    return '';
+    return none;
   }
 }
 

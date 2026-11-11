@@ -19,9 +19,10 @@ describe('i18n', () => {
   });
 
   it('fills placeholders, with Persian digits in Persian', () => {
-    expect(t('en', 'openedInTelegram', { platform: 'android' })).toBe('Opened in Telegram (android)');
-    expect(t('fa', 'openedInTelegram', { platform: 'android' })).toBe('در تلگرام باز شده (android)');
-    expect(t('en', 'openedInTelegram')).toBe('Opened in Telegram ({platform})');
+    expect(t('en', 'replaceType', { phrase: 'start over' })).toBe('To continue, type start over');
+    expect(t('fa', 'replaceType', { phrase: 'شروع دوباره' })).toBe('برای ادامه، عبارت شروع دوباره را بنویسید');
+    expect(t('en', 'replaceType')).toBe('To continue, type {phrase}');
+    expect(t('fa', 'replaceType', { phrase: 3 })).toBe('برای ادامه، عبارت ۳ را بنویسید');
   });
 
   it('formats relative times', () => {

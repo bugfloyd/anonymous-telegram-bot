@@ -10,6 +10,7 @@ import { concat, utf8 } from './encoding';
 
 export const LABEL_SESSION = 'incognitochat/v2/session';
 export const LABEL_REGISTER = 'incognitochat/v2/register';
+export const LABEL_DEVICE_LIST = 'incognitochat/v2/device-list';
 
 const ECDSA: EcdsaParams = { name: 'ECDSA', hash: 'SHA-256' };
 
@@ -28,6 +29,11 @@ export function message(label: string, ...parts: (string | Uint8Array)[]): Uint8
 /** Signs a message; WebCrypto returns r‖s (P1363, 64 bytes). */
 export async function sign(privateKey: CryptoKey, label: string, ...parts: (string | Uint8Array)[]): Promise<Uint8Array<ArrayBuffer>> {
   return new Uint8Array(await crypto.subtle.sign(ECDSA, privateKey, message(label, ...parts)));
+}
+
+/** Signs an already encoded message, such as a device list. */
+export async function signEncoded(privateKey: CryptoKey, encoded: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  return new Uint8Array(await crypto.subtle.sign(ECDSA, privateKey, encoded));
 }
 
 /** Verifies a signature made by sign. */
