@@ -17,3 +17,8 @@ output "webhook_url" {
   value       = aws_lambda_function_url.bot.function_url
   sensitive   = true
 }
+
+output "bot_function_name" {
+  description = "The bot function, which the deploy invokes to register the webhook"
+  value       = aws_lambda_function.fn["bot"].function_name
+}

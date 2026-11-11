@@ -335,6 +335,21 @@ jobs:
           fi
           echo "Webhook reachable (HTTP 404 until the bot is built)"
 
+      # The bot registers its own webhook (with its secret) and menu button:
+      # neither the bot token nor the webhook secret passes through CI.
+      - name: Set up the bot
+        working-directory: infra
+        run: |
+          function=$(terraform output -raw bot_function_name)
+          payload=$(jq -nc --arg url "$WEBHOOK_URL" '{setup: {webhookUrl: $url}}')
+          failed=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
+            --payload "$payload" --query FunctionError --output text "$RUNNER_TEMP/bot-setup.json")
+          if [ "$failed" != "None" ] || ! jq -e '.ok == true' "$RUNNER_TEMP/bot-setup.json" >/dev/null; then
+            echo "::error::Bot setup failed"
+            exit 1
+          fi
+          echo "Webhook, menu button and /start command are set"
+
       - name: Smoke test – sockets refuse unauthenticated connections
         run: |
           status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \

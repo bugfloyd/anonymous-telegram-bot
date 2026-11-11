@@ -25,7 +25,8 @@ locals {
         ADMIN_TELEGRAM_IDS       = var.admin_telegram_ids
       }
     }
-    # Telegram webhook: opens the app, cleans up service messages.
+    # Telegram webhook: opens the app, cleans up service messages. The deploy
+    # invokes it once with a setup event to register the webhook.
     bot = {
       timeout    = 10
       tables     = []
@@ -33,6 +34,8 @@ locals {
       environment = {
         PARAM_BOT_TOKEN      = aws_ssm_parameter.parameter["bot-token"].name
         PARAM_WEBHOOK_SECRET = aws_ssm_parameter.parameter["webhook-secret"].name
+        # The Mini App the bot's button opens: the client's origin.
+        APP_URL = "${var.client_origins[0]}/"
       }
     }
     # WebSocket $connect / $disconnect.
