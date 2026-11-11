@@ -81,6 +81,7 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
         return check({ code });
       }
       if (path === '/invitations/redeem') {
+        if (body.code === 'mmmm-nnnn') throw new ApiError(409, 'own_invitation');
         const c = state.codes.get(body.code as string);
         if (!c || c.left === 0) throw new ApiError(404, 'invalid_invitation');
         if (state.member) throw new ApiError(409, 'already_member');
@@ -441,6 +442,14 @@ describe('invitations', () => {
     expect(home(user.app.screen.value).notice).toBe('joined');
     await user.app.redeem('abcd-efgh');
     expect(home(user.app.screen.value).notice).toBe('invalid-invitation'); // used up
+  });
+
+  it("says when it's your own invitation code", async () => {
+    const server = fakeServer();
+    server.state.inviteOnly = true;
+    const user = await registered(server.api);
+    await user.app.redeem('mmmm-nnnn');
+    expect(home(user.app.screen.value).notice).toBe('own-invitation');
   });
 
   it('remembers an invitation opened before setup', async () => {

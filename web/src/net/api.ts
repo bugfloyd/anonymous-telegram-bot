@@ -20,6 +20,7 @@ export type ErrorCode =
   | 'no_invitations_left'
   | 'invalid_invitation'
   | 'already_member'
+  | 'own_invitation'
   | 'not_member'
   | 'admin_only'
   | 'invalid_envelope'
@@ -47,6 +48,7 @@ const CODES = new Set<string>([
   'no_invitations_left',
   'invalid_invitation',
   'already_member',
+  'own_invitation',
   'not_member',
   'admin_only',
   'invalid_envelope',

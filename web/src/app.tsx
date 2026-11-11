@@ -45,6 +45,7 @@ const NOTICE_TEXT: Record<HomeNotice, Key> = {
   joined: 'noticeJoined',
   'invalid-invitation': 'noticeInvalidInvitation',
   'already-member': 'noticeAlreadyMember',
+  'own-invitation': 'noticeOwnInvitation',
   'rate-limited': 'noticeRateLimited',
   network: 'errorNetwork',
   generic: 'errorGeneric',

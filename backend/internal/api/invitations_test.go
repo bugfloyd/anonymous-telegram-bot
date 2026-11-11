@@ -57,6 +57,10 @@ func TestInvitationChain(t *testing.T) {
 	wantError(t, status, out, http.StatusNotFound, "invalid_invitation")
 	status, out = h.as(t, bob, http.MethodPost, "/invitations/redeem", map[string]any{"code": "not a code"}, false)
 	wantError(t, status, out, http.StatusNotFound, "invalid_invitation")
+	// The admin can't redeem one (they don't need it), not even their own,
+	// and that uses nothing up.
+	status, out = h.as(t, admin, http.MethodPost, "/invitations/redeem", map[string]any{"code": code}, false)
+	wantError(t, status, out, http.StatusConflict, "already_member")
 
 	// The admin sees how much of the code is used.
 	_, out = h.as(t, admin, http.MethodGet, "/invitations", nil, false)

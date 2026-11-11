@@ -236,6 +236,9 @@ func (m *memDirectory) Redeem(_ context.Context, account, code string) (int, err
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.codes[code]
+	if ok && c.owner == account {
+		return 0, directory.ErrOwnInvitation
+	}
 	if !ok || c.left == 0 {
 		return 0, directory.ErrNotFound
 	}
