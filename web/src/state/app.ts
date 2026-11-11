@@ -35,6 +35,7 @@ import { createMessaging, NoTokens, type Messaging } from '../messaging/engine';
 import { listConversations, listMessages, type MessageView } from '../messaging/store';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
+import { createPushSocket } from '../net/socket';
 import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
 import { openPopup, type Bridge, type PopupButton } from '../platform/telegram';
@@ -153,6 +154,8 @@ export interface Deps {
 
 /** How often an open app checks its inbox (until sockets arrive in phase 3). */
 const POLL_MS = 20_000;
+/** While a push socket is open, poll only every this many POLL_MS. */
+const SOCKET_POLL_EVERY = 6;
 
 /** A link of this account, with its shareable URL. */
 export interface LinkView extends LinkRecord {
@@ -295,11 +298,30 @@ export function createApp(deps: Deps) {
     if (online) await sync();
     if (deps.background === false || backgroundStarted || typeof document === 'undefined') return;
     backgroundStarted = true;
+    // Shown: the page is visible and Telegram hasn't minimised the app.
+    let telegramVisible = true;
+    const shown = () => document.visibilityState === 'visible' && telegramVisible;
+    // Pushes, while shown (hidden, the server sends a Telegram notice instead).
+    const socket =
+      deps.config?.wsUrl && session
+        ? createPushSocket({ url: deps.config.wsUrl, token: () => session.token(), onHint: () => void sync() })
+        : null;
+    const visibility = () => {
+      socket?.setVisible(shown());
+      if (shown()) void sync();
+    };
+    socket?.setVisible(shown());
+    socket?.start();
+    // With a socket open, polling is only a safety net.
+    let ticks = 0;
     setInterval(() => {
-      if (document.visibilityState === 'visible') void sync();
+      ticks++;
+      if (shown() && (!socket?.connected || ticks % SOCKET_POLL_EVERY === 0)) void sync();
     }, POLL_MS);
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') void sync();
+    document.addEventListener('visibilitychange', visibility);
+    deps.bridge?.on('visibility_changed', ({ is_visible }) => {
+      telegramVisible = is_visible;
+      visibility();
     });
     // Upkeep at a random moment soon after opening, unrelated to anything
     // the user does, so the first send rarely has to fetch tokens itself.

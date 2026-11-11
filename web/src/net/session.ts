@@ -17,6 +17,8 @@ export interface Session {
   call<T>(method: Method, path: string, body: unknown, check: (value: unknown) => T, options?: { sign?: boolean }): Promise<T>;
   /** Uses a token just received (from registration). */
   use(token: TokenResponse): void;
+  /** A current session token (for the push socket), logging in if needed. */
+  token(): Promise<string>;
 }
 
 export function createSession(db: Database, api: Api, now: () => number = () => Math.floor(Date.now() / 1000)): Session {
@@ -31,6 +33,7 @@ export function createSession(db: Database, api: Api, now: () => number = () => 
     use(t) {
       current = t;
     },
+    token,
     async call(method, path, body, check, options = {}) {
       const text = body === undefined ? '' : JSON.stringify(body);
       for (let attempt = 0; ; attempt++) {

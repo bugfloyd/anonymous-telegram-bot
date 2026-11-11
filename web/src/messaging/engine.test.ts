@@ -65,6 +65,7 @@ async function fakeBackend() {
     inboxes.set(account, []);
     return {
       use: () => {},
+      token: async () => 'v1.test.token',
       async call(method, path, body, check) {
         const b = (body ?? {}) as Record<string, unknown>;
         if (path === '/mailboxes') {
