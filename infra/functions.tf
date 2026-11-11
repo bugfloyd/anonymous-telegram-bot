@@ -54,14 +54,19 @@ locals {
         PARAM_SESSION_KEY = aws_ssm_parameter.parameter["session-key"].name
       }
     }
-    # Generic "New message" notices through the bot.
+    # Generic "New message" notices through the bot. api invokes it to seal
+    # chat IDs, and without waiting after each delivery. Its quiet periods in
+    # the ephemeral table get their own, narrower statement below.
     notify = {
       timeout    = 10
       tables     = ["directory"]
-      parameters = ["bot-token"]
+      parameters = ["bot-token", "chat-key"]
       environment = {
         TABLE_DIRECTORY = aws_dynamodb_table.table["directory"].name
+        TABLE_EPHEMERAL = aws_dynamodb_table.table["ephemeral"].name
         PARAM_BOT_TOKEN = aws_ssm_parameter.parameter["bot-token"].name
+        PARAM_CHAT_KEY  = aws_ssm_parameter.parameter["chat-key"].name
+        APP_URL         = "${var.client_origins[0]}/"
       }
     }
   }
@@ -139,6 +144,21 @@ data "aws_iam_policy_document" "fn" {
     }
   }
 
+  # Quiet periods only (backend/internal/ephemeral, "Q#" keys).
+  dynamic "statement" {
+    for_each = each.key == "notify" ? [1] : []
+    content {
+      sid       = "QuietPeriods"
+      actions   = ["dynamodb:PutItem"]
+      resources = [aws_dynamodb_table.table["ephemeral"].arn]
+      condition {
+        test     = "ForAllValues:StringLike"
+        variable = "dynamodb:LeadingKeys"
+        values   = ["Q#*"]
+      }
+    }
+  }
+
   dynamic "statement" {
     for_each = each.key == "api" ? [1] : []
     content {
@@ -195,6 +215,14 @@ resource "aws_lambda_function" "fn" {
 
   # New instances must read the new parameter values.
   depends_on = [aws_iam_role_policy.fn, aws_ssm_parameter.parameter]
+}
+
+# Notices are sent at once or not at all: a retry would come after the quiet
+# period started and send nothing, and a late notice is no use.
+resource "aws_lambda_function_event_invoke_config" "notify" {
+  function_name                = aws_lambda_function.fn["notify"].function_name
+  maximum_retry_attempts       = 0
+  maximum_event_age_in_seconds = 60
 }
 
 # Public HTTPS endpoints. The functions authenticate requests themselves:

@@ -42,7 +42,7 @@ func fields(extra map[string]string) map[string]string {
 		"auth_date":     "1799999990",
 		"chat_instance": "-123",
 		"chat_type":     "private",
-		"user":          `{"id":42,"first_name":"Ab","last_name":"Cd","username":"ab_cd","allows_write_to_pm":true,"photo_url":"https://t.me/i/userpic/320/x.svg"}`,
+		"user":          `{"id":42,"first_name":"Ab","last_name":"Cd","username":"ab_cd","language_code":"fa","allows_write_to_pm":true,"photo_url":"https://t.me/i/userpic/320/x.svg"}`,
 	}
 	for k, v := range extra {
 		f[k] = v
@@ -56,7 +56,7 @@ func TestVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Data{UserID: 42, StartParam: "regABC_-123", AllowsWriteToPM: true, AuthDate: time.Unix(1799999990, 0)}
+	want := Data{UserID: 42, StartParam: "regABC_-123", AllowsWriteToPM: true, AuthDate: time.Unix(1799999990, 0), LanguageCode: "fa"}
 	if got != want {
 		t.Fatalf("Verify = %+v, want %+v", got, want)
 	}

@@ -102,6 +102,8 @@ export type Screen =
       links: LinkView[];
       busy: boolean;
       notice: HomeNotice | null;
+      /** Offer to turn on Telegram notices (the bot may not write yet). */
+      askNotices: boolean;
     }
   | {
       kind: 'invitations';
@@ -168,6 +170,19 @@ export function createApp(deps: Deps) {
   let backgroundStarted = false;
   // The link last checked and found genuine, to write to.
   let openedLink: { ref: LinkRef; bundle: Bundle } | null = null;
+
+  // Telegram notices (design §12) are set up with this launch's signed data,
+  // and only from a plain or registration launch: never one that names a
+  // link or an invitation, which would tell the server whose link this is.
+  const signedStart = new URLSearchParams(deps.launch.initData).get('start_param') ?? '';
+  const noticeLaunch = deps.launch.initData !== '' && (signedStart === '' || isRegistrationLaunch(signedStart));
+  let writeAllowed = deps.launch.allowsWriteToPm;
+  let noticesTried = false;
+  deps.bridge?.on('write_access_requested', ({ status }) => {
+    if (status !== 'allowed') return;
+    writeAllowed = true;
+    void setUpNotices();
+  });
 
   const backButton = (visible: boolean) => deps.bridge?.post('web_app_setup_back_button', { is_visible: visible });
   // What "try again" does from the error screen.
@@ -450,7 +465,27 @@ export function createApp(deps: Deps) {
       links,
       busy: false,
       notice: options.notice ?? null,
+      askNotices: noticeLaunch && !!account && !account.notices && !writeAllowed,
     };
+    if (account && !account.notices && writeAllowed && !noticesTried) void setUpNotices();
+  }
+
+  /**
+   * Turns on Telegram notices for this account. Failures are left alone:
+   * a later launch tries again while the account says they're off.
+   */
+  async function setUpNotices(): Promise<void> {
+    if (!noticeLaunch || !session) return;
+    noticesTried = true;
+    try {
+      await session.call('POST', '/notices', { initData: deps.launch.initData }, checkObject);
+    } catch {
+      return;
+    }
+    const current = screen.value;
+    if (current.kind === 'home' && current.account) {
+      screen.value = { ...current, account: { ...current.account, notices: true }, askNotices: false };
+    }
   }
 
   /** Joins with an invitation code (typed, pasted, or from an invitation link). */
@@ -635,6 +670,8 @@ export function createApp(deps: Deps) {
     },
     retry: () => retry(),
     home: () => showHome(),
+    /** Asks Telegram to let the bot write; notices are set up once it may. */
+    allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     showTab: (t: 'chats' | 'links') => showHome({ tab: t }),
     sync,
     refresh,

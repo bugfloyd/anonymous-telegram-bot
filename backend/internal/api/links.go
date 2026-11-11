@@ -44,6 +44,8 @@ type accountResponse struct {
 	Admin          bool `json:"admin"`
 	Links          int  `json:"links"`
 	MaxLinks       int  `json:"maxLinks"`
+	// Notices says whether Telegram notices are set up and not turned off.
+	Notices bool `json:"notices"`
 }
 
 // mayOwnLinks says whether an account may create links: while invite-only,
@@ -63,6 +65,7 @@ func (s *Server) account(_ context.Context, _ httpapi.Request, c caller) httpapi
 		Admin:          s.isAdmin(c.device),
 		Links:          c.device.Links,
 		MaxLinks:       links.MaxActive,
+		Notices:        c.device.Notices,
 	})
 }
 

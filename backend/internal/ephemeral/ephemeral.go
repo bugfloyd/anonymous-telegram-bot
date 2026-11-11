@@ -4,6 +4,7 @@
 //
 //	N#<nonce>  N              a used login nonce
 //	S#<nonce>  S              a spent send token's nonce
+//	Q#<key>    Q              a quiet period (e.g. after a notice)
 //	R#<key>    <window start> a rate counter (c)
 //
 // Neither kind holds an account or device ID.
@@ -52,6 +53,19 @@ type Spent struct {
 // being accepted anyway). It reports false if the token was spent already.
 func (sp *Spent) Spend(ctx context.Context, nonce []byte, forgetAfter time.Time) (bool, error) {
 	return once(ctx, sp.DB, sp.Table, "S#"+base64.RawURLEncoding.EncodeToString(nonce), "S", forgetAfter, sp.Now())
+}
+
+// Quiet holds quiet periods: one action per key per period.
+type Quiet struct {
+	DB    DB
+	Table string
+	Now   func() time.Time
+}
+
+// Start begins a quiet period for key until until. It reports false if one
+// is already running.
+func (q *Quiet) Start(ctx context.Context, key string, until time.Time) (bool, error) {
+	return once(ctx, q.DB, q.Table, "Q#"+key, "Q", until, q.Now())
 }
 
 // once writes an item unless a live one exists, and reports whether it did.

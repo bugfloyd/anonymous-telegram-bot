@@ -3,7 +3,7 @@
 // Error responses carry a stable code the client acts on:
 //
 //	bad_request, unsupported_media_type  the request is malformed
-//	init_data_rejected                    Telegram's launch data is invalid, too old, or not a registration launch
+//	init_data_rejected                    Telegram's launch data is invalid, too old, the wrong kind of launch, or another user's
 //	signature_rejected                    a device or account signature is invalid
 //	invalid_device_list                   the device list is malformed or doesn't match the request
 //	account_exists                        the Telegram user has another account; repeat with replace to end it
@@ -52,6 +52,7 @@ type Directory interface {
 	CreateLink(ctx context.Context, accountID string, l directory.Link, max int) error
 	Link(ctx context.Context, id string) (directory.Link, error)
 	SetLinkKeys(ctx context.Context, accountID, id string, keys []links.Key) error
+	SetNotices(ctx context.Context, accountID string, sealedChat []byte, language string) error
 	DeleteLink(ctx context.Context, accountID, id string) error
 	Levels(ctx context.Context) (map[int]int, error)
 	SetLevel(ctx context.Context, level, allowance int) error
@@ -96,6 +97,9 @@ type Server struct {
 	// Issuer signs and checks anonymous send tokens; Spent remembers spent ones.
 	Issuer Issuer
 	Spent  Spent
+
+	// Notices, if set, sends Telegram notices after deliveries.
+	Notices Notices
 }
 
 // Routes registers the API's routes.
@@ -119,6 +123,7 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/tokens", s.withDevice("POST /tokens", s.issueTokens))
 	r.Handle(http.MethodGet, "/inbox", s.withDevice("GET /inbox", s.listInbox))
 	r.Handle(http.MethodPost, "/ack", s.withDevice("POST /ack", s.ack))
+	r.Handle(http.MethodPost, "/notices", s.withDevice("POST /notices", s.setNotices))
 }
 
 // tokenResponse is what a successful registration or login returns.

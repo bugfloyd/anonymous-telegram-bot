@@ -125,6 +125,7 @@ type Device struct {
 	Granted      int    // invitations granted on top of the level's allowance
 	Allocated    int    // invitation uses put into codes
 	Links        int    // active links
+	Notices      bool   // Telegram notices are set up and not turned off
 }
 
 // ByTelegram returns the account registered for a Telegram hash.
@@ -272,6 +273,8 @@ func (s *Store) Device(ctx context.Context, accountID, deviceID string, now time
 	g, _ := str(acct, "g")
 	th, _ := str(acct, "th")
 	_, member := acct["lv"].(*types.AttributeValueMemberN)
+	_, chat := acct["cid"]
+	_, off := acct["no"]
 	return Device{
 		Key:          k,
 		Replaced:     g == goneReplaced,
@@ -281,6 +284,7 @@ func (s *Store) Device(ctx context.Context, accountID, deviceID string, now time
 		Granted:      int(num(acct, "ig")),
 		Allocated:    int(num(acct, "ia")),
 		Links:        int(num(acct, "lc")),
+		Notices:      chat && !off,
 	}, nil
 }
 
@@ -431,4 +435,85 @@ func expired(item map[string]types.AttributeValue, now time.Time) bool {
 // roundUp returns t rounded up to the next whole hour, in Unix seconds.
 func roundUp(t time.Time) int64 {
 	return t.Add(time.Hour - time.Nanosecond).Truncate(time.Hour).Unix()
+}
+
+// Notices are the Telegram "New message" notices (design §12). The account
+// item keeps the chat ID sealed by the notify function (cid), which nobody
+// else can read; the language for the notice (lg); the last notice's message
+// ID, to delete it when a new one is sent (nm); and whether Telegram refused
+// the last notice, meaning notices are off for this user (no).
+
+// NoticeTarget is what the notify function needs about an account.
+type NoticeTarget struct {
+	SealedChat  []byte
+	Language    string
+	LastMessage int64
+	Off         bool
+}
+
+// SetNotices stores an account's sealed chat ID and language, and turns
+// notices back on.
+func (s *Store) SetNotices(ctx context.Context, accountID string, sealedChat []byte, language string) error {
+	_, err := s.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 &s.Table,
+		Key:                       key(accountPK(accountID), skAccount),
+		UpdateExpression:          aws.String("SET cid = :c, lg = :l REMOVE #no"),
+		ConditionExpression:       aws.String("attribute_exists(ak)"),
+		ExpressionAttributeNames:  map[string]string{"#no": "no"},
+		ExpressionAttributeValues: attrs{":c": bv(sealedChat), ":l": sv(language)},
+	})
+	var failed *types.ConditionalCheckFailedException
+	if errors.As(err, &failed) {
+		return ErrNotFound
+	}
+	return err
+}
+
+// Notices returns an account's notice settings. ErrNotFound if it has none.
+func (s *Store) Notices(ctx context.Context, accountID string) (NoticeTarget, error) {
+	it, err := s.get(ctx, accountPK(accountID), skAccount, time.Time{})
+	if err != nil {
+		return NoticeTarget{}, err
+	}
+	sealed, ok := bin(it, "cid")
+	if !ok {
+		return NoticeTarget{}, ErrNotFound
+	}
+	lang, _ := str(it, "lg")
+	_, off := it["no"]
+	return NoticeTarget{SealedChat: sealed, Language: lang, LastMessage: num(it, "nm"), Off: off}, nil
+}
+
+// NoticeSent records the message ID of the latest notice.
+func (s *Store) NoticeSent(ctx context.Context, accountID string, messageID int64) error {
+	_, err := s.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 &s.Table,
+		Key:                       key(accountPK(accountID), skAccount),
+		UpdateExpression:          aws.String("SET nm = :m"),
+		ConditionExpression:       aws.String("attribute_exists(ak)"),
+		ExpressionAttributeValues: attrs{":m": nv(messageID)},
+	})
+	var failed *types.ConditionalCheckFailedException
+	if errors.As(err, &failed) {
+		return nil // the account is gone
+	}
+	return err
+}
+
+// NoticesOff records that Telegram refused a notice (the user blocked the
+// bot or never let it write), so none are tried until the app turns them on again.
+func (s *Store) NoticesOff(ctx context.Context, accountID string) error {
+	_, err := s.DB.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 &s.Table,
+		Key:                       key(accountPK(accountID), skAccount),
+		UpdateExpression:          aws.String("SET #no = :one"),
+		ConditionExpression:       aws.String("attribute_exists(ak)"),
+		ExpressionAttributeNames:  map[string]string{"#no": "no"},
+		ExpressionAttributeValues: attrs{":one": nv(1)},
+	})
+	var failed *types.ConditionalCheckFailedException
+	if errors.As(err, &failed) {
+		return nil
+	}
+	return err
 }

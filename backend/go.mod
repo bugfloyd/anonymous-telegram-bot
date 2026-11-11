@@ -9,11 +9,13 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.6
 	github.com/aws/aws-sdk-go-v2/config v1.33.14
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.73.0
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.114.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.81.3
 	github.com/cloudflare/circl v1.6.5
 )
 
 require (
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.26 // indirect
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.14 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.20.6 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.9 // indirect

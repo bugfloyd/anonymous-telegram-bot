@@ -80,6 +80,8 @@ export const fa = {
   tabChats: 'گفت‌وگوها',
   tabLinks: 'لینک‌ها',
   noConversations: 'هنوز گفت‌وگویی ندارید. لینکتان را به اشتراک بگذارید یا لینک کسی را باز کنید تا به او پیام بدهید.',
+  noticesAsk: 'وقتی کسی به شما پیام می‌دهد، ربات در تلگرام خبرتان کند. هرگز نمی‌گوید چه کسی یا چه نوشته است.',
+  noticesAllow: 'روشن کردن اعلان‌ها',
   youWrote: 'شما: {text}',
   unreadCount: '{count}',
   messagePlaceholder: 'پیام',

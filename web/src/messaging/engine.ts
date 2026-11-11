@@ -156,7 +156,8 @@ export function createMessaging(deps: MessagingDeps) {
       const myKey = await conversationKey(db, c.myKey!);
       const draft: Draft = { ...fields, conv: c.id, reply: c.myMailbox!, ...(c.lastReceived ? { last: c.lastReceived } : {}) };
       if (c.role === 'sender') draft.tag = toBase64Url(await senderTag(await accountSecret(db), c.link.fingerprint));
-      await deliver(c.sendTo, await sealMessage(draft, myKey, fromBase64Url(c.peerKey)));
+      // Seen receipts don't trigger a Telegram notice for the other side.
+      await deliver(c.sendTo, await sealMessage(draft, myKey, fromBase64Url(c.peerKey)), fields.kind === 'seen');
     });
   }
 
@@ -210,11 +211,12 @@ export function createMessaging(deps: MessagingDeps) {
   }
 
   /** Sends an envelope to a mailbox with a token, without logging in. */
-  async function deliver(mailbox: string, envelope: Uint8Array): Promise<void> {
+  async function deliver(mailbox: string, envelope: Uint8Array, quiet: boolean): Promise<void> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const token = await nextToken();
       try {
-        await api.post('/send', { mailbox, envelope: toBase64Url(envelope), token: token.token }, checkObject);
+        const body = { mailbox, envelope: toBase64Url(envelope), token: token.token, ...(quiet ? { quiet: true } : {}) };
+        await api.post('/send', body, checkObject);
         return;
       } catch (err) {
         // A token the server refuses (spent, or too old) is dropped; try another.

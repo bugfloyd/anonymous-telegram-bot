@@ -46,6 +46,8 @@ type Data struct {
 	StartParam      string
 	AllowsWriteToPM bool
 	AuthDate        time.Time
+	// LanguageCode is the user's Telegram language ("" if none), e.g. "fa".
+	LanguageCode string
 }
 
 // Verifier checks launch data for one bot.
@@ -62,7 +64,10 @@ func NewVerifier(botID int64) Verifier {
 	return Verifier{BotID: botID, Key: ProductionKey, MaxAge: 10 * time.Minute, MaxSkew: time.Minute}
 }
 
-var startParamPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{0,512}$`)
+var (
+	startParamPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{0,512}$`)
+	languagePattern   = regexp.MustCompile(`^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})?$`)
+)
 
 // Verify parses raw launch data once, checks its signature and age, and
 // returns the fields the backend may use.
@@ -104,6 +109,7 @@ func (v Verifier) Verify(raw string, now time.Time) (Data, error) {
 	var user struct {
 		ID              json.Number `json:"id"`
 		AllowsWriteToPM bool        `json:"allows_write_to_pm"`
+		LanguageCode    string      `json:"language_code"`
 	}
 	dec := json.NewDecoder(strings.NewReader(fields["user"]))
 	dec.UseNumber()
@@ -120,7 +126,11 @@ func (v Verifier) Verify(raw string, now time.Time) (Data, error) {
 		return Data{}, ErrMalformed
 	}
 
-	return Data{UserID: userID, StartParam: startParam, AllowsWriteToPM: user.AllowsWriteToPM, AuthDate: authDate}, nil
+	lang := user.LanguageCode
+	if !languagePattern.MatchString(lang) {
+		lang = ""
+	}
+	return Data{UserID: userID, StartParam: startParam, AllowsWriteToPM: user.AllowsWriteToPM, AuthDate: authDate, LanguageCode: lang}, nil
 }
 
 // CheckString builds Telegram's data-check-string: "<bot_id>:WebAppData", then

@@ -55,6 +55,8 @@ type memAccount struct {
 	allocated int
 	devices   map[string][]byte
 	links     int
+	chat      []byte // sealed chat ID for notices
+	language  string
 }
 
 type memCode struct {
@@ -376,7 +378,19 @@ func (m *memDirectory) Device(_ context.Context, account, device string, _ time.
 	return directory.Device{
 		Key: a.devices[device], Replaced: a.replaced, TelegramHash: a.th,
 		Member: a.member, Level: a.level, Granted: a.granted, Allocated: a.allocated, Links: a.links,
+		Notices: a.chat != nil,
 	}, nil
+}
+
+func (m *memDirectory) SetNotices(_ context.Context, account string, sealed []byte, language string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[account]
+	if !ok {
+		return directory.ErrNotFound
+	}
+	a.chat, a.language = sealed, language
+	return nil
 }
 
 type memLimiter struct {

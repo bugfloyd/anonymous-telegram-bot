@@ -22,3 +22,8 @@ output "bot_function_name" {
   description = "The bot function, which the deploy invokes to register the webhook"
   value       = aws_lambda_function.fn["bot"].function_name
 }
+
+output "notify_function_name" {
+  description = "The notify function, which the deploy invokes once to check it starts"
+  value       = aws_lambda_function.fn["notify"].function_name
+}
