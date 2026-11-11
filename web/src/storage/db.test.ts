@@ -58,3 +58,25 @@ describe('storage', () => {
     expect(await getMeta<{ id: string }>(db, 'account')).toEqual({ id: 'abc', registeredAt: 1 });
   });
 });
+
+describe('upgrades', () => {
+  it('upgrades a version 1 database without losing its data', async () => {
+    const { openDB } = await import('idb');
+    const name = `upgrade-test-${n++}`;
+    const v1 = await openDB(name, 1, {
+      upgrade(db) {
+        db.createObjectStore('keys');
+        db.createObjectStore('vault');
+        db.createObjectStore('meta');
+      },
+    });
+    await v1.put('meta', { state: 'registered' }, 'account');
+    v1.close();
+
+    const db = await openDatabase(name);
+    expect(db.version).toBe(2);
+    expect(await getMeta(db, 'account')).toEqual({ state: 'registered' });
+    expect(db.objectStoreNames.contains('conversations')).toBe(true);
+    expect(db.objectStoreNames.contains('messages')).toBe(true);
+  });
+});

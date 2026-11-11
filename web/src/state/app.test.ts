@@ -26,7 +26,7 @@ type Outcome = 'ok' | ApiError | NetworkError;
  */
 function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; createLink?: Outcome[] } = {}) {
   const calls: string[] = [];
-  const bundles = new Map<string, { signingKey: string; keys: unknown[] }>();
+  const bundles = new Map<string, { signingKey: string; keys: unknown[]; mailbox: string }>();
   const unsigned: string[] = [];
   const state = {
     inviteOnly: false,
@@ -102,8 +102,8 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
       if (method === 'POST' && path === '/links') {
         needsSignature();
         take(outcomes.createLink);
-        bundles.set(body.id as string, { signingKey: body.signingKey as string, keys: body.keys as unknown[] });
-        return check({ id: body.id });
+        bundles.set(body.id as string, { signingKey: body.signingKey as string, keys: body.keys as unknown[], mailbox: 'MMMMMMMMMMMMMMMMMMMMMA' });
+        return check({ id: body.id, mailbox: 'MMMMMMMMMMMMMMMMMMMMMA' });
       }
       const id = path.split('/')[2]!;
       if (method === 'GET' && bundles.has(id)) return check(bundles.get(id));

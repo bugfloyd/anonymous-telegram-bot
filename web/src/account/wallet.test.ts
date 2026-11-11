@@ -46,7 +46,7 @@ describe('token wallet', () => {
 
     const seen = new Set<string>();
     for (let i = 0; i < 3; i++) {
-      const token = (await takeToken(db, NOW))!;
+      const token = (await takeToken(db, NOW))!.token;
       expect(seen.has(token)).toBe(false);
       seen.add(token);
       const raw = fromBase64Url(token);
@@ -74,9 +74,10 @@ describe('token wallet', () => {
     const lastWeek = await challenge(epochOf(NOW) - 1);
     const thisWeek = await challenge(epochOf(NOW));
     const first = (await takeToken(db, NOW))!;
-    expect(fromBase64Url(first).slice(34, 66)).toEqual(lastWeek);
-    await returnToken(db, first, epochOf(NOW) - 1);
-    expect(await takeToken(db, NOW)).toBe(first);
-    expect(fromBase64Url((await takeToken(db, NOW))!).slice(34, 66)).toEqual(thisWeek);
+    expect(fromBase64Url(first.token).slice(34, 66)).toEqual(lastWeek);
+    expect(first.epoch).toBe(epochOf(NOW) - 1);
+    await returnToken(db, first.token, first.epoch);
+    expect(await takeToken(db, NOW)).toEqual(first);
+    expect(fromBase64Url((await takeToken(db, NOW))!.token).slice(34, 66)).toEqual(thisWeek);
   });
 });

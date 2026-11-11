@@ -50,7 +50,11 @@ async function makeBundle(options: { from?: number; until?: number } = {}) {
   const from = options.from ?? NOW - 3600;
   const until = options.until ?? NOW + 3600;
   const signature = await sign(signing.privateKey, LABEL_LINK_KEY, ...keyParts(raw, from, until));
-  const bundle: Bundle = { signingKey: await exportPublicKey(signing.publicKey), keys: [{ key: raw, from, until, signature }] };
+  const bundle: Bundle = {
+    signingKey: await exportPublicKey(signing.publicKey),
+    keys: [{ key: raw, from, until, signature }],
+    mailbox: 'AAAAAAAAAAAAAAAAAAAAAA',
+  };
   return { bundle, ref: { id: 'AAAAAAAAAAA', fingerprint: await fingerprint(signing.publicKey) }, signing, raw };
 }
 

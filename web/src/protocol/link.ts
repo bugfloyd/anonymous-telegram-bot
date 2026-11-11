@@ -64,14 +64,18 @@ export interface BundleKey {
 export interface Bundle {
   signingKey: Uint8Array<ArrayBuffer>;
   keys: BundleKey[];
+  /** The link's intro mailbox, where first messages go. */
+  mailbox: string;
 }
 
 /** Checks the shape of GET /links/{id}. Says nothing about whether to trust it. */
 export function checkBundle(value: unknown): Bundle {
   if (!value || typeof value !== 'object') throw new Error('not an object');
-  const { signingKey, keys } = value as Record<string, unknown>;
+  const { signingKey, keys, mailbox } = value as Record<string, unknown>;
   if (typeof signingKey !== 'string' || !Array.isArray(keys) || keys.length === 0 || keys.length > 4) throw new Error('bad bundle');
+  if (typeof mailbox !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(mailbox)) throw new Error('bad mailbox');
   return {
+    mailbox,
     signingKey: fromBase64Url(signingKey),
     keys: keys.map((k: unknown) => {
       const { key, from, until, signature } = (k ?? {}) as Record<string, unknown>;
@@ -95,7 +99,7 @@ export class BundleMismatch extends Error {
  * encryption key to use now (the newest current one). Throws BundleMismatch
  * if anything doesn't add up.
  */
-export async function verifyBundle(ref: LinkRef, bundle: Bundle, nowSeconds: number): Promise<{ key: CryptoKey; raw: Uint8Array }> {
+export async function verifyBundle(ref: LinkRef, bundle: Bundle, nowSeconds: number): Promise<{ key: CryptoKey; raw: Uint8Array<ArrayBuffer> }> {
   let signingKey: CryptoKey;
   try {
     signingKey = await importSigningPublicKey(bundle.signingKey);

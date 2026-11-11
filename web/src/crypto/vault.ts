@@ -17,12 +17,18 @@ export function generateVaultKey(): Promise<CryptoKey> {
 }
 
 /**
- * Seals an extractable private key (PKCS8) under the vault key. The key's name
+ * Seals an extractable key under the vault key: a private key as PKCS8, or a
+ * secret (the account secret, an HMAC key) as raw bytes. The key's name
  * is authenticated with it, so sealed keys can't be swapped between names.
  */
-export async function seal(vaultKey: CryptoKey, privateKey: CryptoKey, name: string): Promise<Uint8Array<ArrayBuffer>> {
+export async function seal(
+  vaultKey: CryptoKey,
+  privateKey: CryptoKey,
+  name: string,
+  format: 'pkcs8' | 'raw' = 'pkcs8',
+): Promise<Uint8Array<ArrayBuffer>> {
   const iv = randomBytes(IV_LENGTH);
-  const wrapped = await crypto.subtle.wrapKey('pkcs8', privateKey, vaultKey, {
+  const wrapped = await crypto.subtle.wrapKey(format, privateKey, vaultKey, {
     name: 'AES-GCM',
     iv,
     additionalData: new TextEncoder().encode(name),
@@ -38,11 +44,12 @@ export function unseal(
   vaultKey: CryptoKey,
   sealed: Uint8Array<ArrayBuffer>,
   name: string,
-  algorithm: EcKeyImportParams,
+  algorithm: EcKeyImportParams | HmacImportParams,
   usages: KeyUsage[],
+  format: 'pkcs8' | 'raw' = 'pkcs8',
 ): Promise<CryptoKey> {
   return crypto.subtle.unwrapKey(
-    'pkcs8',
+    format,
     sealed.slice(IV_LENGTH),
     vaultKey,
     { name: 'AES-GCM', iv: sealed.slice(0, IV_LENGTH), additionalData: new TextEncoder().encode(name) },
