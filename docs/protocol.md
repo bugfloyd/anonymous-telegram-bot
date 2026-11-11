@@ -188,7 +188,7 @@ key stolen later can't open envelopes someone kept from long before.
   replaced (or after the link is). Undelivered envelopes expire after 30 days,
   so nothing that can still arrive is written for a deleted key. If the other
   side never writes to the new key, the old one stays.
-- Blocking a conversation deletes its keys at the next upkeep.
+- Blocking keeps a conversation's keys, so it can be undone.
 
 Rotation is invisible to users: labels come from sender tags, not keys, and
 the history kept on the device is sealed under the device's storage key.
@@ -220,6 +220,13 @@ each mailbox's owner, to deliver, but not who writes to it.
   it closes (at most 2 h 10 min).
 - `POST /mailboxes/{id}/discard` ends a mailbox (a block, or an ended
   conversation); a link's intro mailbox ends with the link.
+- **Blocking** discards our mailbox for the conversation and, for someone who
+  wrote to our link, remembers their sender tag (by link fingerprint), so new
+  conversations from them are dropped too. Silent: their sends still look
+  accepted. **Unblocking** forgets the tag and, if we had a mailbox, sends
+  them a quiet `key_update` from a new mailbox (and a new key if ours is
+  gone), so their app writes there from then on. What they sent meanwhile is
+  lost. Only `message` sends trigger a Telegram notice.
 
 ## Notices
 

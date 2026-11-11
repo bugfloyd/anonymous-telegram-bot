@@ -50,6 +50,7 @@ export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 
 /** A short message on the home screen after an action. */
 export type HomeNotice =
   | 'blocked'
+  | 'unblocked'
   | 'deleted'
   | 'replaced'
   | 'created'
@@ -77,7 +78,7 @@ export interface ConversationView {
   role: 'owner' | 'sender';
   unread: number;
   lastAt: number;
-  status: 'active' | 'ended';
+  status: 'active' | 'ended' | 'blocked';
   /** The latest message, if any. */
   last: { text: string; out: boolean; status: MessageView['status'] } | null;
 }
@@ -112,7 +113,10 @@ export type Screen =
       notice: HomeNotice | null;
       /** Offer to turn on Telegram notices (the bot may not write yet). */
       askNotices: boolean;
+      /** How many conversations are blocked (the Blocked list). */
+      blockedCount: number;
     }
+  | { kind: 'blocked'; conversations: ConversationView[]; busy: boolean; notice: HomeNotice | null }
   | {
       kind: 'invitations';
       info: Omit<InvitationsInfo, 'codes'> & { codes: InvitationView[] };
@@ -129,6 +133,8 @@ export type Screen =
       label: string;
       role: 'owner' | 'sender';
       ended: boolean;
+      /** Blocked: shown read-only, with Unblock. */
+      blocked: boolean;
       messages: MessageView[];
       busy: boolean;
       error: SendError | null;
@@ -355,11 +361,9 @@ export function createApp(deps: Deps) {
     }
   }
 
-  async function conversations(): Promise<ConversationView[]> {
-    // Blocked and deleted conversations are gone from the list.
-    const list = (await listConversations(deps.db)).filter(
-      (c): c is typeof c & { status: 'active' | 'ended' } => c.status !== 'blocked' && !c.hidden,
-    );
+  /** The chat list: blocked and deleted conversations are gone from it. With blocked, the Blocked list. */
+  async function conversations(blocked = false): Promise<ConversationView[]> {
+    const list = (await listConversations(deps.db)).filter((c) => (blocked ? c.status === 'blocked' : c.status !== 'blocked' && !c.hidden));
     return Promise.all(
       list.map(async (c) => {
         const messages = await listMessages(deps.db, c.id);
@@ -430,7 +434,7 @@ export function createApp(deps: Deps) {
   async function openConversation(id: string): Promise<void> {
     const list = await listConversations(deps.db);
     const c = list.find((x) => x.id === id);
-    if (!c || c.status === 'blocked') return showHome();
+    if (!c) return showHome();
     await messaging?.markRead(id);
     backButton(true);
     screen.value = {
@@ -439,11 +443,38 @@ export function createApp(deps: Deps) {
       label: c.label,
       role: c.role,
       ended: c.status === 'ended',
+      blocked: c.status === 'blocked',
       messages: await listMessages(deps.db, id),
       busy: false,
       error: null,
     };
     seen(id);
+  }
+
+  /** The Blocked list. */
+  async function showBlocked(notice: HomeNotice | null = null): Promise<void> {
+    backButton(true);
+    screen.value = { kind: 'blocked', conversations: await conversations(true), busy: false, notice };
+  }
+
+  /** Unblocks a conversation, from the Blocked list or from the conversation itself. */
+  async function unblock(id: string): Promise<void> {
+    const current = screen.value;
+    if (!messaging || ((current.kind === 'blocked' || current.kind === 'conversation') && current.busy)) return;
+    if (current.kind === 'blocked' || current.kind === 'conversation') screen.value = { ...current, busy: true };
+    try {
+      await messaging.unblock(id);
+    } catch (err) {
+      if (handleGone(err)) return;
+      if (current.kind === 'conversation') {
+        screen.value = { ...current, busy: false, error: sendError(err) };
+        return;
+      }
+      return showBlocked(err instanceof NetworkError ? 'network' : 'generic');
+    }
+    deps.broadcast({ type: 'data-changed' });
+    if (current.kind === 'conversation') return openConversation(id);
+    return showBlocked('unblocked');
   }
 
   function sendError(err: unknown): SendError {
@@ -551,6 +582,7 @@ export function createApp(deps: Deps) {
       busy: false,
       notice: options.notice ?? null,
       askNotices: noticeLaunch && !!account && !account.notices && !writeAllowed,
+      blockedCount: (await listConversations(db)).filter((c) => c.status === 'blocked').length,
     };
     if (account && !account.notices && writeAllowed && !noticesTried) void setUpNotices();
   }
@@ -777,6 +809,8 @@ export function createApp(deps: Deps) {
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     deleteConversation,
+    blocked: () => showBlocked(),
+    unblock,
     /** Shows a native popup; resolves with the button pressed, or null. */
     popup: (params: { title?: string; message: string; buttons: PopupButton[] }) =>
       deps.bridge ? openPopup(deps.bridge, params) : Promise.resolve(null),
