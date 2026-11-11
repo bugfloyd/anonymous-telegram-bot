@@ -15,6 +15,11 @@
 //	invitation_required                   only members and admins can own links while invite-only
 //	invalid_link                          the link ID or bundle is malformed or badly signed
 //	link_limit                            the account has the most links allowed
+//	no_invitations_left                   the member has fewer invitations left than asked for
+//	invalid_invitation                    no such invitation code, or it is used up
+//	already_member                        the account already joined through an invitation
+//	not_member                            invitations can only be granted to members
+//	admin_only                            only admins can do this
 //	not_found                             no such route, or no such link (revoked links included)
 //	internal                              something failed on the server
 package api
@@ -45,6 +50,12 @@ type Directory interface {
 	Link(ctx context.Context, id string) (directory.Link, error)
 	SetLinkKeys(ctx context.Context, accountID, id string, keys []links.Key) error
 	DeleteLink(ctx context.Context, accountID, id string) error
+	Levels(ctx context.Context) (map[int]int, error)
+	SetLevel(ctx context.Context, level, allowance int) error
+	CreateInvitation(ctx context.Context, accountID, code string, uses, ownerLevel, maxAllocated int) error
+	Invitations(ctx context.Context, accountID string) ([]directory.Invitation, error)
+	Redeem(ctx context.Context, accountID, code string) (int, error)
+	Grant(ctx context.Context, linkID string, invitations int) error
 }
 
 // Limiter counts uses of a key in fixed windows.
@@ -78,6 +89,12 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPut, "/links/{id}/keys", s.withSignature("PUT /links/{id}/keys", s.setLinkKeys))
 	r.Handle(http.MethodDelete, "/links/{id}", s.withSignature("DELETE /links/{id}", s.revokeLink))
 	r.Handle(http.MethodGet, "/links/{id}", s.linkBundle)
+	r.Handle(http.MethodGet, "/invitations", s.withDevice("GET /invitations", s.listInvitations))
+	r.Handle(http.MethodPost, "/invitations", s.withSignature("POST /invitations", s.createInvitation))
+	r.Handle(http.MethodPost, "/invitations/redeem", s.withDevice("POST /invitations/redeem", s.redeem))
+	r.Handle(http.MethodGet, "/admin/levels", s.withDevice("GET /admin/levels", s.withAdmin(s.adminLevels)))
+	r.Handle(http.MethodPut, "/admin/levels", s.withSignature("PUT /admin/levels", s.withAdmin(s.adminSetLevel)))
+	r.Handle(http.MethodPost, "/admin/grant", s.withSignature("POST /admin/grant", s.withAdmin(s.adminGrant)))
 }
 
 // tokenResponse is what a successful registration or login returns.

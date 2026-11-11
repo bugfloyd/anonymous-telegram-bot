@@ -38,12 +38,21 @@ var start = time.Unix(1_800_000_000, 0)
 // ---- in-memory stores ----
 
 type memAccount struct {
-	key      []byte
-	th       string
-	replaced bool
-	member   bool
-	devices  map[string][]byte
-	links    int
+	key       []byte
+	th        string
+	replaced  bool
+	member    bool
+	level     int
+	granted   int
+	allocated int
+	devices   map[string][]byte
+	links     int
+}
+
+type memCode struct {
+	owner      string
+	ownerLevel int
+	uses, left int
 }
 
 type memLink struct {
@@ -56,11 +65,96 @@ type memDirectory struct {
 	telegram map[string]string
 	accounts map[string]*memAccount
 	links    map[string]*memLink
+	codes    map[string]*memCode
+	levels   map[int]int
 	fail     error
 }
 
 func newMemDirectory() *memDirectory {
-	return &memDirectory{telegram: map[string]string{}, accounts: map[string]*memAccount{}, links: map[string]*memLink{}}
+	return &memDirectory{
+		telegram: map[string]string{},
+		accounts: map[string]*memAccount{},
+		links:    map[string]*memLink{},
+		codes:    map[string]*memCode{},
+		levels:   map[int]int{},
+	}
+}
+
+func (m *memDirectory) Levels(context.Context) (map[int]int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[int]int{}
+	for k, v := range m.levels {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (m *memDirectory) SetLevel(_ context.Context, level, allowance int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.levels[level] = allowance
+	return nil
+}
+
+func (m *memDirectory) CreateInvitation(_ context.Context, account, code string, uses, ownerLevel, maxAllocated int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, taken := m.codes[code]; taken {
+		return directory.ErrConflict
+	}
+	a := m.accounts[account]
+	if maxAllocated >= 0 {
+		if !a.member || a.allocated+uses > maxAllocated {
+			return directory.ErrLimit
+		}
+		a.allocated += uses
+	}
+	m.codes[code] = &memCode{owner: account, ownerLevel: ownerLevel, uses: uses, left: uses}
+	return nil
+}
+
+func (m *memDirectory) Invitations(_ context.Context, account string) ([]directory.Invitation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []directory.Invitation
+	for code, c := range m.codes {
+		if c.owner == account {
+			out = append(out, directory.Invitation{Code: code, Uses: c.uses, Left: c.left})
+		}
+	}
+	return out, nil
+}
+
+func (m *memDirectory) Redeem(_ context.Context, account, code string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.codes[code]
+	if !ok || c.left == 0 {
+		return 0, directory.ErrNotFound
+	}
+	a := m.accounts[account]
+	if a.member {
+		return 0, directory.ErrAlreadyMember
+	}
+	c.left--
+	a.member, a.level = true, c.ownerLevel+1
+	return a.level, nil
+}
+
+func (m *memDirectory) Grant(_ context.Context, linkID string, n int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.links[linkID]
+	if !ok {
+		return directory.ErrNotFound
+	}
+	a := m.accounts[l.owner]
+	if !a.member {
+		return directory.ErrNotMember
+	}
+	a.granted += n
+	return nil
 }
 
 func (m *memDirectory) CreateLink(_ context.Context, account string, l directory.Link, max int) error {
@@ -168,7 +262,10 @@ func (m *memDirectory) Device(_ context.Context, account, device string, _ time.
 	if !ok || a.devices[device] == nil {
 		return directory.Device{}, directory.ErrNotFound
 	}
-	return directory.Device{Key: a.devices[device], Replaced: a.replaced, TelegramHash: a.th, Member: a.member, Links: a.links}, nil
+	return directory.Device{
+		Key: a.devices[device], Replaced: a.replaced, TelegramHash: a.th,
+		Member: a.member, Level: a.level, Granted: a.granted, Allocated: a.allocated, Links: a.links,
+	}, nil
 }
 
 type memLimiter struct {
