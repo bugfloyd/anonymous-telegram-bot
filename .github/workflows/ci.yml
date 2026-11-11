@@ -324,6 +324,22 @@ jobs:
           fi
           echo "API loaded its configuration and reads the directory (HTTP 401 login_refused)"
 
+      # A send to a mailbox that doesn't exist: accepted like any other, with
+      # nothing stored. Needs the envelope check, the rate limiter (ephemeral
+      # table) and the mailbox lookup (directory table) to work.
+      - name: Smoke test – sends to unknown mailboxes look accepted
+        run: |
+          envelope=$(head -n 1 backend/internal/envelope/testdata/client-envelopes.hex | tr -d '\n' | tr a-f A-F | basenc --base16 -d | basenc -w0 --base64url | tr -d '=')
+          mailbox=$(head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d '=')
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
+            -d "{\"mailbox\":\"${mailbox}\",\"envelope\":\"${envelope}\"}" "${API_URL%/}/send")
+          status=${body##*$'\n'}
+          if [ "$status" != "200" ] || [ "${body%$'\n'*}" != "{}" ]; then
+            echo "::error::Expected 200 {} from POST /send, got HTTP ${status}"
+            exit 1
+          fi
+          echo "Sends to unknown mailboxes are accepted and dropped (HTTP 200 {})"
+
       - name: Smoke test – webhook is reachable
         run: |
           status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST -d '{}' "$WEBHOOK_URL")

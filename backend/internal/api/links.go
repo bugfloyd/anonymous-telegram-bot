@@ -9,6 +9,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/devicesig"
 	"github.com/incognitochat/incognitochat/backend/internal/directory"
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
+	"github.com/incognitochat/incognitochat/backend/internal/ids"
 	"github.com/incognitochat/incognitochat/backend/internal/links"
 )
 
@@ -35,6 +36,7 @@ type linkKeysRequest struct {
 type bundleResponse struct {
 	SigningKey bytes64   `json:"signingKey"`
 	Keys       []linkKey `json:"keys"`
+	Mailbox    string    `json:"mailbox"` // where first messages go
 }
 
 type accountResponse struct {
@@ -84,7 +86,8 @@ func (s *Server) createLink(ctx context.Context, req httpapi.Request, c caller) 
 		return httpapi.Error(http.StatusBadRequest, "invalid_link")
 	}
 
-	err = s.Directory.CreateLink(ctx, c.AccountID, directory.Link{ID: in.ID, SigningKey: in.SigningKey, Keys: keys}, links.MaxActive)
+	link := directory.Link{ID: in.ID, SigningKey: in.SigningKey, Keys: keys, Mailbox: ids.New()}
+	err = s.Directory.CreateLink(ctx, c.AccountID, link, links.MaxActive)
 	switch {
 	case errors.Is(err, directory.ErrLimit):
 		return httpapi.Error(http.StatusConflict, "link_limit")
@@ -94,7 +97,7 @@ func (s *Server) createLink(ctx context.Context, req httpapi.Request, c caller) 
 	case err != nil:
 		return s.internal(route, err)
 	}
-	return httpapi.JSON(http.StatusCreated, map[string]string{"id": in.ID})
+	return httpapi.JSON(http.StatusCreated, map[string]string{"id": in.ID, "mailbox": link.Mailbox})
 }
 
 // setLinkKeys replaces a link's encryption keys (weekly rotation).
@@ -166,7 +169,7 @@ func (s *Server) linkBundle(ctx context.Context, _ httpapi.Request) httpapi.Resp
 	if err != nil {
 		return s.internal(route, err)
 	}
-	out := bundleResponse{SigningKey: link.SigningKey, Keys: make([]linkKey, len(link.Keys))}
+	out := bundleResponse{SigningKey: link.SigningKey, Keys: make([]linkKey, len(link.Keys)), Mailbox: link.Mailbox}
 	for i, k := range link.Keys {
 		out.Keys[i] = linkKey{Key: k.Key, From: k.From.Unix(), Until: k.Until.Unix(), Signature: k.Signature}
 	}

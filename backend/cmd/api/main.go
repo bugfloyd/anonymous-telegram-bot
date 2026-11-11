@@ -18,6 +18,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/directory"
 	"github.com/incognitochat/incognitochat/backend/internal/ephemeral"
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
+	"github.com/incognitochat/incognitochat/backend/internal/inbox"
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata"
@@ -41,7 +42,7 @@ func main() {
 
 func setup(ctx context.Context) (*api.Server, error) {
 	env, err := config.Env(os.Getenv,
-		"TABLE_DIRECTORY", "TABLE_EPHEMERAL",
+		"TABLE_DIRECTORY", "TABLE_EPHEMERAL", "TABLE_MESSAGES",
 		"PARAM_BOT_ID", "PARAM_SESSION_KEY", "PARAM_TELEGRAM_ID_PEPPER")
 	if err != nil {
 		return nil, err
@@ -93,5 +94,7 @@ func setup(ctx context.Context) (*api.Server, error) {
 		Now:        now,
 		InviteOnly: config.InviteOnly(os.Getenv("INVITE_ONLY")),
 		Admins:     admins,
+		Inbox:      &inbox.Store{DB: db, Table: env["TABLE_MESSAGES"]},
+		Pause:      api.RandomPause,
 	}, nil
 }

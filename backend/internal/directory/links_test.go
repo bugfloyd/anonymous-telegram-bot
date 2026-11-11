@@ -26,6 +26,7 @@ func testLink(t *testing.T) Link {
 			Until:     now.Add(28 * 24 * time.Hour),
 			Signature: bytes.Repeat([]byte{7}, 64),
 		}},
+		Mailbox: ids.New(),
 	}
 }
 
@@ -49,11 +50,11 @@ func TestLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.Link(ctx, l.ID)
-	if err != nil || !bytes.Equal(got.SigningKey, l.SigningKey) || len(got.Keys) != 1 ||
+	if err != nil || !bytes.Equal(got.SigningKey, l.SigningKey) || len(got.Keys) != 1 || got.Mailbox != l.Mailbox ||
 		!got.Keys[0].Until.Equal(l.Keys[0].Until) || !bytes.Equal(got.Keys[0].Signature, l.Keys[0].Signature) {
 		t.Fatalf("Link = %+v, %v", got, err)
 	}
-	if err := s.CreateLink(ctx, other.ID, Link{ID: l.ID, SigningKey: publicKey(t), Keys: l.Keys}, links.MaxActive); !errors.Is(err, ErrConflict) {
+	if err := s.CreateLink(ctx, other.ID, Link{ID: l.ID, SigningKey: publicKey(t), Keys: l.Keys, Mailbox: ids.New()}, links.MaxActive); !errors.Is(err, ErrConflict) {
 		t.Fatalf("taken ID: %v", err)
 	}
 	if dev, _ := s.Device(ctx, owner.ID, owner.DeviceID, now); dev.Links != 1 || dev.TelegramHash != owner.TelegramHash || dev.Member {
