@@ -69,12 +69,28 @@ export const en = {
 
   linkTitle: 'Anonymous link',
   linkChecking: 'Checking this link…',
-  linkVerified: 'This link is genuine: its keys match it. Writing to it comes in the next update.',
+  linkVerified: 'This link is genuine: its keys match it.',
   linkOwn: 'This is your own link.',
   linkNotFound: "This link doesn't exist, or its owner revoked it.",
   linkMismatch:
     "This link's keys don't match the link. Someone may be trying to intercept your messages. Don't use it.",
   goHome: 'Go to your links',
+
+  tabChats: 'Chats',
+  tabLinks: 'Links',
+  noConversations: "No conversations yet. Share your link, or open someone else's to write to them.",
+  youWrote: 'You: {text}',
+  unreadCount: '{count}',
+  messagePlaceholder: 'Message',
+  send: 'Send',
+  sending: 'Sending…',
+  notSent: 'Not sent',
+  firstMessageHint: "Write the first message. They won't know who you are.",
+  aboutOwnerConversation: "Writes to you through your link. You don't know who they are.",
+  aboutSenderConversation: "You write through their link. They don't know who you are.",
+  conversationEnded: 'This conversation has ended.',
+  errorNoTokens: "You've sent a lot today. Try again tomorrow.",
+  errorTooFast: 'Too many messages to this person right now. Try again in a minute.',
 
   replaceTitle: 'You already have an account',
   replaceBody:

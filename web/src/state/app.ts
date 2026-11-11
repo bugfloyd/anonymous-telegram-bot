@@ -29,9 +29,13 @@ import {
 } from '../account/invitations';
 import { checkAccountInfo, createLink, listLinks, revokeLink, type AccountInfo, type LinkRecord } from '../account/links';
 import type { Config } from '../config';
+import type { TokenIssuer } from '../account/wallet';
+import { importIssuerKey } from '../crypto/blindrsa';
+import { createMessaging, NoTokens, type Messaging } from '../messaging/engine';
+import { listConversations, listMessages, type MessageView } from '../messaging/store';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
-import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type LinkRef } from '../protocol/link';
+import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
 import type { Bridge } from '../platform/telegram';
 import type { Database } from '../storage/db';
@@ -56,6 +60,21 @@ export type InvitationsNotice = 'created' | 'none-left' | 'network' | 'generic';
 
 export type AdminNotice = 'saved' | 'granted' | 'not-member' | 'not-found' | 'bad-link' | 'network' | 'generic';
 
+/** Why a message couldn't be sent. */
+export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'generic';
+
+/** A conversation in the list. */
+export interface ConversationView {
+  id: string;
+  label: string;
+  role: 'owner' | 'sender';
+  unread: number;
+  lastAt: number;
+  status: 'active' | 'ended';
+  /** The latest message, if any. */
+  last: { text: string; out: boolean } | null;
+}
+
 /** An invitation code with its shareable URL. */
 export interface InvitationView extends InvitationCode {
   url: string;
@@ -74,6 +93,8 @@ export type Screen =
   | { kind: 'confirm-replace'; busy: boolean }
   | {
       kind: 'home';
+      tab: 'chats' | 'links';
+      conversations: ConversationView[];
       offline: boolean;
       account: AccountInfo | null;
       invitations: InvitationsInfo | null;
@@ -90,7 +111,17 @@ export type Screen =
       created: string | null;
     }
   | { kind: 'admin'; levels: LevelAllowance[]; busy: boolean; notice: AdminNotice | null }
-  | { kind: 'link'; status: LinkStatus }
+  | { kind: 'link'; status: LinkStatus; canWrite: boolean; busy: boolean; error: SendError | null }
+  | {
+      kind: 'conversation';
+      id: string;
+      label: string;
+      role: 'owner' | 'sender';
+      ended: boolean;
+      messages: MessageView[];
+      busy: boolean;
+      error: SendError | null;
+    }
   | { kind: 'replaced' }
   | { kind: 'error'; error: ErrorKind };
 
@@ -104,7 +135,14 @@ export interface Deps {
   broadcast(event: SyncEvent): void;
   /** Waits before closing the old copy after asking Telegram to reopen. */
   closeDelayMs?: number;
+  /** The token issuer to use instead of the build's (tests). */
+  issuer?: TokenIssuer;
+  /** Run the inbox poll and upkeep in the background (off in tests). */
+  background?: boolean;
 }
+
+/** How often an open app checks its inbox (until sockets arrive in phase 3). */
+const POLL_MS = 20_000;
 
 /** A link of this account, with its shareable URL. */
 export interface LinkView extends LinkRecord {
@@ -121,6 +159,11 @@ export function createApp(deps: Deps) {
   // once, not on every restart.
   let launchParam: string | null = isRegistrationLaunch(deps.launch.startParam) ? null : deps.launch.startParam || null;
   deps.bridge?.on('back_button_pressed', () => void showHome());
+  let messaging: Messaging | null = null;
+  let tab: 'chats' | 'links' = 'chats';
+  let backgroundStarted = false;
+  // The link last checked and found genuine, to write to.
+  let openedLink: { ref: LinkRef; bundle: Bundle } | null = null;
 
   const backButton = (visible: boolean) => deps.bridge?.post('web_app_setup_back_button', { is_visible: visible });
   // What "try again" does from the error screen.
@@ -172,7 +215,134 @@ export function createApp(deps: Deps) {
       // Offline or the server is down: the device still works on what it has.
       offline = true;
     }
+    await startMessaging(!offline);
     return continueLaunch(offline);
+  }
+
+  /** Creates the messaging engine and, outside tests, the inbox poll and upkeep. */
+  async function startMessaging(online: boolean): Promise<void> {
+    if (!messaging && deps.config && deps.api) {
+      try {
+        const issuer = deps.issuer ?? { key: await importIssuerKey(deps.config.issuer.spki), keyId: deps.config.issuer.keyId };
+        messaging = createMessaging({ db: deps.db, api: deps.api, session: session!, issuer });
+      } catch {
+        // Without a usable issuer key the app still works, but can't send.
+        return;
+      }
+    }
+    if (online) await sync();
+    if (deps.background === false || backgroundStarted || typeof document === 'undefined') return;
+    backgroundStarted = true;
+    setInterval(() => {
+      if (document.visibilityState === 'visible') void sync();
+    }, POLL_MS);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void sync();
+    });
+    // Upkeep at a random moment, unrelated to anything the user does.
+    setTimeout(() => void messaging?.maintain().catch(() => {}), 5_000 + Math.random() * 55_000);
+  }
+
+  /** Fetches new messages; refreshes the screen if any arrived. */
+  async function sync(): Promise<void> {
+    if (!messaging) return;
+    let received = 0;
+    try {
+      received = await messaging.sync();
+    } catch (err) {
+      handleGone(err);
+      return;
+    }
+    if (received > 0) {
+      deps.broadcast({ type: 'data-changed' });
+      await refresh();
+    }
+  }
+
+  /** Redraws the current screen from storage (after new messages, or another copy's change). */
+  async function refresh(): Promise<void> {
+    const current = screen.value;
+    if (current.kind === 'home' && !current.busy) {
+      screen.value = { ...current, conversations: await conversations() };
+    } else if (current.kind === 'conversation' && !current.busy) {
+      await messaging?.markRead(current.id);
+      screen.value = { ...current, messages: await listMessages(deps.db, current.id) };
+    }
+  }
+
+  async function conversations(): Promise<ConversationView[]> {
+    const list = await listConversations(deps.db);
+    return Promise.all(
+      list.map(async (c) => {
+        const messages = await listMessages(deps.db, c.id);
+        const last = messages[messages.length - 1];
+        return {
+          id: c.id,
+          label: c.label,
+          role: c.role,
+          unread: c.unread,
+          lastAt: c.lastAt,
+          status: c.status,
+          last: last ? { text: last.text, out: last.out } : null,
+        };
+      }),
+    );
+  }
+
+  async function openConversation(id: string): Promise<void> {
+    const list = await listConversations(deps.db);
+    const c = list.find((x) => x.id === id);
+    if (!c) return showHome();
+    await messaging?.markRead(id);
+    backButton(true);
+    screen.value = {
+      kind: 'conversation',
+      id,
+      label: c.label,
+      role: c.role,
+      ended: c.status === 'ended',
+      messages: await listMessages(deps.db, id),
+      busy: false,
+      error: null,
+    };
+  }
+
+  function sendError(err: unknown): SendError {
+    if (err instanceof NoTokens) return 'no-tokens';
+    if (err instanceof ApiError && err.code === 'rate_limited') return 'rate-limited';
+    if (err instanceof NetworkError) return 'network';
+    return 'generic';
+  }
+
+  /** Sends a message in the open conversation. */
+  async function sendMessage(text: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging || text.trim() === '') return;
+    screen.value = { ...current, busy: true, error: null };
+    let error: SendError | null = null;
+    try {
+      await messaging.send(current.id, text.trim());
+    } catch (err) {
+      if (handleGone(err)) return;
+      error = sendError(err);
+    }
+    deps.broadcast({ type: 'data-changed' });
+    screen.value = { ...current, busy: false, error, messages: await listMessages(deps.db, current.id) };
+  }
+
+  /** Writes the first message to the link just checked, starting a conversation. */
+  async function writeToLink(text: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'link' || current.busy || !messaging || !openedLink || text.trim() === '') return;
+    screen.value = { ...current, busy: true, error: null };
+    try {
+      const id = await messaging.startConversation(openedLink.ref, openedLink.bundle, text.trim());
+      deps.broadcast({ type: 'data-changed' });
+      return openConversation(id);
+    } catch (err) {
+      if (handleGone(err)) return;
+      screen.value = { ...current, busy: false, error: sendError(err) };
+    }
   }
 
   /** After logging in or registering: go where the launch (or a launch before setup) pointed. */
@@ -194,7 +364,8 @@ export function createApp(deps: Deps) {
     return true;
   }
 
-  async function showHome(options: { offline?: boolean; notice?: HomeNotice | null } = {}): Promise<void> {
+  async function showHome(options: { offline?: boolean; notice?: HomeNotice | null; tab?: 'chats' | 'links' } = {}): Promise<void> {
+    if (options.tab) tab = options.tab;
     const { config, db } = deps;
     let offline = options.offline ?? false;
     let account: AccountInfo | null = null;
@@ -212,7 +383,17 @@ export function createApp(deps: Deps) {
     }
     const links = (await listLinks(db)).map((l) => ({ ...l, url: linkUrl(config!.botUsername, config!.appName, l) }));
     backButton(false);
-    screen.value = { kind: 'home', offline, account, invitations, links, busy: false, notice: options.notice ?? null };
+    screen.value = {
+      kind: 'home',
+      tab,
+      conversations: await conversations(),
+      offline,
+      account,
+      invitations,
+      links,
+      busy: false,
+      notice: options.notice ?? null,
+    };
   }
 
   /** Joins with an invitation code (typed, pasted, or from an invitation link). */
@@ -321,25 +502,28 @@ export function createApp(deps: Deps) {
       else notice = 'generic';
     }
     deps.broadcast({ type: 'data-changed' });
-    return showHome({ notice });
+    return showHome({ notice, tab: 'links' });
   }
 
   /** Checks someone's link: its bundle must match the fingerprint in the link. */
   async function openLink(ref: LinkRef): Promise<void> {
+    const linkScreen = (status: LinkStatus) => ({ kind: 'link' as const, status, canWrite: false, busy: false, error: null });
     if ((await listLinks(deps.db)).some((l) => l.id === ref.id)) {
-      screen.value = { kind: 'link', status: 'own' };
+      screen.value = linkScreen('own');
       return;
     }
-    screen.value = { kind: 'link', status: 'checking' };
+    screen.value = linkScreen('checking');
+    openedLink = null;
     try {
       const bundle = await deps.api!.request('GET', `/links/${ref.id}`, {}, checkBundle);
       await verifyBundle(ref, bundle, Math.floor(Date.now() / 1000));
-      screen.value = { kind: 'link', status: 'verified' };
+      openedLink = { ref, bundle };
+      screen.value = { ...linkScreen('verified'), canWrite: messaging !== null };
     } catch (err) {
       let status: LinkStatus = 'network';
       if (err instanceof ApiError && err.code === 'not_found') status = 'not-found';
       else if (err instanceof BundleMismatch) status = 'mismatch';
-      screen.value = { kind: 'link', status };
+      screen.value = linkScreen(status);
       if (status === 'network') retry = () => openLink(ref);
     }
   }
@@ -371,6 +555,7 @@ export function createApp(deps: Deps) {
     }
     deps.broadcast({ type: 'account-changed' });
     if (!deps.launch.allowsWriteToPm) deps.bridge?.post('web_app_request_write_access');
+    await startMessaging(true);
     // A link or invitation opened before setup: continue there.
     launchParam = null;
     return continueLaunch(false);
@@ -387,6 +572,12 @@ export function createApp(deps: Deps) {
     },
     retry: () => retry(),
     home: () => showHome(),
+    showTab: (t: 'chats' | 'links') => showHome({ tab: t }),
+    sync,
+    refresh,
+    openConversation,
+    sendMessage,
+    writeToLink,
     createLink: () => linkAction(() => createLink(deps.db, session!), 'created'),
     revokeLink: (id: string) => linkAction(() => revokeLink(deps.db, session!, id), 'revoked'),
     /** Opens Telegram's share sheet for a link. */

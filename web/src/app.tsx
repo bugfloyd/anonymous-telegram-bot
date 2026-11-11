@@ -1,7 +1,7 @@
 import { useSignal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
-import { useRef } from 'preact/hooks';
-import { t, type Language } from './i18n';
+import { useEffect, useRef } from 'preact/hooks';
+import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import {
   confirmationMatches,
@@ -13,6 +13,7 @@ import {
   type LinkStatus,
   type LinkView,
   type Screen,
+  type SendError,
 } from './state/app';
 
 const ERROR_TEXT: Record<ErrorKind, Key> = {
@@ -48,6 +49,13 @@ const NOTICE_TEXT: Record<HomeNotice, Key> = {
 const INVITATIONS_NOTICE_TEXT: Record<InvitationsNotice, Key> = {
   created: 'noticeInvitationCreated',
   'none-left': 'noticeNoneLeft',
+  network: 'errorNetwork',
+  generic: 'errorGeneric',
+};
+
+const SEND_ERROR_TEXT: Record<SendError, Key> = {
+  'no-tokens': 'errorNoTokens',
+  'rate-limited': 'errorTooFast',
   network: 'errorNetwork',
   generic: 'errorGeneric',
 };
@@ -104,6 +112,17 @@ export function App({ app, language }: { app: AppState; language: Language }) {
           <p class={screen.status === 'mismatch' ? 'warning' : 'notice'} role={screen.status === 'mismatch' ? 'alert' : undefined}>
             {tr(LINK_TEXT[screen.status])}
           </p>
+          {screen.status === 'verified' && screen.canWrite && (
+            <>
+              <p class="muted">{tr('firstMessageHint')}</p>
+              {screen.error && (
+                <p class="notice" role="alert">
+                  {tr(SEND_ERROR_TEXT[screen.error])}
+                </p>
+              )}
+              <Composer language={language} busy={screen.busy} onSend={app.writeToLink} />
+            </>
+          )}
           {screen.status === 'network' && <Button onClick={app.retry}>{tr('tryAgain')}</Button>}
           {screen.status !== 'checking' && (
             <Button kind="secondary" onClick={app.home}>
@@ -112,6 +131,8 @@ export function App({ app, language }: { app: AppState; language: Language }) {
           )}
         </Page>
       );
+    case 'conversation':
+      return <Conversation app={app} language={language} screen={screen} />;
     case 'replaced':
       return (
         <Page title={tr('replacedTitle')}>
@@ -142,8 +163,62 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
   const canCreate = !offline && !!account?.canCreateLinks && links.length < max;
   const mayJoin = !!invitations && invitations.inviteOnly && !invitations.member && !invitations.admin;
   const mayInvite = !!invitations && invitations.inviteOnly && (invitations.member || invitations.admin);
+  const tabs = (
+    <div class="tabs" role="tablist">
+      {(['chats', 'links'] as const).map((tabName) => (
+        <button
+          type="button"
+          role="tab"
+          aria-selected={screen.tab === tabName}
+          class={screen.tab === tabName ? 'tab active' : 'tab'}
+          onClick={() => void app.showTab(tabName)}
+        >
+          {tr(tabName === 'chats' ? 'tabChats' : 'tabLinks')}
+          {tabName === 'chats' && screen.conversations.some((c) => c.unread > 0) && <span class="dot" aria-hidden="true" />}
+        </button>
+      ))}
+    </div>
+  );
+  if (screen.tab === 'chats') {
+    return (
+      <main class="page">
+        {tabs}
+        {offline && <p class="notice">{tr('offline')}</p>}
+        {notice && (
+          <p class="notice" role="status">
+            {tr(NOTICE_TEXT[notice])}
+          </p>
+        )}
+        {screen.conversations.length === 0 ? (
+          <p class="muted">{tr('noConversations')}</p>
+        ) : (
+          <ul class="chats">
+            {screen.conversations.map((c) => (
+              <li key={c.id}>
+                <button type="button" class="chat" onClick={() => void app.openConversation(c.id)}>
+                  <span class="chat-top">
+                    <bdi dir="ltr" class="label">
+                      {c.label}
+                    </bdi>
+                    <span class="muted">{relativeTime(language, new Date(c.lastAt))}</span>
+                  </span>
+                  <span class="chat-bottom">
+                    <span class="preview" dir="auto">
+                      {c.last ? (c.last.out ? tr('youWrote', { text: c.last.text }) : c.last.text) : ''}
+                    </span>
+                    {c.unread > 0 && <span class="badge">{t(language, 'unreadCount', { count: c.unread })}</span>}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </main>
+    );
+  }
   return (
     <Page title={tr('homeTitle')} body={tr('homeIntro')}>
+      {tabs}
       {offline && <p class="notice">{tr('offline')}</p>}
       {notice && (
         <p class="notice" role="status">
@@ -183,6 +258,74 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
       )}
       {busy && <div class="spinner" aria-hidden="true" />}
     </Page>
+  );
+}
+
+function Conversation({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'conversation' }> }) {
+  const tr = (key: Key) => t(language, key);
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [screen.messages.length]);
+  const time = new Intl.DateTimeFormat(locale(language), { hour: 'numeric', minute: '2-digit' });
+  return (
+    <main class="page conversation">
+      <header class="conversation-head">
+        <bdi dir="ltr" class="label">
+          {screen.label}
+        </bdi>
+        <span class="muted">{tr(screen.role === 'owner' ? 'aboutOwnerConversation' : 'aboutSenderConversation')}</span>
+      </header>
+      <ol class="messages">
+        {screen.messages.map((m) => (
+          <li key={m.id} class={m.out ? 'bubble out' : 'bubble in'}>
+            <span class="text" dir="auto">
+              {m.text}
+            </span>
+            <span class="meta">
+              {m.status === 'failed' ? tr('notSent') : m.status === 'sending' ? tr('sending') : time.format(new Date(m.at))}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div ref={end} />
+      {screen.ended ? (
+        <p class="notice">{tr('conversationEnded')}</p>
+      ) : (
+        <>
+          {screen.error && (
+            <p class="notice" role="alert">
+              {tr(SEND_ERROR_TEXT[screen.error])}
+            </p>
+          )}
+          <Composer language={language} busy={screen.busy} onSend={app.sendMessage} />
+        </>
+      )}
+    </main>
+  );
+}
+
+function Composer({ language, busy, onSend }: { language: Language; busy: boolean; onSend: (text: string) => Promise<void> }) {
+  const text = useSignal('');
+  const send = async () => {
+    const value = text.value;
+    if (value.trim() === '') return;
+    text.value = '';
+    await onSend(value);
+  };
+  return (
+    <div class="composer">
+      <textarea
+        dir="auto"
+        rows={2}
+        maxLength={4000}
+        placeholder={t(language, 'messagePlaceholder')}
+        value={text.value}
+        disabled={busy}
+        onInput={(e) => (text.value = e.currentTarget.value)}
+      />
+      <Button disabled={busy || text.value.trim() === ''} onClick={send}>
+        {t(language, 'send')}
+      </Button>
+    </div>
   );
 }
 
