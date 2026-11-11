@@ -22,6 +22,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/directory"
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
 	"github.com/incognitochat/incognitochat/backend/internal/ids"
+	"github.com/incognitochat/incognitochat/backend/internal/links"
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata/initdatatest"
@@ -38,19 +39,76 @@ var start = time.Unix(1_800_000_000, 0)
 
 type memAccount struct {
 	key      []byte
+	th       string
 	replaced bool
+	member   bool
 	devices  map[string][]byte
+	links    int
+}
+
+type memLink struct {
+	owner string
+	link  directory.Link
 }
 
 type memDirectory struct {
 	mu       sync.Mutex
 	telegram map[string]string
 	accounts map[string]*memAccount
+	links    map[string]*memLink
 	fail     error
 }
 
 func newMemDirectory() *memDirectory {
-	return &memDirectory{telegram: map[string]string{}, accounts: map[string]*memAccount{}}
+	return &memDirectory{telegram: map[string]string{}, accounts: map[string]*memAccount{}, links: map[string]*memLink{}}
+}
+
+func (m *memDirectory) CreateLink(_ context.Context, account string, l directory.Link, max int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, taken := m.links[l.ID]; taken {
+		return directory.ErrConflict
+	}
+	a, ok := m.accounts[account]
+	if !ok || a.links >= max {
+		return directory.ErrLimit
+	}
+	a.links++
+	m.links[l.ID] = &memLink{owner: account, link: l}
+	return nil
+}
+
+func (m *memDirectory) Link(_ context.Context, id string) (directory.Link, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.links[id]
+	if !ok {
+		return directory.Link{}, directory.ErrNotFound
+	}
+	return l.link, nil
+}
+
+func (m *memDirectory) SetLinkKeys(_ context.Context, account, id string, keys []links.Key) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.links[id]
+	if !ok || l.owner != account {
+		return directory.ErrNotFound
+	}
+	l.link.Keys = keys
+	return nil
+}
+
+func (m *memDirectory) DeleteLink(_ context.Context, account, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.links[id]
+	if !ok || l.owner != account {
+		return directory.ErrNotFound
+	}
+	delete(m.links, id)
+	m.accounts[account].links--
+	return nil
 }
 
 func (m *memDirectory) ByTelegram(_ context.Context, th string) (directory.Account, error) {
@@ -73,7 +131,7 @@ func (m *memDirectory) ByTelegram(_ context.Context, th string) (directory.Accou
 
 func (m *memDirectory) put(n directory.NewAccount) {
 	m.telegram[n.TelegramHash] = n.ID
-	m.accounts[n.ID] = &memAccount{key: n.AccountKey, devices: map[string][]byte{n.DeviceID: n.DeviceKey}}
+	m.accounts[n.ID] = &memAccount{key: n.AccountKey, th: n.TelegramHash, devices: map[string][]byte{n.DeviceID: n.DeviceKey}}
 }
 
 func (m *memDirectory) Create(_ context.Context, n directory.NewAccount) error {
@@ -93,6 +151,12 @@ func (m *memDirectory) Replace(_ context.Context, old directory.Account, n direc
 		return directory.ErrConflict
 	}
 	m.accounts[old.ID].replaced = true
+	m.accounts[old.ID].th = ""
+	for id, l := range m.links {
+		if l.owner == old.ID {
+			delete(m.links, id)
+		}
+	}
 	m.put(n)
 	return nil
 }
@@ -104,7 +168,7 @@ func (m *memDirectory) Device(_ context.Context, account, device string, _ time.
 	if !ok || a.devices[device] == nil {
 		return directory.Device{}, directory.ErrNotFound
 	}
-	return directory.Device{Key: a.devices[device], Replaced: a.replaced}, nil
+	return directory.Device{Key: a.devices[device], Replaced: a.replaced, TelegramHash: a.th, Member: a.member, Links: a.links}, nil
 }
 
 type memLimiter struct {
@@ -181,6 +245,7 @@ type device struct {
 	ak, dsk *ecdsa.PrivateKey
 	id      string
 	account string
+	user    int64 // Telegram user ID
 }
 
 func randomBytes(t *testing.T, n int) []byte {
@@ -196,7 +261,7 @@ func newDevice(t *testing.T) *device {
 	t.Helper()
 	ak, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	dsk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	return &device{ak: ak, dsk: dsk, id: ids.New()}
+	return &device{ak: ak, dsk: dsk, id: ids.New(), user: userID}
 }
 
 func raw(t *testing.T, k *ecdsa.PrivateKey) []byte {
@@ -250,7 +315,7 @@ func (d *device) firstList(t *testing.T, issued time.Time) devicelist.List {
 // registration builds a /register body; change can alter it before signing.
 func (d *device) registration(t *testing.T, now time.Time, change func(r map[string]any, list *devicelist.List, initData *string)) map[string]any {
 	t.Helper()
-	initData := launch(t, userID, RegistrationPrefix+devicesig.Fingerprint(raw(t, d.ak)), now.Add(-30*time.Second))
+	initData := launch(t, d.user, RegistrationPrefix+devicesig.Fingerprint(raw(t, d.ak)), now.Add(-30*time.Second))
 	list := d.firstList(t, now)
 	body := map[string]any{}
 	if change != nil {

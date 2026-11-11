@@ -156,17 +156,60 @@ type Login struct {
 // recorded once the signature is valid, so unsigned requests can't fill the
 // nonce store.
 func Check(ctx context.Context, login Login, pub *ecdsa.PublicKey, nonces NonceStore, now time.Time) error {
-	if !ids.Valid(login.AccountID) || !ids.Valid(login.DeviceID) || !validNonce(login.Nonce) {
+	if !ids.Valid(login.AccountID) || !ids.Valid(login.DeviceID) {
 		return ErrLogin
 	}
-	at := time.Unix(login.Timestamp, 0)
+	return checkFresh(ctx, pub, login.Signature, devicesig.LabelSession, LoginParts(login), login.Timestamp, login.Nonce, nonces, now)
+}
+
+// SignedRequest is a device's signature on one API request, required on top
+// of a session token for sensitive actions: a stolen token alone can't make
+// them.
+type SignedRequest struct {
+	AccountID string
+	DeviceID  string
+	Method    string
+	Path      string
+	Body      []byte
+	Timestamp int64 // Unix seconds
+	Nonce     string
+	Signature []byte
+}
+
+// RequestParts are the signed parts of a request: account ID, device ID,
+// method, path, the timestamp in decimal, the nonce, and the SHA-256 of the
+// body.
+func RequestParts(r SignedRequest) [][]byte {
+	digest := sha256.Sum256(r.Body)
+	return [][]byte{
+		[]byte(r.AccountID),
+		[]byte(r.DeviceID),
+		[]byte(r.Method),
+		[]byte(r.Path),
+		[]byte(strconv.FormatInt(r.Timestamp, 10)),
+		[]byte(r.Nonce),
+		digest[:],
+	}
+}
+
+// CheckRequest verifies a signed request like a login: fresh timestamp,
+// valid signature, unused nonce.
+func CheckRequest(ctx context.Context, r SignedRequest, pub *ecdsa.PublicKey, nonces NonceStore, now time.Time) error {
+	return checkFresh(ctx, pub, r.Signature, devicesig.LabelRequest, RequestParts(r), r.Timestamp, r.Nonce, nonces, now)
+}
+
+func checkFresh(ctx context.Context, pub *ecdsa.PublicKey, signature []byte, label string, parts [][]byte, timestamp int64, nonce string, nonces NonceStore, now time.Time) error {
+	if !validNonce(nonce) {
+		return ErrLogin
+	}
+	at := time.Unix(timestamp, 0)
 	if at.Before(now.Add(-MaxSkew)) || at.After(now.Add(MaxSkew)) {
 		return ErrLogin
 	}
-	if devicesig.Verify(pub, login.Signature, devicesig.LabelSession, LoginParts(login)...) != nil {
+	if devicesig.Verify(pub, signature, label, parts...) != nil {
 		return ErrLogin
 	}
-	fresh, err := nonces.Use(ctx, login.Nonce, now.Add(NonceTTL))
+	fresh, err := nonces.Use(ctx, nonce, now.Add(NonceTTL))
 	if err != nil {
 		return err
 	}

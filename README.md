@@ -67,6 +67,15 @@ gh secret set BOT_TOKEN --env dev
 gh variable set CLIENT_ORIGINS --env dev --body '["https://<client-origin>"]'
 ```
 
+While invite-only (the default; set the variable `INVITE_ONLY` to `false` to
+open it), only accounts that joined through an invitation, and admins, can
+own links. Admins are listed by Telegram user ID in a secret, so the IDs stay
+out of the public deploy logs; the API keeps only their keyed hashes:
+
+```shell
+gh secret set ADMIN_TELEGRAM_IDS --env dev --body '<id>,<id>'
+```
+
 The dev client is published to its own GitHub Pages site, in a separate
 GitHub organization: sites of one owner share an origin, and with it the keys
 stored in the browser, so dev must never share production's. It needs the

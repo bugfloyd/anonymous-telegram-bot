@@ -21,6 +21,8 @@ locals {
         PARAM_TELEGRAM_ID_PEPPER = aws_ssm_parameter.parameter["telegram-id-pepper"].name
         NOTIFY_FUNCTION          = "${local.prefix}-notify"
         WS_ENDPOINT              = local.ws_endpoint
+        INVITE_ONLY              = tostring(var.invite_only)
+        ADMIN_TELEGRAM_IDS       = var.admin_telegram_ids
       }
     }
     # Telegram webhook: opens the app, cleans up service messages.
@@ -195,7 +197,7 @@ resource "aws_lambda_function_url" "api" {
   cors {
     allow_origins = var.client_origins
     allow_methods = ["GET", "POST", "PUT", "DELETE"]
-    allow_headers = ["authorization", "content-type"]
+    allow_headers = ["authorization", "content-type", "x-device-signature"]
     max_age       = 3600
   }
 }

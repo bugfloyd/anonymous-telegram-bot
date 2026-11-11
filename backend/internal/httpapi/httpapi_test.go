@@ -48,6 +48,47 @@ func TestServe(t *testing.T) {
 	}
 }
 
+func TestServeParams(t *testing.T) {
+	r := NewRouter()
+	echo := func(name string) HandlerFunc {
+		return func(ctx context.Context, _ Request) Response {
+			return JSON(http.StatusOK, map[string]string{"route": name, "id": Param(ctx, "id")})
+		}
+	}
+	r.Handle(http.MethodGet, "/links/{id}", echo("get"))
+	r.Handle(http.MethodDelete, "/links/{id}", echo("delete"))
+	r.Handle(http.MethodPut, "/links/{id}/bundle", echo("bundle"))
+	r.Handle(http.MethodGet, "/links/mine", echo("mine"))
+
+	tests := []struct {
+		method, path string
+		status       int
+		body         string
+	}{
+		{http.MethodGet, "/links/abc", http.StatusOK, `{"id":"abc","route":"get"}`},
+		{http.MethodDelete, "/links/abc", http.StatusOK, `{"id":"abc","route":"delete"}`},
+		{http.MethodPut, "/links/abc/bundle", http.StatusOK, `{"id":"abc","route":"bundle"}`},
+		{http.MethodGet, "/links/mine", http.StatusOK, `{"id":"","route":"mine"}`}, // static wins
+		{http.MethodPost, "/links/abc", http.StatusMethodNotAllowed, `{"error":"method_not_allowed"}`},
+		{http.MethodGet, "/links/", http.StatusNotFound, `{"error":"not_found"}`},
+		{http.MethodGet, "/links", http.StatusNotFound, `{"error":"not_found"}`},
+		{http.MethodGet, "/links/abc/extra", http.StatusNotFound, `{"error":"not_found"}`},
+	}
+	for _, tt := range tests {
+		resp, _ := r.Serve(context.Background(), request(tt.method, tt.path))
+		if resp.StatusCode != tt.status || resp.Body != tt.body {
+			t.Errorf("%s %s = %d %s, want %d %s", tt.method, tt.path, resp.StatusCode, resp.Body, tt.status, tt.body)
+		}
+	}
+}
+
+func TestHeader(t *testing.T) {
+	req := Request{Headers: map[string]string{"authorization": "Bearer x"}}
+	if Header(req, "Authorization") != "Bearer x" || Header(req, "X-Missing") != "" {
+		t.Fatal("Header lookup failed")
+	}
+}
+
 func TestJSONHeaders(t *testing.T) {
 	resp := JSON(http.StatusOK, struct{}{})
 	for header, want := range map[string]string{

@@ -11,6 +11,11 @@
 //	rate_limited                          too many attempts; try later
 //	login_refused                         the device can't log in
 //	account_replaced                      the account was replaced by a new registration
+//	session_expired                       the session token is missing or expired; log in again
+//	invitation_required                   only members and admins can own links while invite-only
+//	invalid_link                          the link ID or bundle is malformed or badly signed
+//	link_limit                            the account has the most links allowed
+//	not_found                             no such route, or no such link (revoked links included)
 //	internal                              something failed on the server
 package api
 
@@ -24,6 +29,7 @@ import (
 
 	"github.com/incognitochat/incognitochat/backend/internal/directory"
 	"github.com/incognitochat/incognitochat/backend/internal/httpapi"
+	"github.com/incognitochat/incognitochat/backend/internal/links"
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata"
@@ -35,6 +41,10 @@ type Directory interface {
 	Create(ctx context.Context, n directory.NewAccount) error
 	Replace(ctx context.Context, old directory.Account, n directory.NewAccount, now time.Time) error
 	Device(ctx context.Context, accountID, deviceID string, now time.Time) (directory.Device, error)
+	CreateLink(ctx context.Context, accountID string, l directory.Link, max int) error
+	Link(ctx context.Context, id string) (directory.Link, error)
+	SetLinkKeys(ctx context.Context, accountID, id string, keys []links.Key) error
+	DeleteLink(ctx context.Context, accountID, id string) error
 }
 
 // Limiter counts uses of a key in fixed windows.
@@ -52,12 +62,22 @@ type Server struct {
 	Pepper    []byte // keys the hash of Telegram user IDs
 	Log       *slog.Logger
 	Now       func() time.Time
+
+	// InviteOnly limits owning links to members and admins (design D5).
+	InviteOnly bool
+	// Admins holds the Telegram hashes (directory.TelegramHash) of admins.
+	Admins map[string]bool
 }
 
 // Routes registers the API's routes.
 func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/register", s.register)
 	r.Handle(http.MethodPost, "/session", s.session)
+	r.Handle(http.MethodGet, "/account", s.withDevice("GET /account", s.account))
+	r.Handle(http.MethodPost, "/links", s.withSignature("POST /links", s.createLink))
+	r.Handle(http.MethodPut, "/links/{id}/keys", s.withSignature("PUT /links/{id}/keys", s.setLinkKeys))
+	r.Handle(http.MethodDelete, "/links/{id}", s.withSignature("DELETE /links/{id}", s.revokeLink))
+	r.Handle(http.MethodGet, "/links/{id}", s.linkBundle)
 }
 
 // tokenResponse is what a successful registration or login returns.
@@ -86,6 +106,10 @@ func (s *Server) internal(route string, err error) httpapi.Response {
 
 // bytes64 is a byte string written in JSON as unpadded base64url.
 type bytes64 []byte
+
+func (b bytes64) MarshalJSON() ([]byte, error) {
+	return json.Marshal(base64.RawURLEncoding.EncodeToString(b))
+}
 
 func (b *bytes64) UnmarshalJSON(data []byte) error {
 	var text string

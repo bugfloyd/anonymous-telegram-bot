@@ -6,7 +6,12 @@
 //	A#<account>  A          account: account key (ak), Telegram hash (th)
 //	A#<account>  D#<device> device: signing key (k)
 //	A#<account>  L          signed device list: bytes (b), signature (s), sequence (q)
+//	A#<account>  K#<link>   marks a link the account owns (links.go)
+//	L#<link>     L          a link: owner (a), signing key (k), encryption keys (ek)
 //	T#<hash>     T          one account per Telegram user: account ID (a)
+//
+// The account item also counts the account's active links (lc) and, once it
+// joined through an invitation, records its level (lv).
 //
 // The Telegram hash is a keyed hash of the Telegram user ID (TelegramHash),
 // so the table enforces one account per user without holding the ID.
@@ -63,6 +68,7 @@ var (
 type DB interface {
 	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 	BatchWriteItem(context.Context, *dynamodb.BatchWriteItemInput, ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error)
 }
@@ -100,10 +106,14 @@ type NewAccount struct {
 	DeviceListSeq uint64
 }
 
-// Device is a device's signing key and whether its account was replaced.
+// Device is a device's signing key, with what requests need to know about
+// its account.
 type Device struct {
-	Key      []byte
-	Replaced bool
+	Key          []byte
+	Replaced     bool
+	TelegramHash string // "" once replaced
+	Member       bool   // joined through an invitation
+	Links        int    // active links
 }
 
 // ByTelegram returns the account registered for a Telegram hash.
@@ -198,6 +208,12 @@ func (s *Store) Replace(ctx context.Context, old Account, n NewAccount, now time
 	for _, sk := range old.items {
 		switch {
 		case sk == skAccount:
+		case strings.HasPrefix(sk, linkPrefix):
+			// The link itself goes too: its bundle then answers "not found".
+			requests = append(requests,
+				types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(accountPK(old.ID), sk)}},
+				types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(linkPK(strings.TrimPrefix(sk, linkPrefix)), skLink)}},
+			)
 		case strings.HasPrefix(sk, devicePrefix):
 			k, ok := old.Devices[strings.TrimPrefix(sk, devicePrefix)]
 			if !ok {
@@ -231,7 +247,9 @@ func (s *Store) Device(ctx context.Context, accountID, deviceID string, now time
 		return Device{}, ErrNotFound
 	}
 	g, _ := str(acct, "g")
-	return Device{Key: k, Replaced: g == goneReplaced}, nil
+	th, _ := str(acct, "th")
+	_, member := acct["lv"].(*types.AttributeValueMemberN)
+	return Device{Key: k, Replaced: g == goneReplaced, TelegramHash: th, Member: member, Links: int(num(acct, "lc"))}, nil
 }
 
 func (s *Store) newAccountItems(n NewAccount) []types.TransactWriteItem {
@@ -273,18 +291,28 @@ func (s *Store) get(ctx context.Context, pk, sk string, now time.Time) (map[stri
 }
 
 func (s *Store) transact(ctx context.Context, writes []types.TransactWriteItem) error {
+	_, err := s.transactReasons(ctx, writes)
+	return err
+}
+
+// transactReasons runs a transaction. When it is cancelled because a
+// condition failed or a concurrent transaction won, it returns ErrConflict
+// and each item's cancellation code ("None" for items that were fine).
+func (s *Store) transactReasons(ctx context.Context, writes []types.TransactWriteItem) ([]string, error) {
 	_, err := s.DB.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: writes})
 	var canceled *types.TransactionCanceledException
 	if errors.As(err, &canceled) {
-		// A failed condition or a concurrent transaction on the same items:
-		// either way another change won, and the caller may try again.
-		for _, r := range canceled.CancellationReasons {
-			if code := aws.ToString(r.Code); code == "ConditionalCheckFailed" || code == "TransactionConflict" {
-				return ErrConflict
-			}
+		reasons := make([]string, len(canceled.CancellationReasons))
+		conflict := false
+		for i, r := range canceled.CancellationReasons {
+			reasons[i] = aws.ToString(r.Code)
+			conflict = conflict || reasons[i] == "ConditionalCheckFailed" || reasons[i] == "TransactionConflict"
+		}
+		if conflict {
+			return reasons, ErrConflict
 		}
 	}
-	return err
+	return nil, err
 }
 
 func (s *Store) batchWrite(ctx context.Context, requests []types.WriteRequest) error {
@@ -348,6 +376,15 @@ func bin(item map[string]types.AttributeValue, name string) ([]byte, bool) {
 		return nil, false
 	}
 	return v.Value, true
+}
+
+func num(item map[string]types.AttributeValue, name string) int64 {
+	v, ok := item[name].(*types.AttributeValueMemberN)
+	if !ok {
+		return 0
+	}
+	n, _ := strconv.ParseInt(v.Value, 10, 64)
+	return n
 }
 
 func expired(item map[string]types.AttributeValue, now time.Time) bool {

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -36,16 +37,9 @@ func DecodeJSON(req Request, v any) error {
 	if !isJSON(req.Headers) {
 		return ErrMediaType
 	}
-	body := []byte(req.Body)
-	if req.IsBase64Encoded {
-		decoded, err := base64.StdEncoding.DecodeString(req.Body)
-		if err != nil {
-			return ErrBadRequest
-		}
-		body = decoded
-	}
-	if len(body) > MaxBody {
-		return ErrBadRequest
+	body, err := Body(req)
+	if err != nil {
+		return err
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
@@ -56,6 +50,22 @@ func DecodeJSON(req Request, v any) error {
 		return ErrBadRequest
 	}
 	return nil
+}
+
+// Body returns the raw request body, at most MaxBody bytes.
+func Body(req Request) ([]byte, error) {
+	body := []byte(req.Body)
+	if req.IsBase64Encoded {
+		decoded, err := base64.StdEncoding.DecodeString(req.Body)
+		if err != nil {
+			return nil, ErrBadRequest
+		}
+		body = decoded
+	}
+	if len(body) > MaxBody {
+		return nil, ErrBadRequest
+	}
+	return body, nil
 }
 
 // DecodeError is the response for an error from DecodeJSON.
@@ -85,39 +95,127 @@ type Response = events.LambdaFunctionURLResponse
 // HandlerFunc handles one route.
 type HandlerFunc func(ctx context.Context, req Request) Response
 
-// Router dispatches by method and exact path.
+// Router dispatches by method and path. A pattern segment written {name}
+// matches any one non-empty segment; handlers read it with Param. Patterns
+// without parameters win over patterns with them.
 type Router struct {
-	routes map[string]map[string]HandlerFunc // path -> method -> handler
+	routes []*route
 }
+
+type route struct {
+	pattern  string
+	segments []string
+	params   bool
+	byMethod map[string]HandlerFunc
+}
+
+type paramsKey struct{}
 
 // NewRouter returns an empty router.
 func NewRouter() *Router {
-	return &Router{routes: map[string]map[string]HandlerFunc{}}
+	return &Router{}
 }
 
-// Handle registers a handler for method and path.
-func (r *Router) Handle(method, path string, h HandlerFunc) {
-	if r.routes[path] == nil {
-		r.routes[path] = map[string]HandlerFunc{}
+// Handle registers a handler for method and pattern.
+func (r *Router) Handle(method, pattern string, h HandlerFunc) {
+	for _, rt := range r.routes {
+		if rt.pattern == pattern {
+			rt.byMethod[method] = h
+			return
+		}
 	}
-	r.routes[path][method] = h
+	segments := split(pattern)
+	params := false
+	for _, s := range segments {
+		params = params || isParam(s)
+	}
+	r.routes = append(r.routes, &route{pattern: pattern, segments: segments, params: params, byMethod: map[string]HandlerFunc{method: h}})
+	// Static patterns first.
+	slices.SortStableFunc(r.routes, func(a, b *route) int {
+		switch {
+		case a.params == b.params:
+			return 0
+		case a.params:
+			return 1
+		default:
+			return -1
+		}
+	})
 }
 
 // Serve is the Lambda entry point for a function URL.
 func (r *Router) Serve(ctx context.Context, req Request) (Response, error) {
-	path := req.RawPath
-	if path == "" {
-		path = "/"
+	segments := split(req.RawPath)
+	method := strings.ToUpper(req.RequestContext.HTTP.Method)
+	pathMatched := false
+	for _, rt := range r.routes {
+		params, ok := rt.match(segments)
+		if !ok {
+			continue
+		}
+		h, ok := rt.byMethod[method]
+		if !ok {
+			pathMatched = true
+			continue
+		}
+		if params != nil {
+			ctx = context.WithValue(ctx, paramsKey{}, params)
+		}
+		return h(ctx, req), nil
 	}
-	byMethod, ok := r.routes[path]
-	if !ok {
-		return Error(http.StatusNotFound, "not_found"), nil
-	}
-	h, ok := byMethod[strings.ToUpper(req.RequestContext.HTTP.Method)]
-	if !ok {
+	if pathMatched {
 		return Error(http.StatusMethodNotAllowed, "method_not_allowed"), nil
 	}
-	return h(ctx, req), nil
+	return Error(http.StatusNotFound, "not_found"), nil
+}
+
+// Param returns a path parameter of the matched pattern ("" if none).
+func Param(ctx context.Context, name string) string {
+	params, _ := ctx.Value(paramsKey{}).(map[string]string)
+	return params[name]
+}
+
+// Header returns a request header, whatever its case.
+func Header(req Request, name string) string {
+	for k, v := range req.Headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
+func (rt *route) match(segments []string) (map[string]string, bool) {
+	if len(segments) != len(rt.segments) {
+		return nil, false
+	}
+	var params map[string]string
+	for i, s := range rt.segments {
+		switch {
+		case isParam(s):
+			if segments[i] == "" {
+				return nil, false
+			}
+			if params == nil {
+				params = map[string]string{}
+			}
+			params[s[1:len(s)-1]] = segments[i]
+		case s != segments[i]:
+			return nil, false
+		}
+	}
+	return params, true
+}
+
+func split(path string) []string {
+	if path == "" || path == "/" {
+		return []string{""}
+	}
+	return strings.Split(strings.TrimPrefix(path, "/"), "/")
+}
+
+func isParam(segment string) bool {
+	return len(segment) > 2 && segment[0] == '{' && segment[len(segment)-1] == '}'
 }
 
 // JSON writes v as a JSON response with the given status.
