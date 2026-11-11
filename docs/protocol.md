@@ -80,6 +80,16 @@ keys, each `{key, from, until, signature}` with the signature over
 A client trusts a bundle only if the signing key's fingerprint is the one in the
 link and every key's signature checks; it encrypts to the newest key valid now.
 
+An account has one link at a time (`POST /links`). Replacing it
+(`POST /links` with `replaces: <old ID>`) swaps the old link and its intro
+mailbox for the new one in one step: the old link stops working at once.
+The new link has a new ID and new encryption keys but the **same signing
+key**, so its fingerprint stays the same. Sender tags are made from that
+fingerprint, so the same people keep the same tags across replacements, which
+keeps blocks and labels. Conversations carry on, since after the first message
+they don't go through the link; a sender the owner hasn't answered yet keeps
+writing to the old intro mailbox until the owner replies.
+
 Invitation links use `payload = "inv" ‖ code`, the code being 8 characters from
 `abcdefghjkmnpqrstuvwxyz23456789`, shown as `abcd-efgh`.
 
@@ -137,7 +147,7 @@ JSON fields:
 | `from` | sender's current conversation public key (65 bytes); a new one is a rotation |
 | `to` | key ID of the recipient key it was written for; must be the key that opened it |
 | `reply` | mailbox to write back to (16 bytes), first messages or when it changes |
-| `tag` | sender tag (32 bytes), first message through a link |
+| `tag` | sender tag (32 bytes), first message through a link: `HMAC-SHA256(account secret, Message("incognitochat/v2/sender-tag", UTF-8 of the link fingerprint))`, the same for one person on every link with that fingerprint |
 | `last` | ID of the last message received from the other side |
 | `text` | the text (`message` only; at most 12,000 UTF-8 bytes) |
 | `replyTo` | ID of the message this answers |

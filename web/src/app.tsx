@@ -37,6 +37,7 @@ const LINK_TEXT: Record<LinkStatus, Key> = {
 const NOTICE_TEXT: Record<HomeNotice, Key> = {
   blocked: 'noticeBlocked',
   deleted: 'noticeDeleted',
+  replaced: 'noticeReplaced',
   created: 'noticeCreated',
   revoked: 'noticeRevoked',
   limit: 'noticeLimit',
@@ -162,8 +163,9 @@ export function App({ app, language }: { app: AppState; language: Language }) {
 function Home({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'home' }> }) {
   const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const { account, invitations, links, busy, notice, offline } = screen;
-  const max = account?.maxLinks ?? 0;
-  const canCreate = !offline && !!account?.canCreateLinks && links.length < max;
+  // One link per account (older ones, from before, go when it's replaced).
+  const link = links[links.length - 1];
+  const canCreate = !offline && !!account?.canCreateLinks && !link;
   const mayJoin = !!invitations && invitations.inviteOnly && !invitations.member && !invitations.admin;
   const mayInvite = !!invitations && invitations.inviteOnly && (invitations.member || invitations.admin);
   // The chat swiped open to show its Delete button.
@@ -232,19 +234,16 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
       )}
       {account && !account.canCreateLinks && notice !== 'invitation' && <p class="notice">{tr('needInvitation')}</p>}
       {mayJoin && <JoinForm app={app} language={language} busy={busy} />}
-      {links.length === 0 ? (
-        <p class="muted">{tr('noLinks')}</p>
-      ) : (
+      {link ? (
         <ul class="links">
-          {links.map((link) => (
-            <LinkItem key={link.id} app={app} language={language} link={link} busy={busy} />
-          ))}
+          <LinkItem key={link.id} app={app} language={language} link={link} busy={busy || offline} />
         </ul>
+      ) : (
+        <p class="muted">{tr('noLinks')}</p>
       )}
-      {account && max > 0 && <p class="muted">{tr('linksCount', { count: links.length, max })}</p>}
       {canCreate && (
         <Button disabled={busy} onClick={app.createLink}>
-          {tr('newLink')}
+          {tr('createLink')}
         </Button>
       )}
       {(mayInvite || invitations?.admin) && (
@@ -341,6 +340,18 @@ async function confirmDelete(app: AppState, language: Language, id: string): Pro
     ],
   });
   if (choice === 'delete' || choice === 'block') await app.deleteConversation(id, choice === 'block');
+}
+
+/** Asks, in Telegram's own popup, before swapping the link for a new one. */
+async function confirmReplace(app: AppState, language: Language): Promise<void> {
+  const choice = await app.popup({
+    message: t(language, 'newLinkConfirm'),
+    buttons: [
+      { id: 'replace', type: 'default', text: t(language, 'newLink') },
+      { id: 'cancel', type: 'cancel' },
+    ],
+  });
+  if (choice === 'replace') await app.replaceLink();
 }
 
 /** Telegram-style delivery marks: a clock while sending, one check when sent, two once seen. */
@@ -751,6 +762,9 @@ function LinkItem({ app, language, link, busy }: { app: AppState; language: Lang
           </Button>
           <Button kind="secondary" disabled={busy} onClick={() => app.share(link.url)}>
             {tr('share')}
+          </Button>
+          <Button kind="secondary" disabled={busy} onClick={() => void confirmReplace(app, language)}>
+            {tr('newLink')}
           </Button>
           <Button kind="secondary" disabled={busy} onClick={() => (confirming.value = true)}>
             {tr('revoke')}

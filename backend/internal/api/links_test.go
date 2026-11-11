@@ -287,3 +287,50 @@ func TestLinkLimitAndOwnership(t *testing.T) {
 		t.Fatal("the link was changed by another account")
 	}
 }
+
+func TestReplaceLink(t *testing.T) {
+	h := newHarness(t)
+	h.server.InviteOnly = false
+	owner := h.account(t, userID)
+	old := newLinkKeys(t)
+	_, out := h.as(t, owner, http.MethodPost, "/links", old.create(t, h.now), true)
+	oldIntro := out["mailbox"].(string)
+
+	// Same signing key, new ID: a new address for the same link identity.
+	next := linkKeys{id: b64(randomBytes(t, 8)), lsk: old.lsk}
+	body := next.create(t, h.now)
+	body["replaces"] = old.id
+	status, out := h.as(t, owner, http.MethodPost, "/links", body, true)
+	if status != http.StatusCreated || out["id"] != next.id {
+		t.Fatalf("replace: %d %v", status, out)
+	}
+	if status, _ := h.call(t, nil, "", http.MethodGet, "/links/"+old.id, nil, false); status != http.StatusNotFound {
+		t.Fatalf("old link still answers: %d", status)
+	}
+	if _, bundle := h.call(t, nil, "", http.MethodGet, "/links/"+next.id, nil, false); bundle["signingKey"] != b64(raw(t, old.lsk)) {
+		t.Fatalf("new bundle = %v", bundle)
+	}
+	// First messages to the old intro mailbox go nowhere now.
+	h.post(t, "/send", map[string]any{"mailbox": oldIntro, "envelope": clientEnvelope(t), "token": mintToken(t, h.now)})
+	if _, out := h.as(t, owner, http.MethodGet, "/inbox", nil, false); len(out["items"].([]any)) != 0 {
+		t.Fatalf("the old intro mailbox delivered: %v", out)
+	}
+
+	// Replacing a link that's gone, or someone else's, or with a bad ID.
+	for _, replaces := range []string{old.id, "bad"} {
+		b := newLinkKeys(t).create(t, h.now)
+		b["replaces"] = replaces
+		status, out := h.as(t, owner, http.MethodPost, "/links", b, true)
+		wantError(t, status, out, http.StatusNotFound, "not_found")
+	}
+	other := h.account(t, userID+1)
+	b := newLinkKeys(t).create(t, h.now)
+	b["replaces"] = next.id
+	status, out = h.as(t, other, http.MethodPost, "/links", b, true)
+	wantError(t, status, out, http.StatusNotFound, "not_found")
+	// It has to be signed.
+	status, out = h.as(t, owner, http.MethodPost, "/links", b, false)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("unsigned replace: %d %v", status, out)
+	}
+}

@@ -279,6 +279,23 @@ func (m *memDirectory) CreateLink(_ context.Context, account string, l directory
 	return nil
 }
 
+func (m *memDirectory) ReplaceLink(_ context.Context, account, oldID string, l directory.Link) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old, ok := m.links[oldID]
+	if !ok || old.owner != account {
+		return directory.ErrNotFound
+	}
+	if _, taken := m.links[l.ID]; taken {
+		return directory.ErrConflict
+	}
+	delete(m.links, oldID)
+	delete(m.boxes, old.link.Mailbox)
+	m.links[l.ID] = &memLink{owner: account, link: l}
+	m.boxes[l.Mailbox] = directory.Mailbox{ID: l.Mailbox, Owner: account, Link: l.ID}
+	return nil
+}
+
 func (m *memDirectory) Link(_ context.Context, id string) (directory.Link, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

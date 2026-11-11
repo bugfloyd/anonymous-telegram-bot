@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { describe, expect, it } from 'vitest';
-import { createLink } from '../account/links';
+import { createLink, listLinks, replaceLink } from '../account/links';
 import type { TokenIssuer } from '../account/wallet';
 import { i2osp, modPow, os2ip, type IssuerKey } from '../crypto/blindrsa';
 import { fromBase64Url, toBase64Url } from '../crypto/encoding';
@@ -77,6 +77,13 @@ async function fakeBackend() {
           });
         }
         if (path === '/links') {
+          if (b.replaces) {
+            // The old link and its intro mailbox go.
+            const old = bundles.get(b.replaces as string);
+            if (!old) throw new ApiError(404, 'not_found');
+            bundles.delete(b.replaces as string);
+            mailboxes.delete(old.mailbox as string);
+          }
           const intro = rand();
           mailboxes.set(intro, account);
           bundles.set(b.id as string, { signingKey: b.signingKey, keys: b.keys, mailbox: intro });
@@ -324,5 +331,41 @@ describe('deleting a conversation', () => {
     // Replying works as before.
     await owner.messaging.send(conv, 'yes');
     expect(await sender.messaging.sync()).toBe(1);
+  });
+});
+
+describe('a replaced link', () => {
+  it('keeps its blocks and labels, and the old one stops working', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const blocked = await person(backend, 'blocked');
+    const friend = await person(backend, 'friend');
+    const old = await linkOf(backend, owner);
+    const spam = await blocked.messaging.startConversation(old.ref, old.bundle, 'spam');
+    await friend.messaging.startConversation(old.ref, old.bundle, 'hi, it is me');
+    expect(await owner.messaging.sync()).toBe(2);
+    await owner.messaging.block(spam);
+    const labelOf = async (text: string) => {
+      for (const c of await listConversations(owner.db)) {
+        if ((await listMessages(owner.db, c.id)).some((m) => m.text === text)) return c.label;
+      }
+      return null;
+    };
+    const friendLabel = await labelOf('hi, it is me');
+
+    const record = await replaceLink(owner.db, owner.session);
+    expect(record.fingerprint).toBe(old.ref.fingerprint);
+    expect(record.id).not.toBe(old.ref.id);
+    expect((await listLinks(owner.db)).map((l) => l.id)).toEqual([record.id]);
+    await expect(backend.api.request('GET', `/links/${old.ref.id}`, {}, checkBundle)).rejects.toThrow();
+    const next = { ref: { id: record.id, fingerprint: record.fingerprint }, bundle: await backend.api.request('GET', `/links/${record.id}`, {}, checkBundle) };
+
+    // The blocked person writes through the new link: dropped.
+    await blocked.messaging.startConversation(next.ref, next.bundle, 'remember me?');
+    expect(await owner.messaging.sync()).toBe(0);
+    // The friend starts again through the new link: the same label as before.
+    await friend.messaging.startConversation(next.ref, next.bundle, 'new link, same me');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect(await labelOf('new link, same me')).toBe(friendLabel);
   });
 });

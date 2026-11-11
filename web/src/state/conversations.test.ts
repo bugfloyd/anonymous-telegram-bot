@@ -65,6 +65,12 @@ async function backend() {
         return check({ inviteOnly: false, member: false, admin: false, level: 0, unlimited: false, remaining: 0, maxUses: 0, codes: [] });
       }
       if (method === 'POST' && path === '/links') {
+        if (body.replaces) {
+          const old = bundles.get(body.replaces as string);
+          if (!old) throw new ApiError(404, 'not_found');
+          bundles.delete(body.replaces as string);
+          owners.delete(old.mailbox as string);
+        }
         const intro = rand();
         owners.set(intro, account);
         bundles.set(body.id as string, { signingKey: body.signingKey, keys: body.keys, mailbox: intro });
@@ -288,6 +294,39 @@ describe('conversations in the app', () => {
     await sender.home();
     await sender.showTab('chats');
     expect(screenOf(sender.screen.value, 'home').conversations[0]!.last).toMatchObject({ out: true, status: 'sent' });
+  });
+
+  it('swaps the link for a new one; people who were answered carry on through it', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const oldUrl = screenOf(owner.screen.value, 'home').links[0]!.url;
+    const oldPayload = new URL(oldUrl).searchParams.get('startapp')!;
+    const sender = await person(b, oldPayload);
+    await sender.writeToLink('hello');
+    await owner.showTab('chats');
+    await owner.sync();
+    await owner.openConversation(screenOf(owner.screen.value, 'home').conversations[0]!.id);
+    await owner.sendMessage('hi back');
+    await sender.sync();
+
+    await owner.home();
+    await owner.showTab('links');
+    await owner.replaceLink();
+    const home = screenOf(owner.screen.value, 'home');
+    expect(home.notice).toBe('replaced');
+    expect(home.links).toHaveLength(1);
+    const newPayload = new URL(home.links[0]!.url).searchParams.get('startapp')!;
+    expect(newPayload).not.toBe(oldPayload);
+
+    // The owner opening their old link sees it's theirs.
+    expect(screenOf((await owner.reopen(oldPayload)).screen.value, 'link').status).toBe('own');
+    // Someone opening the old link: gone.
+    const stranger = await person(b, oldPayload);
+    expect(screenOf(stranger.screen.value, 'link').status).toBe('not-found');
+    // The sender, already answered, opens the new link: the same conversation.
+    const conv = (await listConversations(sender.db))[0]!.id;
+    expect(screenOf((await sender.reopen(newPayload)).screen.value, 'conversation').id).toBe(conv);
   });
 
   it("says when the day's tokens are used up", async () => {
