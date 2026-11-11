@@ -34,6 +34,7 @@ const LINK_TEXT: Record<LinkStatus, Key> = {
 };
 
 const NOTICE_TEXT: Record<HomeNotice, Key> = {
+  blocked: 'noticeBlocked',
   created: 'noticeCreated',
   revoked: 'noticeRevoked',
   limit: 'noticeLimit',
@@ -264,6 +265,7 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
 function Conversation({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'conversation' }> }) {
   const tr = (key: Key) => t(language, key);
   const end = useRef<HTMLDivElement>(null);
+  const confirmingBlock = useSignal(false);
   useEffect(() => end.current?.scrollIntoView({ block: 'end' }), [screen.messages.length]);
   const time = new Intl.DateTimeFormat(locale(language), { hour: 'numeric', minute: '2-digit' });
   return (
@@ -273,6 +275,21 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           {screen.label}
         </bdi>
         <span class="muted">{tr(screen.role === 'owner' ? 'aboutOwnerConversation' : 'aboutSenderConversation')}</span>
+        {confirmingBlock.value ? (
+          <div class="row">
+            <p class="warning">{tr(screen.role === 'owner' ? 'blockConfirmOwner' : 'blockConfirmSender')}</p>
+            <Button kind="danger" disabled={screen.busy} onClick={app.block}>
+              {tr('blockYes')}
+            </Button>
+            <Button kind="secondary" disabled={screen.busy} onClick={() => (confirmingBlock.value = false)}>
+              {tr('cancel')}
+            </Button>
+          </div>
+        ) : (
+          <button type="button" class="link-button" onClick={() => (confirmingBlock.value = true)}>
+            {tr('block')}
+          </button>
+        )}
       </header>
       <ol class="messages">
         {screen.messages.map((m) => (
@@ -281,7 +298,13 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
               {m.text}
             </span>
             <span class="meta">
-              {m.status === 'failed' ? tr('notSent') : m.status === 'sending' ? tr('sending') : time.format(new Date(m.at))}
+              {m.status === 'failed'
+                ? tr('notSent')
+                : m.status === 'sending'
+                  ? tr('sending')
+                  : m.status === 'seen'
+                    ? `${time.format(new Date(m.at))} · ${tr('seen')}`
+                    : time.format(new Date(m.at))}
             </span>
           </li>
         ))}

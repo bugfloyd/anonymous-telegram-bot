@@ -17,17 +17,19 @@ import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import { newId, openMessage, sealMessage, type Draft, type Message } from '../protocol/message';
-import { getSealed, type ConversationRecord, type Database } from '../storage/db';
+import { getMeta, getSealed, putMeta, type ConversationRecord, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
 import { conversationKey, createConversationKey, hasLinkKey, indexKey, keyFinder, lookupKey } from './keys';
 import { POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, getConversation, hasMessage, putConversation, setMessageStatus } from './store';
+import { addMessage, getConversation, hasMessage, listMessages, putConversation, setMessageStatus } from './store';
 
 const DAY = 24 * 3600 * 1000;
 /** Messages sent longer ago than this, or later than now plus a day, are dropped (design §10). */
 const MAX_AGE = 31 * DAY;
 const MAX_INBOX_PAGES = 10;
+const MAX_SEEN = 100;
+const META_BLOCKED = 'blocked-tags';
 
 export class NoTokens extends Error {
   constructor() {
@@ -124,40 +126,86 @@ export function createMessaging(deps: MessagingDeps) {
     await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text, ...(replyTo ? { replyTo } : {}) });
     await putConversation(db, { ...conversation, lastAt: at });
     await onStored?.();
+    try {
+      await transmit(conversation.id, { kind: 'message', id, at, text, ...(replyTo ? { replyTo } : {}) });
+      await setMessageStatus(db, id, 'sent');
+    } catch (err) {
+      await setMessageStatus(db, id, 'failed');
+      throw err;
+    }
+  }
 
-    // One send at a time per conversation, so a first reply creates one key and takes one mailbox.
-    await withLock(`send:${conversation.id}`, async () => {
-      try {
-        let c = (await getConversation(db, conversation.id)) ?? conversation;
-        // The owner's first reply brings our own key and mailbox for this conversation.
-        if (c.myKey === null) {
-          const key = await createConversationKey(db, c.id);
-          c = { ...c, myKey: toBase64Url(key.publicKey) };
-          await putConversation(db, c);
-        }
-        if (c.myMailbox === null) {
-          c = { ...c, myMailbox: await takeMailbox(db, session) };
-          await putConversation(db, c);
-        }
-        const myKey = await conversationKey(db, c.myKey!);
-        const draft: Draft = {
-          kind: 'message',
-          conv: c.id,
-          id,
-          at,
-          text,
-          reply: c.myMailbox!,
-          ...(replyTo ? { replyTo } : {}),
-          ...(c.lastReceived ? { last: c.lastReceived } : {}),
-        };
-        if (c.role === 'sender') draft.tag = toBase64Url(await senderTag(await accountSecret(db), c.link.fingerprint));
-        const envelope = await sealMessage(draft, myKey, fromBase64Url(c.peerKey));
-        await deliver(c.sendTo, envelope);
-        await setMessageStatus(db, id, 'sent');
-      } catch (err) {
-        await setMessageStatus(db, id, 'failed');
-        throw err;
+  /**
+   * Seals and sends something in a conversation: a message, or a seen
+   * receipt. One at a time per conversation, so the owner's first reply (or
+   * first receipt) creates one key and takes one mailbox.
+   */
+  function transmit(conv: string, fields: Omit<Draft, 'conv' | 'reply' | 'last' | 'tag'>): Promise<void> {
+    return withLock(`send:${conv}`, async () => {
+      let c = await getConversation(db, conv);
+      if (!c) throw new Error('unknown conversation');
+      if (c.myKey === null) {
+        const key = await createConversationKey(db, c.id);
+        c = { ...c, myKey: toBase64Url(key.publicKey) };
+        await putConversation(db, c);
       }
+      if (c.myMailbox === null) {
+        c = { ...c, myMailbox: await takeMailbox(db, session) };
+        await putConversation(db, c);
+      }
+      const myKey = await conversationKey(db, c.myKey!);
+      const draft: Draft = { ...fields, conv: c.id, reply: c.myMailbox!, ...(c.lastReceived ? { last: c.lastReceived } : {}) };
+      if (c.role === 'sender') draft.tag = toBase64Url(await senderTag(await accountSecret(db), c.link.fingerprint));
+      await deliver(c.sendTo, await sealMessage(draft, myKey, fromBase64Url(c.peerKey)));
+    });
+  }
+
+  /**
+   * Opening a conversation: tells the other side, at once, which of their
+   * messages we have now read (design D12), and clears the unread count.
+   */
+  async function markSeen(conv: string): Promise<void> {
+    const c = await getConversation(db, conv);
+    if (!c) return;
+    if (c.unread > 0) await putConversation(db, { ...c, unread: 0 });
+    if (c.status !== 'active') return;
+    const unseen = (await listMessages(db, conv)).filter((m) => !m.out && m.status === 'received').map((m) => m.id);
+    for (let i = 0; i < unseen.length; i += MAX_SEEN) {
+      const batch = unseen.slice(i, i + MAX_SEEN);
+      // Left as received if this fails, so the next opening tries again.
+      await transmit(conv, { kind: 'seen', id: newId(), at: now(), seen: batch });
+      for (const id of batch) await setMessageStatus(db, id, 'read');
+    }
+  }
+
+  /**
+   * Blocks a conversation, silently (design §11): our mailbox for it is
+   * discarded, so their sends go nowhere, and for someone who wrote to our
+   * link their sender tag is remembered, so new conversations they start
+   * through that link are dropped too. Nobody is told.
+   */
+  async function block(conv: string): Promise<void> {
+    const c = await getConversation(db, conv);
+    if (!c) return;
+    if (c.myMailbox) {
+      try {
+        await session.call('POST', `/mailboxes/${c.myMailbox}/discard`, undefined, checkObject);
+      } catch (err) {
+        if (!(err instanceof ApiError && err.code === 'not_found')) throw err;
+      }
+    }
+    if (c.role === 'owner' && c.tag) await addBlockedTag(c.link.id, c.tag);
+    await putConversation(db, { ...c, status: 'blocked', unread: 0 });
+  }
+
+  async function blockedTags(): Promise<Set<string>> {
+    const value = await getMeta<unknown>(db, META_BLOCKED);
+    return new Set(Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+  }
+
+  function addBlockedTag(link: string, tag: string): Promise<void> {
+    return withLock(META_BLOCKED, async () => {
+      await putMeta(db, META_BLOCKED, [...(await blockedTags()), `${link}:${tag}`]);
     });
   }
 
@@ -229,12 +277,16 @@ export function createMessaging(deps: MessagingDeps) {
     if (await hasMessage(db, message.id)) return false; // a replay
 
     let conv = await getConversation(db, message.conv);
+    // Nothing more from a blocked conversation.
+    if (conv?.status === 'blocked') return false;
     if (entry.link) {
       // Written for our link's key: a new conversation, or more from a sender
       // we haven't answered yet (whose key can't change meanwhile).
       if (conv && (conv.role !== 'owner' || conv.link.id !== entry.link.id || conv.peerKey !== message.from)) return false;
       if (!conv) {
         if (!message.reply) return false;
+        // A new conversation from a person we blocked through this link.
+        if (message.tag && (await blockedTags()).has(`${entry.link.id}:${message.tag}`)) return false;
         const secret = await accountSecret(db);
         conv = {
           id: message.conv,
@@ -250,6 +302,7 @@ export function createMessaging(deps: MessagingDeps) {
           unread: 0,
           status: 'active',
           lastReceived: null,
+          ...(message.tag ? { tag: message.tag } : {}),
         };
       }
     } else if (entry.conv) {
@@ -273,11 +326,19 @@ export function createMessaging(deps: MessagingDeps) {
       conv.unread += 1;
       conv.lastAt = Math.max(conv.lastAt, at);
       isNew = true;
+    } else if (message.kind === 'seen') {
+      // They opened these: our messages in this conversation only.
+      for (const id of message.seen ?? []) await markOwnSeen(conv.id, id);
     } else if (message.kind === 'end') {
       conv.status = 'ended';
     }
     await putConversation(db, conv);
     return isNew;
+  }
+
+  async function markOwnSeen(conv: string, id: string): Promise<void> {
+    const mine = (await listMessages(db, conv)).find((m) => m.id === id && m.out);
+    if (mine && (mine.status === 'sent' || mine.status === 'sending')) await setMessageStatus(db, id, 'seen');
   }
 
   async function markRead(conv: string): Promise<void> {
@@ -319,7 +380,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sync, markRead, maintain };
+  return { startConversation, send, sync, markRead, markSeen, block, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

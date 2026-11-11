@@ -82,6 +82,12 @@ async function fakeBackend() {
           bundles.set(b.id as string, { signingKey: b.signingKey, keys: b.keys, mailbox: intro });
           return check({ id: b.id, mailbox: intro });
         }
+        if (method === 'POST' && path.startsWith('/mailboxes/') && path.endsWith('/discard')) {
+          const id = path.split('/')[2]!;
+          if (mailboxes.get(id) !== account) throw new ApiError(404, 'not_found');
+          mailboxes.delete(id);
+          return check({});
+        }
         if (method === 'GET' && path === '/inbox') return check({ items: [...inboxes.get(account)!], more: false });
         if (path === '/ack') {
           const done = new Set(b.ids as string[]);
@@ -216,5 +222,81 @@ describe('messaging between two people', () => {
 
     await sender.messaging.startConversation(ref, bundle, 'still reaches you');
     expect(await owner.messaging.sync()).toBe(1);
+  });
+});
+
+describe('seen receipts', () => {
+  it('tell the sender what was read, once', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'one');
+    await sender.messaging.send(conv, 'two');
+    await owner.messaging.sync();
+
+    await owner.messaging.markSeen(conv);
+    expect((await listMessages(owner.db, conv)).map((m) => m.status)).toEqual(['read', 'read']);
+    const sends = backend.seenEnvelopes.length;
+    await owner.messaging.markSeen(conv); // nothing new to report
+    expect(backend.seenEnvelopes.length).toBe(sends);
+
+    await sender.messaging.sync();
+    expect((await listMessages(sender.db, conv)).map((m) => [m.text, m.status])).toEqual([
+      ['one', 'seen'],
+      ['two', 'seen'],
+    ]);
+  });
+});
+
+describe('blocks', () => {
+  it('silence a person: this conversation, and new ones through the same link', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const other = await person(backend, 'other');
+    const { ref, bundle } = await linkOf(backend, owner);
+
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi');
+    await sender.messaging.sync();
+
+    await owner.messaging.block(conv);
+    // Their sends still look accepted, but nothing arrives.
+    await sender.messaging.send(conv, 'are you there?');
+    await sender.messaging.startConversation(ref, bundle, 'it is me again');
+    expect(await owner.messaging.sync()).toBe(0);
+    // Someone else still gets through.
+    await other.messaging.startConversation(ref, bundle, 'hello from someone else');
+    expect(await owner.messaging.sync()).toBe(1);
+    const statuses = (await listConversations(owner.db)).map((c) => c.status).sort();
+    expect(statuses).toEqual(['active', 'blocked']);
+  });
+
+  it('work before the owner ever replied', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.block(conv);
+    // Still writing to the link's intro mailbox, which the owner can't discard.
+    await sender.messaging.send(conv, 'more');
+    expect(await owner.messaging.sync()).toBe(0);
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['hello']);
+  });
+
+  it('let a sender block a conversation too', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await sender.messaging.block(conv);
+    await owner.messaging.send(conv, 'please reply');
+    expect(await sender.messaging.sync()).toBe(0);
   });
 });

@@ -91,6 +91,13 @@ export const en = {
   conversationEnded: 'This conversation has ended.',
   errorNoTokens: "You've sent a lot today. Try again tomorrow.",
   errorTooFast: 'Too many messages to this person right now. Try again in a minute.',
+  seen: 'Seen',
+  block: 'Block',
+  blockConfirmOwner:
+    "Block this person? You won't get messages from them again, here or in new conversations through this link. They won't be told.",
+  blockConfirmSender: "Block this conversation? You won't get messages in it again. They won't be told.",
+  blockYes: 'Block',
+  noticeBlocked: 'Blocked. They won\'t be told.',
 
   replaceTitle: 'You already have an account',
   replaceBody:
