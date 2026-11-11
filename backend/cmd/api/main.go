@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -25,8 +26,12 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/tokens"
 )
 
-// minSecretLen is the shortest acceptable key from Parameter Store.
-const minSecretLen = 32
+const (
+	// minSecretLen is the shortest acceptable key from Parameter Store.
+	minSecretLen = 32
+	// slowRequest is how long a request takes before it is logged.
+	slowRequest = time.Second
+)
 
 func main() {
 	log := logx.New(os.Stderr, "api")
@@ -38,6 +43,16 @@ func main() {
 	server.Log = log
 	router := httpapi.NewRouter()
 	server.Routes(router)
+	// Slow requests are logged, with only their route and duration, to size
+	// the function from data.
+	router.Observe = func(route string, status int, elapsed time.Duration) {
+		if elapsed >= slowRequest {
+			log.Warn("slow request",
+				slog.String(logx.KeyRoute, route),
+				slog.Int(logx.KeyStatus, status),
+				slog.Int64(logx.KeyDuration, elapsed.Milliseconds()))
+		}
+	}
 	lambda.Start(router.Serve)
 }
 

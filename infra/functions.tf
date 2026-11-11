@@ -10,9 +10,11 @@ locals {
     # HTTPS API for the client.
     api = {
       timeout = 10
-      # More CPU: signing send tokens (RSA) and cold starts are several times
-      # faster, at about the same cost, since Lambda bills per millisecond.
-      memory     = 512
+      # Measured on dev at 128 MB: most calls take ~20 ms waiting on DynamoDB,
+      # but a batch of 20 send tokens (RSA signing, pure CPU) took ~4.5 s.
+      # 256 MB doubles the CPU share; slow requests are logged with their
+      # route and duration (internal/api) to size this from data.
+      memory     = 256
       tables     = ["directory", "messages", "ephemeral"]
       parameters = ["bot-id", "session-key", "telegram-id-pepper", "issuer-key"]
       environment = {

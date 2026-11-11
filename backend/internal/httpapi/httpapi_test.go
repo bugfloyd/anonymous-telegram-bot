@@ -3,9 +3,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func request(method, path string) Request {
@@ -79,6 +81,21 @@ func TestServeParams(t *testing.T) {
 		if resp.StatusCode != tt.status || resp.Body != tt.body {
 			t.Errorf("%s %s = %d %s, want %d %s", tt.method, tt.path, resp.StatusCode, resp.Body, tt.status, tt.body)
 		}
+	}
+}
+
+func TestObserve(t *testing.T) {
+	r := NewRouter()
+	r.Handle(http.MethodGet, "/links/{id}", func(context.Context, Request) Response { return JSON(http.StatusOK, struct{}{}) })
+	var seen []string
+	r.Observe = func(route string, status int, elapsed time.Duration) {
+		seen = append(seen, fmt.Sprintf("%s %d %v", route, status, elapsed >= 0))
+	}
+	_, _ = r.Serve(context.Background(), request(http.MethodGet, "/links/secret-id"))
+	_, _ = r.Serve(context.Background(), request(http.MethodGet, "/nope"))
+	// The pattern, not the path: no IDs. Unrouted requests aren't observed.
+	if len(seen) != 1 || seen[0] != "GET /links/{id} 200 true" {
+		t.Fatalf("observed %v", seen)
 	}
 }
 

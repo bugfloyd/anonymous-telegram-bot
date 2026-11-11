@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 )
@@ -100,6 +101,9 @@ type HandlerFunc func(ctx context.Context, req Request) Response
 // without parameters win over patterns with them.
 type Router struct {
 	routes []*route
+	// Observe, if set, is told each handled request's route pattern (never
+	// the path, which can hold IDs), status and how long it took.
+	Observe func(route string, status int, elapsed time.Duration)
 }
 
 type route struct {
@@ -161,7 +165,12 @@ func (r *Router) Serve(ctx context.Context, req Request) (Response, error) {
 		if params != nil {
 			ctx = context.WithValue(ctx, paramsKey{}, params)
 		}
-		return h(ctx, req), nil
+		started := time.Now()
+		resp := h(ctx, req)
+		if r.Observe != nil {
+			r.Observe(method+" "+rt.pattern, resp.StatusCode, time.Since(started))
+		}
+		return resp, nil
 	}
 	if pathMatched {
 		return Error(http.StatusMethodNotAllowed, "method_not_allowed"), nil
