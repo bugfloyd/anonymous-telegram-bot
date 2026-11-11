@@ -47,12 +47,12 @@ func TestDelivery(t *testing.T) {
 	mailbox := pool[0].(string)
 
 	// Anyone can send, without logging in.
-	status, out = h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env})
+	status, out = h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env, "token": mintToken(t, h.now)})
 	if status != http.StatusOK || len(out) != 0 {
 		t.Fatalf("send: %d %v", status, out)
 	}
 	// Unknown mailboxes get the same answer, after the same pause, and nothing is stored.
-	unknownStatus, unknownOut := h.post(t, "/send", map[string]any{"mailbox": ids.New(), "envelope": env})
+	unknownStatus, unknownOut := h.post(t, "/send", map[string]any{"mailbox": ids.New(), "envelope": env, "token": mintToken(t, h.now)})
 	if unknownStatus != status || len(unknownOut) != 0 || paused != 1 {
 		t.Fatalf("unknown mailbox: %d %v, paused %d", unknownStatus, unknownOut, paused)
 	}
@@ -84,7 +84,7 @@ func TestDelivery(t *testing.T) {
 	if status, out := h.as(t, owner, http.MethodPost, "/mailboxes/"+mailbox+"/discard", nil, false); status != http.StatusOK {
 		t.Fatalf("discard: %d %v", status, out)
 	}
-	if status, _ := h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env}); status != http.StatusOK {
+	if status, _ := h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env, "token": mintToken(t, h.now)}); status != http.StatusOK {
 		t.Fatalf("send to a discarded mailbox: %d", status)
 	}
 	if _, out := h.as(t, owner, http.MethodGet, "/inbox", nil, false); len(out["items"].([]any)) != 0 {
@@ -102,7 +102,7 @@ func TestSendThroughALink(t *testing.T) {
 	if _, bundle := h.call(t, nil, "", http.MethodGet, "/links/"+l.id, nil, false); bundle["mailbox"] != intro {
 		t.Fatalf("bundle mailbox = %v, want %s", bundle["mailbox"], intro)
 	}
-	if status, _ := h.post(t, "/send", map[string]any{"mailbox": intro, "envelope": clientEnvelope(t)}); status != http.StatusOK {
+	if status, _ := h.post(t, "/send", map[string]any{"mailbox": intro, "envelope": clientEnvelope(t), "token": mintToken(t, h.now)}); status != http.StatusOK {
 		t.Fatalf("send: %d", status)
 	}
 	if _, out := h.as(t, owner, http.MethodGet, "/inbox", nil, false); len(out["items"].([]any)) != 1 {
@@ -134,9 +134,9 @@ func TestSendRejects(t *testing.T) {
 	// Per-mailbox cap.
 	mailbox := ids.New()
 	for range SendsPerMailboxPerMinute {
-		h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env})
+		h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env, "token": mintToken(t, h.now)})
 	}
-	status, out = h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env})
+	status, out = h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env, "token": mintToken(t, h.now)})
 	wantError(t, status, out, http.StatusTooManyRequests, "rate_limited")
 }
 

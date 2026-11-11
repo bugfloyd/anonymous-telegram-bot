@@ -6,9 +6,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"strconv"
@@ -16,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cloudflare/circl/blindsign/blindrsa"
 
 	"github.com/incognitochat/incognitochat/backend/internal/devicelist"
 	"github.com/incognitochat/incognitochat/backend/internal/devicesig"
@@ -27,6 +33,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata/initdatatest"
+	"github.com/incognitochat/incognitochat/backend/internal/tokens"
 )
 
 const (
@@ -377,14 +384,75 @@ type memLimiter struct {
 	counts map[string]int
 }
 
-func (l *memLimiter) Allow(_ context.Context, key string, limit int, _ time.Duration) (bool, error) {
+func (l *memLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
+	return l.AllowN(ctx, key, 1, limit, window)
+}
+
+func (l *memLimiter) AllowN(_ context.Context, key string, n, limit int, _ time.Duration) (bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.counts[key] >= limit {
+	if n < 1 || l.counts[key]+n > limit {
 		return false, nil
 	}
-	l.counts[key]++
+	l.counts[key] += n
 	return true, nil
+}
+
+type memSpent struct {
+	mu    sync.Mutex
+	spent map[string]bool
+}
+
+func (m *memSpent) Spend(_ context.Context, nonce []byte, _ time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.spent[string(nonce)] {
+		return false, nil
+	}
+	m.spent[string(nonce)] = true
+	return true, nil
+}
+
+// testIssuer is one issuer key for the whole test binary (RSA keys are slow to make).
+var testIssuer = sync.OnceValue(func() *tokens.Issuer {
+	key, err := rsa.GenerateKey(rand.Reader, tokens.ModulusBits)
+	if err != nil {
+		panic(err)
+	}
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	issuer, err := tokens.NewIssuer(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	if err != nil {
+		panic(err)
+	}
+	return issuer
+})
+
+// mintToken does what a client does: blind a token input for this week, have
+// the issuer sign it, unblind.
+func mintToken(t *testing.T, now time.Time) string {
+	t.Helper()
+	issuer := testIssuer()
+	keyID := issuer.KeyID()
+	challenge := tokens.Challenge(tokens.EpochOf(now))
+	input := binary.BigEndian.AppendUint16(nil, tokens.Type)
+	input = append(append(append(input, randomBytes(t, 32)...), challenge[:]...), keyID[:]...)
+	client, err := blindrsa.NewClient(blindrsa.SHA384PSSDeterministic, issuer.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	blinded, state, err := client.Blind(rand.Reader, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := issuer.Sign(blinded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final, err := client.Finalize(state, sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b64(append(input, final...))
 }
 
 // ---- test server and client ----
@@ -415,6 +483,8 @@ func newHarness(t *testing.T) *harness {
 		Log:       logx.New(h.logs, "api"),
 		Now:       func() time.Time { return h.now },
 		Inbox:     h.inbox,
+		Issuer:    testIssuer(),
+		Spent:     &memSpent{spent: map[string]bool{}},
 	}
 	h.router = httpapi.NewRouter()
 	h.server.Routes(h.router)

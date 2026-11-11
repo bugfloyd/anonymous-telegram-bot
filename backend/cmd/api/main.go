@@ -22,6 +22,7 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/logx"
 	"github.com/incognitochat/incognitochat/backend/internal/session"
 	"github.com/incognitochat/incognitochat/backend/internal/telegram/initdata"
+	"github.com/incognitochat/incognitochat/backend/internal/tokens"
 )
 
 // minSecretLen is the shortest acceptable key from Parameter Store.
@@ -43,7 +44,7 @@ func main() {
 func setup(ctx context.Context) (*api.Server, error) {
 	env, err := config.Env(os.Getenv,
 		"TABLE_DIRECTORY", "TABLE_EPHEMERAL", "TABLE_MESSAGES",
-		"PARAM_BOT_ID", "PARAM_SESSION_KEY", "PARAM_TELEGRAM_ID_PEPPER")
+		"PARAM_BOT_ID", "PARAM_SESSION_KEY", "PARAM_TELEGRAM_ID_PEPPER", "PARAM_ISSUER_KEY")
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +53,7 @@ func setup(ctx context.Context) (*api.Server, error) {
 		return nil, err
 	}
 	params, err := config.Load(ctx, ssm.NewFromConfig(aws),
-		env["PARAM_BOT_ID"], env["PARAM_SESSION_KEY"], env["PARAM_TELEGRAM_ID_PEPPER"])
+		env["PARAM_BOT_ID"], env["PARAM_SESSION_KEY"], env["PARAM_TELEGRAM_ID_PEPPER"], env["PARAM_ISSUER_KEY"])
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +68,10 @@ func setup(ctx context.Context) (*api.Server, error) {
 		return nil, errors.New("api: Telegram ID pepper too short")
 	}
 	issuer, err := session.NewIssuer(map[byte][]byte{1: sessionKey}, 1)
+	if err != nil {
+		return nil, err
+	}
+	tokenIssuer, err := tokens.NewIssuer([]byte(params[env["PARAM_ISSUER_KEY"]]))
 	if err != nil {
 		return nil, err
 	}
@@ -96,5 +101,7 @@ func setup(ctx context.Context) (*api.Server, error) {
 		Admins:     admins,
 		Inbox:      &inbox.Store{DB: db, Table: env["TABLE_MESSAGES"]},
 		Pause:      api.RandomPause,
+		Issuer:     tokenIssuer,
+		Spent:      &ephemeral.Spent{DB: db, Table: env["TABLE_EPHEMERAL"], Now: now},
 	}, nil
 }

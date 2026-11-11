@@ -22,6 +22,7 @@
 //	admin_only                            only admins can do this
 //	invalid_envelope                      the envelope's layout can't be valid
 //	mailbox_limit                         the account has the most mailboxes allowed
+//	invalid_token                         the send token is missing, invalid, from another week, or spent
 //	not_found                             no such route, or no such link (revoked links included)
 //	internal                              something failed on the server
 package api
@@ -67,6 +68,7 @@ type Directory interface {
 // Limiter counts uses of a key in fixed windows.
 type Limiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
+	AllowN(ctx context.Context, key string, n, limit int, window time.Duration) (bool, error)
 }
 
 // Server holds what the handlers need.
@@ -90,6 +92,10 @@ type Server struct {
 	// Pause, if set, runs when a send goes to a mailbox that doesn't exist,
 	// so the answer takes about as long as a delivery (RandomPause).
 	Pause func()
+
+	// Issuer signs and checks anonymous send tokens; Spent remembers spent ones.
+	Issuer Issuer
+	Spent  Spent
 }
 
 // Routes registers the API's routes.
@@ -110,6 +116,7 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/mailboxes", s.withDevice("POST /mailboxes", s.createMailboxes))
 	r.Handle(http.MethodPost, "/mailboxes/{id}/discard", s.withDevice("POST /mailboxes/{id}/discard", s.discardMailbox))
 	r.Handle(http.MethodPost, "/send", s.send)
+	r.Handle(http.MethodPost, "/tokens", s.withDevice("POST /tokens", s.issueTokens))
 	r.Handle(http.MethodGet, "/inbox", s.withDevice("GET /inbox", s.listInbox))
 	r.Handle(http.MethodPost, "/ack", s.withDevice("POST /ack", s.ack))
 }

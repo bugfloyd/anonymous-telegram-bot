@@ -12,7 +12,8 @@
 #   CODE_REPOSITORY  e.g. incognitochat/incognitochat
 #   REFS             "commits" (dev: commit SHAs on RELEASE_BRANCH) or "tags" (vX.Y.Z)
 #   RELEASE_BRANCH   the branch commits must be on, e.g. v2
-#   API_URL, BOT_USERNAME, APP_NAME  the client's build settings
+#   API_URL, BOT_USERNAME, APP_NAME, ISSUER_KEY  the client's build settings
+#   (ISSUER_KEY names a key published in the code repository's web/issuer-keys.json)
 name: Deploy
 
 on:
@@ -84,6 +85,7 @@ jobs:
           VITE_API_URL: ${{ vars.API_URL }}
           VITE_BOT_USERNAME: ${{ vars.BOT_USERNAME }}
           VITE_APP_NAME: ${{ vars.APP_NAME }}
+          VITE_ISSUER_KEY: ${{ vars.ISSUER_KEY }}
         run: npm run build
 
       - name: Write the manifest
@@ -94,6 +96,7 @@ jobs:
           API_URL: ${{ vars.API_URL }}
           BOT_USERNAME: ${{ vars.BOT_USERNAME }}
           APP_NAME: ${{ vars.APP_NAME }}
+          ISSUER_KEY: ${{ vars.ISSUER_KEY }}
         run: |
           find . -type f | sed 's|^\./||' | sort | while read -r f; do
             printf '%s\t%s\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"
@@ -101,10 +104,10 @@ jobs:
           jq -n \
             --arg repository "$CODE_REPOSITORY" --arg ref "$REF" --arg commit "$(git rev-parse HEAD)" \
             --arg node "$(node --version)" \
-            --arg apiUrl "$API_URL" --arg botUsername "$BOT_USERNAME" --arg appName "$APP_NAME" \
+            --arg apiUrl "$API_URL" --arg botUsername "$BOT_USERNAME" --arg appName "$APP_NAME" --arg issuerKey "$ISSUER_KEY" \
             --rawfile files "$RUNNER_TEMP/files.tsv" \
             '{repository: $repository, ref: $ref, commit: $commit, node: $node,
-              build: {VITE_API_URL: $apiUrl, VITE_BOT_USERNAME: $botUsername, VITE_APP_NAME: $appName},
+              build: {VITE_API_URL: $apiUrl, VITE_BOT_USERNAME: $botUsername, VITE_APP_NAME: $appName, VITE_ISSUER_KEY: $issuerKey},
               files: ($files | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: .[1]}) | from_entries)}' \
             > manifest.json
           cat manifest.json

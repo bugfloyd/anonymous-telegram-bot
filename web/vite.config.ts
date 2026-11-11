@@ -1,5 +1,6 @@
 import { loadEnv, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
+import issuerKeys from './issuer-keys.json' with { type: 'json' };
 
 // Build settings come from VITE_* environment variables (CI sets them per
 // environment; see src/config.ts). They are checked here so a bad value fails
@@ -13,8 +14,14 @@ function checkSettings(env: Record<string, string>): BuildSettings {
   const api = env.VITE_API_URL ?? '';
   const bot = env.VITE_BOT_USERNAME ?? '';
   const app = env.VITE_APP_NAME ?? '';
-  if (!api && !bot && !app) return { apiOrigin: null };
-  if (!api || !bot || !app) throw new Error('Set all of VITE_API_URL, VITE_BOT_USERNAME and VITE_APP_NAME, or none');
+  const issuer = env.VITE_ISSUER_KEY ?? '';
+  if (!api && !bot && !app && !issuer) return { apiOrigin: null };
+  if (!api || !bot || !app || !issuer) {
+    throw new Error('Set all of VITE_API_URL, VITE_BOT_USERNAME, VITE_APP_NAME and VITE_ISSUER_KEY, or none');
+  }
+  if (issuer === '_comment' || !(issuer in issuerKeys)) {
+    throw new Error(`VITE_ISSUER_KEY must name a key published in issuer-keys.json`);
+  }
   const url = new URL(api);
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
     throw new Error('VITE_API_URL must be a plain https:// URL');

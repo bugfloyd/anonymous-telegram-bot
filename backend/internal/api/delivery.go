@@ -42,6 +42,7 @@ type Inbox interface {
 type sendRequest struct {
 	Mailbox  string `json:"mailbox"`
 	Envelope string `json:"envelope"` // base64url
+	Token    string `json:"token"`    // base64url, an anonymous send token
 }
 
 type inboxItem struct {
@@ -105,7 +106,9 @@ func (s *Server) discardMailbox(ctx context.Context, _ httpapi.Request, c caller
 }
 
 // send delivers an envelope to a mailbox's owner, without logging in: the
-// server learns the recipient (to deliver) but not the sender. Unknown,
+// server learns the recipient (to deliver) but not the sender. Each send
+// spends one anonymous token (tokens.go), which can't be linked to the
+// account it was issued to. Unknown,
 // discarded and blocked mailboxes get the same answer, in similar time, and
 // nothing is stored for them.
 func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response {
@@ -124,15 +127,31 @@ func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response
 	if _, err := envelope.Check(env); err != nil {
 		return httpapi.Error(http.StatusBadRequest, "invalid_envelope")
 	}
+	now := s.Now()
+	token, err := base64.RawURLEncoding.Strict().DecodeString(in.Token)
+	if err != nil {
+		return httpapi.Error(http.StatusUnauthorized, "invalid_token")
+	}
+	nonce, forgetAfter, err := s.Issuer.Check(token, now)
+	if err != nil {
+		return httpapi.Error(http.StatusUnauthorized, "invalid_token")
+	}
 	ok, err := s.Limits.Allow(ctx, "send#"+in.Mailbox, SendsPerMailboxPerMinute, time.Minute)
 	if err != nil {
 		return s.internal(route, err)
 	}
 	if !ok {
+		// The token isn't spent: the sender can try again later.
 		return httpapi.Error(http.StatusTooManyRequests, "rate_limited")
 	}
+	fresh, err := s.Spent.Spend(ctx, nonce, forgetAfter)
+	if err != nil {
+		return s.internal(route, err)
+	}
+	if !fresh {
+		return httpapi.Error(http.StatusUnauthorized, "invalid_token")
+	}
 
-	now := s.Now()
 	mailbox, err := s.Directory.Mailbox(ctx, in.Mailbox)
 	if errors.Is(err, directory.ErrNotFound) {
 		if s.Pause != nil {

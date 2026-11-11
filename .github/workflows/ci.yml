@@ -192,6 +192,7 @@ jobs:
       - name: Check environment configuration
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ISSUER_KEY: ${{ secrets.ISSUER_KEY }}
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
@@ -202,7 +203,7 @@ jobs:
           PAGES_DISPATCH_TOKEN: ${{ secrets.DEV_PAGES_DISPATCH_TOKEN }}
         run: |
           missing=0
-          for name in BOT_TOKEN AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS \
+          for name in BOT_TOKEN ISSUER_KEY AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS \
             PAGES_REPO PAGES_URL PAGES_DISPATCH_TOKEN; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is not set in the dev environment"
@@ -212,6 +213,10 @@ jobs:
           # Catch a mis-pasted secret before anything is written to AWS.
           if [ -n "$BOT_TOKEN" ] && ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
             echo "::error::BOT_TOKEN doesn't look like a Telegram bot token"
+            missing=1
+          fi
+          if [ -n "$ISSUER_KEY" ] && [[ "$ISSUER_KEY" != "-----BEGIN PRIVATE KEY-----"* ]]; then
+            echo "::error::ISSUER_KEY isn't a PKCS#8 PEM private key"
             missing=1
           fi
           exit "$missing"
@@ -271,6 +276,8 @@ jobs:
           TF_VAR_environment: dev
           TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
           TF_VAR_bot_token_version: ${{ vars.BOT_TOKEN_VERSION || '1' }}
+          TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
+          TF_VAR_issuer_key_version: ${{ vars.ISSUER_KEY_VERSION || '1' }}
           TF_VAR_secrets_version: ${{ vars.SECRETS_VERSION || '1' }}
           TF_VAR_client_origins: ${{ vars.CLIENT_ORIGINS }}
           TF_VAR_deletion_protection: ${{ vars.DELETION_PROTECTION || 'true' }}
@@ -282,8 +289,9 @@ jobs:
       - name: Terraform apply
         working-directory: infra
         env:
-          # Ephemeral variables aren't saved in the plan file; supply it again.
+          # Ephemeral variables aren't saved in the plan file; supply them again.
           TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+          TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
         # Resource IDs (such as the WebSocket API's) are printed on creation.
         run: terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
 
@@ -324,21 +332,20 @@ jobs:
           fi
           echo "API loaded its configuration and reads the directory (HTTP 401 login_refused)"
 
-      # A send to a mailbox that doesn't exist: accepted like any other, with
-      # nothing stored. Needs the envelope check, the rate limiter (ephemeral
-      # table) and the mailbox lookup (directory table) to work.
-      - name: Smoke test – sends to unknown mailboxes look accepted
+      # A send without a token: the API must have loaded its issuer key to
+      # get this far, and refuses it after checking the envelope.
+      - name: Smoke test – sends need a token
         run: |
           envelope=$(head -n 1 backend/internal/envelope/testdata/client-envelopes.hex | tr -d '\n' | tr a-f A-F | basenc --base16 -d | basenc -w0 --base64url | tr -d '=')
           mailbox=$(head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d '=')
           body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
             -d "{\"mailbox\":\"${mailbox}\",\"envelope\":\"${envelope}\"}" "${API_URL%/}/send")
           status=${body##*$'\n'}
-          if [ "$status" != "200" ] || [ "${body%$'\n'*}" != "{}" ]; then
-            echo "::error::Expected 200 {} from POST /send, got HTTP ${status}"
+          if [ "$status" != "401" ] || [[ "$body" != *'"error":"invalid_token"'* ]]; then
+            echo "::error::Expected 401 invalid_token from POST /send without a token, got HTTP ${status}"
             exit 1
           fi
-          echo "Sends to unknown mailboxes are accepted and dropped (HTTP 200 {})"
+          echo "Sends need a token (HTTP 401 invalid_token)"
 
       - name: Smoke test – webhook is reachable
         run: |
