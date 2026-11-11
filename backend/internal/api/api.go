@@ -125,6 +125,7 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodGet, "/inbox", s.withDevice("GET /inbox", s.listInbox))
 	r.Handle(http.MethodPost, "/ack", s.withDevice("POST /ack", s.ack))
 	r.Handle(http.MethodPost, "/notices", s.withDevice("POST /notices", s.setNotices))
+	r.Handle(http.MethodPost, "/accounts/lookup", s.lookupAccount)
 }
 
 // tokenResponse is what a successful registration or login returns.

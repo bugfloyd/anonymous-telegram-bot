@@ -110,6 +110,13 @@ export const en = {
   blockYes: 'Block',
   noticeBlocked: 'Blocked. They won\'t be told.',
 
+  elsewhereTitle: 'Your account is on another device',
+  elsewhereBody:
+    'This Telegram account already uses Incognito Chat on another device, such as your phone. Your chats and your link exist only there, so open the app on that device.',
+  closeApp: 'Close',
+  elsewhereLost:
+    "Lost that device, or can't use it any more? You can start over here instead. Your chats, your link and your blocks on that device will be gone for good.",
+  elsewhereStartOver: 'Start over on this device',
   replaceTitle: 'You already have an account',
   replaceBody:
     'Your Telegram account is already set up on another device. Setting up here ends that account and all its links, and people will need your new link to reach you.',

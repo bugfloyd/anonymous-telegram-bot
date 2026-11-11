@@ -24,7 +24,7 @@ type Outcome = 'ok' | ApiError | NetworkError;
  * stores link bundles exactly as clients send them, like the real one, and
  * keeps invitations for its one account.
  */
-function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; createLink?: Outcome[] } = {}) {
+function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; createLink?: Outcome[]; elsewhere?: boolean } = {}) {
   const calls: string[] = [];
   const bundles = new Map<string, { signingKey: string; keys: unknown[]; mailbox: string }>();
   const unsigned: string[] = [];
@@ -50,6 +50,7 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
       const needsSignature = () => {
         if (!signed) unsigned.push(`${method} ${path}`);
       };
+      if (path === '/accounts/lookup') return check({ exists: outcomes.elsewhere === true });
       if (path === '/register') {
         take(outcomes.register);
         return check({ account: 'BBBBBBBBBBBBBBBBBBBBBB', token: 'v1.p.m', expires: Math.floor(Date.now() / 1000) + 900 });
@@ -205,7 +206,8 @@ describe('setup', () => {
     const { app: reopened, broadcasts } = await setup({ api, bridge: second.bridge, launch: launchWith('reg' + code), db });
     await reopened.start();
     expect(home(reopened.screen.value)).toMatchObject({ offline: false, links: [], account: { canCreateLinks: true } });
-    expect(calls).toEqual(['POST /register', 'GET /account', 'GET /invitations']);
+    // The first, plain launch asked whether the account lives elsewhere.
+    expect(calls).toEqual(['POST /accounts/lookup', 'POST /register', 'GET /account', 'GET /invitations']);
     expect(broadcasts).toContainEqual({ type: 'account-changed' });
     expect(second.posted.map((p) => p.type)).toContain('web_app_request_write_access');
     expect(await readAccount(db)).toMatchObject({ state: 'registered' });
@@ -239,10 +241,47 @@ describe('setup', () => {
 
     const { app } = await setup({ api, bridge: fakeBridge().bridge, launch: launchWith(code), db });
     await app.start();
+    // First: the account is on another device. Starting over here is a choice, then typed.
+    expect(app.screen.value).toEqual({ kind: 'elsewhere' });
+    await app.startOver();
     expect(app.screen.value).toEqual({ kind: 'confirm-replace', busy: false });
+    app.cancelReplace();
+    expect(app.screen.value).toEqual({ kind: 'elsewhere' });
+    await app.startOver();
     await app.confirmReplace();
     expect(app.screen.value.kind).toBe('home');
     expect(calls.filter((c) => c.includes('register'))).toEqual(['POST /register', 'POST /register?replace']);
+  });
+
+  it('says on a plain launch that the account is on another device, and can start over from there', async () => {
+    const { api, calls } = fakeServer({ elsewhere: true, register: [new ApiError(409, 'account_exists')] });
+    const db = await openDatabase(`app-test-${n++}`);
+    const first = fakeBridge();
+    const { app } = await setup({ api, bridge: first.bridge, launch: launchWith(''), db });
+    await app.start();
+    expect(app.screen.value).toEqual({ kind: 'elsewhere' });
+    app.close();
+    expect(first.posted.at(-1)?.type).toBe('web_app_close');
+
+    // Starting over: setup reopens the app, and the existing account goes straight to the typed confirmation.
+    await app.startOver();
+    await tick();
+    expect(app.screen.value.kind).toBe('reopening');
+    const code = 'reg' + (await readAccount(db))!.fingerprint;
+    const { app: reopened } = await setup({ api, bridge: fakeBridge().bridge, launch: launchWith(code), db });
+    await reopened.start();
+    expect(reopened.screen.value).toEqual({ kind: 'confirm-replace', busy: false });
+    await reopened.confirmReplace();
+    expect(reopened.screen.value.kind).toBe('home');
+    expect(calls.filter((c) => c.includes('register'))).toEqual(['POST /register', 'POST /register?replace']);
+  });
+
+  it("doesn't ask the server about launches that name a link", async () => {
+    const { api, calls } = fakeServer({ elsewhere: true });
+    const { app } = await setup({ api, bridge: fakeBridge().bridge, launch: launchWith('1' + 'A'.repeat(54)) });
+    await app.start();
+    expect(app.screen.value).toEqual({ kind: 'welcome', mismatch: false });
+    expect(calls).toEqual([]);
   });
 
   it('reopens for fresh launch data when the old one expired', async () => {
