@@ -72,11 +72,20 @@ export function createMessaging(deps: MessagingDeps) {
   const findKey = keyFinder(db);
 
   /** Writes the first message to someone's link, starting a conversation. Returns its ID. */
-  async function startConversation(ref: LinkRef, bundle: Bundle, text: string): Promise<string> {
+  /**
+   * Writes the first message to someone's link, starting a conversation.
+   * onStored runs as soon as the conversation and message are stored, before
+   * the (slower) delivery. Returns the conversation's ID once delivered.
+   */
+  async function startConversation(
+    ref: LinkRef,
+    bundle: Bundle,
+    text: string,
+    onStored?: (conv: string) => void | Promise<void>,
+  ): Promise<string> {
     const { raw: linkKey } = await verifyBundle(ref, bundle, Math.floor(now() / 1000));
     const id = newId();
     const myKey = await createConversationKey(db, id);
-    const myMailbox = await takeMailbox(db, session);
     const secret = await accountSecret(db);
     const conversation: ConversationRecord = {
       id,
@@ -86,54 +95,70 @@ export function createMessaging(deps: MessagingDeps) {
       peerKey: toBase64Url(linkKey),
       myKey: toBase64Url(myKey.publicKey),
       sendTo: bundle.mailbox,
-      myMailbox,
+      // Taken from the pool once the message shows.
+      myMailbox: null,
       lastAt: now(),
       unread: 0,
       status: 'active',
       lastReceived: null,
     };
     await putConversation(db, conversation);
-    await write(conversation, text);
+    await write(conversation, text, undefined, () => onStored?.(id));
     return id;
   }
 
-  /** Writes a message in a conversation. */
-  async function send(conv: string, text: string, replyTo?: string): Promise<void> {
+  /**
+   * Writes a message in a conversation. onStored runs as soon as the message
+   * is stored (shown as sending), before delivery.
+   */
+  async function send(conv: string, text: string, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
     const conversation = await getConversation(db, conv);
     if (!conversation) throw new Error('unknown conversation');
-    await write(conversation, text, replyTo);
+    await write(conversation, text, replyTo, onStored);
   }
 
-  async function write(conversation: ConversationRecord, text: string, replyTo?: string): Promise<void> {
-    let c = conversation;
-    // The owner's first reply: our own key and mailbox for this conversation.
-    if (c.myKey === null || c.myMailbox === null) {
-      const key = await createConversationKey(db, c.id);
-      c = { ...c, myKey: toBase64Url(key.publicKey), myMailbox: await takeMailbox(db, session) };
-      await putConversation(db, c);
-    }
-    const myKey = await conversationKey(db, c.myKey!);
-    const draft: Draft = {
-      kind: 'message',
-      conv: c.id,
-      id: newId(),
-      at: now(),
-      text,
-      reply: c.myMailbox!,
-      ...(replyTo ? { replyTo } : {}),
-      ...(c.lastReceived ? { last: c.lastReceived } : {}),
-    };
-    if (c.role === 'sender') draft.tag = toBase64Url(await senderTag(await accountSecret(db), c.link.fingerprint));
-    const envelope = await sealMessage(draft, myKey, fromBase64Url(c.peerKey));
-    await addMessage(db, { id: draft.id, conv: c.id, at: draft.at, out: true, status: 'sending' }, { text, ...(replyTo ? { replyTo } : {}) });
-    await putConversation(db, { ...c, lastAt: draft.at });
-    try {
-      await deliver(c.sendTo, envelope);
-      await setMessageStatus(db, draft.id, 'sent');
-    } catch (err) {
-      await setMessageStatus(db, draft.id, 'failed');
-      throw err;
-    }
+  async function write(conversation: ConversationRecord, text: string, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
+    // Stored and shown first; everything slow happens after.
+    const id = newId();
+    const at = now();
+    await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text, ...(replyTo ? { replyTo } : {}) });
+    await putConversation(db, { ...conversation, lastAt: at });
+    await onStored?.();
+
+    // One send at a time per conversation, so a first reply creates one key and takes one mailbox.
+    await withLock(`send:${conversation.id}`, async () => {
+      try {
+        let c = (await getConversation(db, conversation.id)) ?? conversation;
+        // The owner's first reply brings our own key and mailbox for this conversation.
+        if (c.myKey === null) {
+          const key = await createConversationKey(db, c.id);
+          c = { ...c, myKey: toBase64Url(key.publicKey) };
+          await putConversation(db, c);
+        }
+        if (c.myMailbox === null) {
+          c = { ...c, myMailbox: await takeMailbox(db, session) };
+          await putConversation(db, c);
+        }
+        const myKey = await conversationKey(db, c.myKey!);
+        const draft: Draft = {
+          kind: 'message',
+          conv: c.id,
+          id,
+          at,
+          text,
+          reply: c.myMailbox!,
+          ...(replyTo ? { replyTo } : {}),
+          ...(c.lastReceived ? { last: c.lastReceived } : {}),
+        };
+        if (c.role === 'sender') draft.tag = toBase64Url(await senderTag(await accountSecret(db), c.link.fingerprint));
+        const envelope = await sealMessage(draft, myKey, fromBase64Url(c.peerKey));
+        await deliver(c.sendTo, envelope);
+        await setMessageStatus(db, id, 'sent');
+      } catch (err) {
+        await setMessageStatus(db, id, 'failed');
+        throw err;
+      }
+    });
   }
 
   /** Sends an envelope to a mailbox with a token, without logging in. */
