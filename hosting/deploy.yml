@@ -11,7 +11,7 @@
 # Repository variables:
 #   CODE_REPOSITORY  e.g. incognitochat/incognitochat
 #   REFS             "commits" (dev: commit SHAs on RELEASE_BRANCH) or "tags" (vX.Y.Z)
-#   RELEASE_BRANCH   the branch commits must be on, e.g. v2
+#   RELEASE_BRANCH   the branch commits must be on, e.g. main
 #   API_URL, BOT_USERNAME, APP_NAME, ISSUER_KEY  the client's build settings
 #   WS_URL  the push socket (optional; without it the app polls)
 #   (ISSUER_KEY names a key published in the code repository's web/issuer-keys.json)

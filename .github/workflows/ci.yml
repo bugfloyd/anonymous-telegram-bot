@@ -1,13 +1,13 @@
 name: CI
 
-# v2 is built on the v2 branch: every pull request and every push to v2 is
-# tested and built. Pushes to v2 then deploy to the dev environment (its own
-# AWS account), which only the v2 branch may use (see scripts/bootstrap.sh).
+# Every pull request and every push to main is tested and built. Pushes to
+# main then deploy to the dev environment (its own AWS account), which only
+# main may use (see scripts/bootstrap.sh).
 # Pull requests never get cloud access or secrets.
 on:
   pull_request:
   push:
-    branches: [v2]
+    branches: [main]
   workflow_dispatch:
 
 # Least privilege by default; jobs opt in to more.
@@ -177,7 +177,7 @@ jobs:
 
   deploy-dev:
     name: Deploy to dev
-    if: github.ref == 'refs/heads/v2' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [backend, web, terraform]
     runs-on: ubuntu-latest
     timeout-minutes: 20

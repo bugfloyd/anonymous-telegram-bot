@@ -2,8 +2,8 @@
 
 Anonymous messaging through personal links, with end-to-end encryption.
 
-> **Status:** version 2 is being built on this branch (`v2`). Version 1, an
-> in-chat Telegram bot, keeps running from `main` and is kept at tag
+> **Status:** version 2 is being built on `main`, and runs in a dev
+> environment. Version 1, an in-chat Telegram bot, is kept at tag
 > [`v1`](../../tree/v1).
 
 Version 2 moves all messaging into a Telegram Mini App, a web app that
@@ -57,12 +57,11 @@ npm run build
 
 ## Environments
 
-Each environment has its own AWS account and GitHub environment. While v2 is
-being built, pushes to `v2` deploy to **dev**, and pull requests never get
-cloud access. An account admin bootstraps an environment once:
+Each environment has its own AWS account and GitHub environment. Pushes to
+`main` deploy to **dev**, and pull requests never get cloud access. An account admin bootstraps an environment once:
 
 ```shell
-AWS_PROFILE=<profile> DEPLOY_BRANCH=v2 scripts/bootstrap.sh <aws-region> dev
+AWS_PROFILE=<profile> scripts/bootstrap.sh <aws-region> dev
 gh secret set BOT_TOKEN --env dev
 gh variable set CLIENT_ORIGINS --env dev --body '["https://<client-origin>"]'
 ```
@@ -89,7 +88,7 @@ gh secret set ISSUER_KEY --env dev < issuer.pem && shred -u issuer.pem
 The dev client is published to its own GitHub Pages site, in a separate
 GitHub organization: sites of one owner share an origin, and with it the keys
 stored in the browser, so dev must never share production's. The site's own
-workflow builds, attests and deploys each `v2` commit; CI only starts it, with
+workflow builds, attests and deploys each `main` commit; CI only starts it, with
 a token that can do nothing else. See [hosting/](hosting/README.md), and check
 the live site with:
 

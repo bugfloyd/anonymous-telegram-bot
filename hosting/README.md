@@ -19,8 +19,8 @@ theirs.
 2. Set Pages to deploy from GitHub Actions:
    `gh api -X PUT repos/<org>/<org>.github.io/pages -f build_type=workflow`.
 3. Repository variables: `CODE_REPOSITORY` (`incognitochat/incognitochat`),
-   `REFS` (`commits` for dev, `tags` for production), `RELEASE_BRANCH` (`v2`
-   while v2 is built), `API_URL` (the `api_url` Terraform output),
+   `REFS` (`commits` for dev, `tags` for production), `RELEASE_BRANCH`
+   (`main`), `API_URL` (the `api_url` Terraform output),
    `BOT_USERNAME`, `APP_NAME`, `ISSUER_KEY` (the name of the environment's
    send-token issuer key in `web/issuer-keys.json`), and `WS_URL` (the
    `ws_url` Terraform output; optional: without it the app polls).
