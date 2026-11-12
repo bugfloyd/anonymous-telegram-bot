@@ -24,6 +24,38 @@ const MAX_SEEN = 100;
 export type Kind = 'message' | 'seen' | 'key_update' | 'end';
 const KINDS: readonly Kind[] = ['message', 'seen', 'key_update', 'end'];
 
+/** What an attachment is shown as. Videos, GIFs, voice, music, round videos and stickers come later. */
+export type MediaKind = 'photo' | 'file';
+const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'file'];
+/** Largest file that can be attached. */
+export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_PREVIEW = 3000;
+
+/**
+ * An attachment: the encrypted file is uploaded separately (docs/protocol.md,
+ * Media); the message carries how to fetch, open and delete it, and what it is.
+ */
+export interface Media {
+  t: MediaKind;
+  /** Upload ID (16 bytes). */
+  id: string;
+  /** The file's AES-256-GCM key (32 bytes). */
+  k: string;
+  /** Delete secret (16 bytes): the recipient deletes the upload with it once stored. */
+  d: string;
+  /** The file's size in bytes, before padding. */
+  s: number;
+  /** File name. */
+  n?: string;
+  /** MIME type. */
+  m?: string;
+  /** Pixel width and height (photos). */
+  w?: number;
+  h?: number;
+  /** A tiny JPEG preview, base64url, shown until the file is here. */
+  p?: string;
+}
+
 export interface Message {
   v: typeof PROTOCOL_VERSION;
   kind: Kind;
@@ -48,6 +80,8 @@ export interface Message {
   replyTo?: string;
   /** For kind "seen": the IDs of messages read. */
   seen?: string[];
+  /** An attachment (kind "message"). */
+  media?: Media;
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -150,17 +184,36 @@ export function checkMessage(value: unknown): Message {
     if (!Array.isArray(m.seen) || m.seen.length === 0 || m.seen.length > MAX_SEEN) throw new MessageError('bad seen');
     m.seen.forEach((s) => bytes(s, 16, 'seen'));
   }
+  if (m.media !== undefined) checkMedia(m.media);
   switch (m.kind) {
     case 'message':
-      if (typeof m.text !== 'string' || m.text.trim() === '') throw new MessageError('empty message');
+      // Text, an attachment, or both (a caption).
+      if (m.media === undefined && (typeof m.text !== 'string' || m.text.trim() === '')) throw new MessageError('empty message');
       break;
     case 'seen':
       if (m.seen === undefined || m.text !== undefined) throw new MessageError('bad seen');
       break;
     default:
-      if (m.text !== undefined || m.seen !== undefined) throw new MessageError(`bad ${m.kind}`);
+      if (m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError(`bad ${m.kind}`);
   }
+  if (m.kind === 'seen' && m.media !== undefined) throw new MessageError('bad seen');
   return m as unknown as Message;
+}
+
+function checkMedia(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new MessageError('bad media');
+  const a = value as Record<string, unknown>;
+  if (typeof a.t !== 'string' || !MEDIA_KINDS.includes(a.t as MediaKind)) throw new MessageError('bad media kind');
+  bytes(a.id, 16, 'media id');
+  bytes(a.k, 32, 'media key');
+  bytes(a.d, 16, 'media secret');
+  if (!Number.isSafeInteger(a.s) || (a.s as number) < 1 || (a.s as number) > MAX_FILE_BYTES) throw new MessageError('bad media size');
+  if (a.n !== undefined && (typeof a.n !== 'string' || a.n.length === 0 || a.n.length > 255)) throw new MessageError('bad media name');
+  if (a.m !== undefined && (typeof a.m !== 'string' || !/^[\w.+-]+\/[\w.+-]+$/.test(a.m) || a.m.length > 100)) throw new MessageError('bad media type');
+  for (const dim of ['w', 'h'] as const) {
+    if (a[dim] !== undefined && (!Number.isSafeInteger(a[dim]) || (a[dim] as number) < 1 || (a[dim] as number) > 20_000)) throw new MessageError('bad media size');
+  }
+  if (a.p !== undefined && (typeof a.p !== 'string' || a.p.length > MAX_PREVIEW || !/^[A-Za-z0-9_-]+$/.test(a.p))) throw new MessageError('bad media preview');
 }
 
 /** Throws unless value is the canonical unpadded base64url of `length` bytes. */
