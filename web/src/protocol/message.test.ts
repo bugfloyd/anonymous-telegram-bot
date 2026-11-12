@@ -80,6 +80,18 @@ describe('checkMessage', () => {
     text: 'hi',
   };
 
+  const media = {
+    t: 'photo',
+    id: 'AAAAAAAAAAAAAAAAAAAAAA',
+    k: toBase64Url(new Uint8Array(32)),
+    d: 'AAAAAAAAAAAAAAAAAAAAAA',
+    s: 1234,
+    m: 'image/jpeg',
+    w: 800,
+    h: 600,
+    p: 'abcd',
+  };
+
   it('accepts a well-formed message and ignores unknown fields', () => {
     expect(checkMessage({ ...valid, future: true }).text).toBe('hi');
   });
@@ -96,7 +108,19 @@ describe('checkMessage', () => {
     ['seen without ids', { kind: 'seen', text: undefined }],
     ['text on end', { kind: 'end' }],
     ['bad reply', { reply: 'x' }],
+    ['media kind', { media: { ...media, t: 'hologram' } }],
+    ['media key', { media: { ...media, k: 'AAAA' } }],
+    ['media size', { media: { ...media, s: 26 * 1024 * 1024 } }],
+    ['media type', { media: { ...media, m: 'not a type' } }],
+    ['media preview', { media: { ...media, p: 'x'.repeat(3001) } }],
+    ['media on seen', { kind: 'seen', text: undefined, seen: ['AAAAAAAAAAAAAAAAAAAAAA'], media }],
+    ['media on end', { kind: 'end', text: undefined, media }],
   ])('rejects bad %s', (_, change) => {
     expect(() => checkMessage({ ...valid, ...change })).toThrow(MessageError);
+  });
+
+  it('accepts an attachment, with or without a caption', () => {
+    expect(checkMessage({ ...valid, media }).media).toEqual(media);
+    expect(checkMessage({ ...valid, text: undefined, media }).media?.t).toBe('photo');
   });
 });

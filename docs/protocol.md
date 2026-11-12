@@ -162,6 +162,7 @@ JSON fields:
 | `text` | the text (`message` only; at most 12,000 UTF-8 bytes) |
 | `replyTo` | ID of the message this answers |
 | `seen` | IDs read (`seen` only, 1–100) |
+| `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, p?}`, see Media |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text; `seen` needs `seen` and no text; `key_update` and `end` carry neither.
@@ -246,8 +247,16 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   app PUTs exactly `size` bytes of ciphertext, typed
   `application/octet-stream`, to `url` (valid 15 minutes; the length and type
   are part of its signature).
-- The message carries the upload's ID, key and delete secret, inside the
-  encrypted envelope. The server never sees a key, name or type.
+- The message carries the attachment in `media`, inside the encrypted
+  envelope: kind `t` (`photo` or `file`; video, GIF, voice, music, round
+  video and stickers come later), upload ID `id` (16 bytes), AES-256-GCM key
+  `k` (32 bytes), delete secret `d` (16 bytes), the file's size `s` (at most
+  25 MiB), and optionally its name `n`, MIME type `m`, pixel size `w`/`h`
+  and a tiny JPEG preview `p` (base64url, at most 3000 characters). The
+  server never sees a key, name or type.
+- The upload is `nonce (12) ‖ AES-GCM(k, nonce, file ‖ zeros, aad =
+  "incognitochat/v2/media")`, padded to the next power of two from 16 KiB up
+  to 1 MiB, then to the next whole MiB.
 - The recipient gets a download URL with `GET /media/{id}` (no login; the ID
   is the permission; at most 10 a day), fetches and decrypts the file, keeps
   it on the device, then deletes the upload with
