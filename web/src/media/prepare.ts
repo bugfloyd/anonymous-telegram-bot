@@ -19,7 +19,11 @@ const PHOTO_SIDE = 1280;
 const PREVIEW_SIDE = 40;
 const MAX_PREVIEW = 3000;
 
-async function drawJpeg(image: ImageBitmap, side: number, quality: number): Promise<{ bytes: Uint8Array<ArrayBuffer>; w: number; h: number }> {
+async function drawJpeg(
+  image: ImageBitmap | HTMLCanvasElement,
+  side: number,
+  quality: number,
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; w: number; h: number; canvas: HTMLCanvasElement }> {
   const scale = Math.min(1, side / Math.max(image.width, image.height));
   const w = Math.max(1, Math.round(image.width * scale));
   const h = Math.max(1, Math.round(image.height * scale));
@@ -33,7 +37,7 @@ async function drawJpeg(image: ImageBitmap, side: number, quality: number): Prom
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(image, 0, 0, w, h);
   const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode'))), 'image/jpeg', quality));
-  return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h };
+  return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h, canvas };
 }
 
 /** A photo: redrawn smaller as JPEG, with a tiny preview. */
@@ -41,7 +45,8 @@ export async function preparePhoto(file: Blob): Promise<Outgoing> {
   const image = await createImageBitmap(file, { imageOrientation: 'from-image' });
   try {
     const full = await drawJpeg(image, PHOTO_SIDE, 0.85);
-    const tiny = toBase64Url((await drawJpeg(image, PREVIEW_SIDE, 0.5)).bytes);
+    // From the shrunk copy: drawing the full-size photo again is the slow part.
+    const tiny = toBase64Url((await drawJpeg(full.canvas, PREVIEW_SIDE, 0.5)).bytes);
     if (full.bytes.length > MAX_FILE_BYTES) throw new TooBig();
     return {
       file: full.bytes,
