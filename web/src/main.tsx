@@ -6,11 +6,18 @@ import { createApi } from './net/api';
 import { isTelegramLaunch, parseLaunch } from './platform/launch';
 import { connectTelegram } from './platform/telegram';
 import { applyTheme } from './platform/theme';
+import { readTicket, SAVE_PREFIX } from './media/save';
+import { SavePage } from './save';
 import { createApp } from './state/app';
 import { openDatabase, requestPersistence } from './storage/db';
 import { databaseName, profileFor } from './storage/profile';
 import { openChannel, useProfile } from './sync/locks';
 import './app.css';
+
+// Opened in the device's browser to save an attachment: that page alone, and
+// the key is taken out of the address (and with it, the history entry).
+const saving = location.hash.startsWith(SAVE_PREFIX) ? readTicket(location.hash) : undefined;
+if (saving !== undefined) history.replaceState(null, '', location.pathname + location.search);
 
 // Launch data is read once: a reload can lose the URL fragment.
 const launch = parseLaunch(location.hash, location.search);
@@ -29,6 +36,10 @@ if (telegram) {
 async function main(): Promise<void> {
   const root = document.getElementById('app');
   if (!root) return;
+  if (saving !== undefined) {
+    render(<SavePage ticket={saving} language={language} />, root);
+    return;
+  }
   // Each Telegram account on this app gets its own local profile.
   const profile = await profileFor(launch.userId);
   useProfile(profile);

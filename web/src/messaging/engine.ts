@@ -241,7 +241,9 @@ export function createMessaging(deps: MessagingDeps) {
 
   /**
    * Fetches a received attachment: downloads, decrypts and keeps it on this
-   * device, then deletes the upload. Returns where the file is now.
+   * device. The upload stays until it's saved outside the app (the save page
+   * deletes it), the message or conversation is deleted, or it expires.
+   * Returns where the file is now.
    */
   function fetchMedia(id: string, onProgress?: (fraction: number) => void): Promise<'local' | 'gone'> {
     return withLock(`media:${id}`, async () => {
@@ -261,13 +263,20 @@ export function createMessaging(deps: MessagingDeps) {
       const file = await decryptFile(await transfer.get(url, onProgress), fromBase64Url(m.k), m.s);
       await putMedia(db, id, file);
       await setFile(db, id, 'local');
+      return 'local';
+    });
+  }
+
+  /** Deletes the uploads of received attachments: their messages are being deleted here. */
+  async function discardUploads(messages: { out: boolean; media?: LocalMedia }[]): Promise<void> {
+    for (const m of messages) {
+      if (m.out || !m.media?.id || !m.media.d) continue;
       try {
-        await api.post(`/media/${m.id}/delete`, { secret: m.d }, checkObject);
+        await api.post(`/media/${m.media.id}/delete`, { secret: m.media.d }, checkObject);
       } catch {
         // It expires anyway.
       }
-      return 'local';
-    });
+    }
   }
 
   /**
@@ -393,6 +402,7 @@ export function createMessaging(deps: MessagingDeps) {
     await withLock(`send:${conv}`, async () => {
       const c = await getConversation(db, conv);
       if (!c) return;
+      await discardUploads(await listMessages(db, conv));
       await deleteMessages(db, conv);
       await putConversation(db, { ...c, unread: 0, hidden: true });
     });
@@ -631,7 +641,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sendMedia, fetchMedia, sync, markRead, markSeen, block, unblock, remove, maintain };
+  return { startConversation, send, sendMedia, fetchMedia, discardUploads, sync, markRead, markSeen, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

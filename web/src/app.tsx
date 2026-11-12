@@ -85,6 +85,11 @@ export function App({ app, language }: { app: AppState; language: Language }) {
     <>
       <Screen app={app} language={language} />
       <DeleteDialog app={app} language={language} />
+      {toast.value && (
+        <p class="toast" role="status">
+          {toast.value}
+        </p>
+      )}
     </>
   );
 }
@@ -1071,52 +1076,50 @@ function PhotoView({ app, message: m, language, progress }: { app: AppState; mes
         </button>
       )}
       {m.file === 'gone' && <span class="media-gone">{t(language, 'mediaGone')}</span>}
-      {open.value && url.value && <Viewer src={url.value} language={language} onClose={() => (open.value = false)} />}
+      {open.value && url.value && <Viewer src={url.value} language={language} onClose={() => (open.value = false)} onSave={() => void save(app, m, language)} />}
     </div>
   );
 }
 
-/** A full-screen photo. */
-function Viewer({ src, language, onClose }: { src: string; language: Language; onClose: () => void }) {
+/** A full-screen photo, with Save. */
+function Viewer({ src, language, onClose, onSave }: { src: string; language: Language; onClose: () => void; onSave: () => void }) {
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => close.current?.focus(), []);
   return (
     <div class="viewer" role="dialog" aria-modal="true" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
       <img src={src} alt={t(language, 'photo')} />
-      <button type="button" class="viewer-close" ref={close} aria-label={t(language, 'closeApp')} onClick={onClose}>
-        ×
-      </button>
+      <div class="viewer-bar" onClick={(e) => e.stopPropagation()}>
+        <button type="button" class="viewer-button" onClick={onSave}>
+          {t(language, 'save')}
+        </button>
+        <button type="button" class="viewer-button" ref={close} aria-label={t(language, 'closeApp')} onClick={onClose}>
+          ×
+        </button>
+      </div>
     </div>
   );
+}
+
+/** A short message at the bottom of the screen. */
+const toast = signal<string | null>(null);
+function say(text: string): void {
+  toast.value = text;
+  setTimeout(() => toast.value === text && (toast.value = null), 3000);
+}
+
+/** Saves an attachment, saying so when it can't be saved here. */
+async function save(app: AppState, m: MessageView, language: Language): Promise<void> {
+  if ((await app.saveMedia(m)) === 'unavailable') say(t(language, 'saveUnavailable'));
 }
 
 /** A file: icon, name and size; tap to download it, then to save or share it. */
 function FileView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
   const media = m.media!;
-  const save = async () => {
-    const file = await app.mediaFile(m.id, media.n ?? 'file', media.m);
-    if (!file) return;
-    // The share sheet where there is one (phones), otherwise a download.
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file] });
-        return;
-      } catch {
-        // Cancelled, or not allowed here: fall back to a download.
-      }
-    }
-    const url = URL.createObjectURL(file);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  };
   const busy = progress !== undefined;
   const onClick = () => {
     if (busy) return;
     if (m.file === 'remote' && !m.out) void app.fetchMedia(m.id);
-    else if (m.file === 'local') void save();
+    else if (m.file === 'local') void save(app, m, language);
   };
   return (
     <button type="button" class="file" onClick={onClick} disabled={m.file === 'gone'}>

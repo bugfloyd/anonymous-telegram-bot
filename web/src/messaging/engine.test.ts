@@ -648,7 +648,10 @@ describe('attachments', () => {
     expect(await owner.messaging.fetchMedia(theirs.id)).toBe('local');
     expect(await getMedia(owner.db, theirs.id)).toEqual(big);
     expect((await listMessages(owner.db, conv)).at(-1)!.file).toBe('local');
-    // Deleted from the bucket once kept.
+    // Kept in the bucket until it's saved outside the app...
+    expect(backend.uploads.size).toBe(1);
+    // ...or the conversation is deleted here.
+    await owner.messaging.remove(conv);
     expect(backend.uploads.size).toBe(0);
   });
 
