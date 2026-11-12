@@ -24,9 +24,15 @@ const MAX_SEEN = 100;
 export type Kind = 'message' | 'seen' | 'key_update' | 'end';
 const KINDS: readonly Kind[] = ['message', 'seen', 'key_update', 'end'];
 
-/** What an attachment is shown as. Videos, GIFs, voice, music, round videos and stickers come later. */
-export type MediaKind = 'photo' | 'file';
-const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'file'];
+/**
+ * What an attachment is shown as. Voice, music, round videos and stickers
+ * come later. Kinds this version doesn't know are accepted and shown as
+ * files, so a newer sender's attachments still arrive (see shownAs).
+ */
+export type MediaKind = 'photo' | 'video' | 'gif' | 'file';
+const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'file'];
+/** Longest video, voice or music length, in seconds. */
+const MAX_LENGTH = 24 * 60 * 60;
 /** Largest file that can be attached. */
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_PREVIEW = 3000;
@@ -36,7 +42,8 @@ const MAX_PREVIEW = 3000;
  * Media); the message carries how to fetch, open and delete it, and what it is.
  */
 export interface Media {
-  t: MediaKind;
+  /** A MediaKind, or a newer kind this version shows as a file. */
+  t: string;
   /** Upload ID (16 bytes). */
   id: string;
   /** The file's AES-256-GCM key (32 bytes). */
@@ -49,9 +56,11 @@ export interface Media {
   n?: string;
   /** MIME type. */
   m?: string;
-  /** Pixel width and height (photos). */
+  /** Pixel width and height (photos, videos, GIFs). */
   w?: number;
   h?: number;
+  /** Length in whole seconds (videos). */
+  l?: number;
   /** A tiny JPEG preview, base64url, shown until the file is here. */
   p?: string;
 }
@@ -203,7 +212,7 @@ export function checkMessage(value: unknown): Message {
 function checkMedia(value: unknown): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new MessageError('bad media');
   const a = value as Record<string, unknown>;
-  if (typeof a.t !== 'string' || !MEDIA_KINDS.includes(a.t as MediaKind)) throw new MessageError('bad media kind');
+  if (typeof a.t !== 'string' || !/^[a-z_]{1,16}$/.test(a.t)) throw new MessageError('bad media kind');
   bytes(a.id, 16, 'media id');
   bytes(a.k, 32, 'media key');
   bytes(a.d, 16, 'media secret');
@@ -213,7 +222,29 @@ function checkMedia(value: unknown): void {
   for (const dim of ['w', 'h'] as const) {
     if (a[dim] !== undefined && (!Number.isSafeInteger(a[dim]) || (a[dim] as number) < 1 || (a[dim] as number) > 20_000)) throw new MessageError('bad media size');
   }
+  if (a.l !== undefined && (!Number.isSafeInteger(a.l) || (a.l as number) < 0 || (a.l as number) > MAX_LENGTH)) throw new MessageError('bad media length');
   if (a.p !== undefined && (typeof a.p !== 'string' || a.p.length > MAX_PREVIEW || !/^[A-Za-z0-9_-]+$/.test(a.p))) throw new MessageError('bad media preview');
+}
+
+/** How an attachment is shown: its kind, or as a file if this version doesn't know the kind. */
+export function shownAs(media: { t: string }): MediaKind {
+  return MEDIA_KINDS.includes(media.t as MediaKind) ? (media.t as MediaKind) : 'file';
+}
+
+const EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+};
+
+/** The name to save an attachment under: its own, or one made from its kind and type ("video.mp4"). */
+export function fileName(media: { t: string; n?: string; m?: string }): string {
+  if (media.n) return media.n;
+  const base = { photo: 'photo', video: 'video', gif: 'animation', file: 'file' }[shownAs(media)];
+  const ext = media.m ? EXTENSIONS[media.m] : undefined;
+  return ext ? `${base}.${ext}` : base;
 }
 
 /** Throws unless value is the canonical unpadded base64url of `length` bytes. */
