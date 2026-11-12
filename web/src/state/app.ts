@@ -35,6 +35,8 @@ import { importIssuerKey } from '../crypto/blindrsa';
 import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
 import { deleteMessage, getMedia, listConversations, listMessages, type MessageView } from '../messaging/store';
 import { preparePhoto, prepareFile, TooBig } from '../media/prepare';
+import { saveUrl } from '../media/save';
+import type { Media } from '../protocol/message';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
@@ -551,6 +553,36 @@ export function createApp(deps: Deps) {
     if (now.kind === 'conversation') screen.value = { ...now, messages: await listMessages(deps.db, now.id) };
   }
 
+  /**
+   * Saves an attachment to the device. Where the Mini App has a share sheet
+   * (some phones), through that. Otherwise, a received one opens the save
+   * page in the device's own browser (media/save.ts). Must run straight from
+   * a tap: Telegram only opens links then.
+   */
+  async function saveMedia(m: MessageView): Promise<'shared' | 'opened' | 'unavailable'> {
+    const media = m.media;
+    if (!media) return 'unavailable';
+    if (typeof navigator.canShare === 'function') {
+      const file = await getMedia(deps.db, m.id);
+      const shareable = file && new File([file], media.n ?? (media.t === 'photo' ? 'photo.jpg' : 'file'), media.m ? { type: media.m } : {});
+      if (shareable && navigator.canShare({ files: [shareable] })) {
+        try {
+          await navigator.share({ files: [shareable] });
+          return 'shared';
+        } catch {
+          // Cancelled: nothing more to do.
+          return 'shared';
+        }
+      }
+    }
+    if (!m.out && media.id && media.k && media.d && deps.bridge) {
+      const base = location.origin + location.pathname;
+      deps.bridge.post('web_app_open_link', { url: saveUrl(base, media as Media) });
+      return 'opened';
+    }
+    return 'unavailable';
+  }
+
   /** Photos are fetched as soon as their conversation is open, as in Telegram; files wait for a tap. */
   function autoFetch(conv: string): void {
     const now = currentScreen();
@@ -951,6 +983,7 @@ export function createApp(deps: Deps) {
     },
     sendMedia,
     fetchMedia,
+    saveMedia,
     mediaUrl,
     transfers,
     preparing,
@@ -960,6 +993,8 @@ export function createApp(deps: Deps) {
     deleteMessage: async (id: string) => {
       const current = screen.value;
       if (current.kind !== 'conversation') return;
+      const message = current.messages.find((m) => m.id === id);
+      if (message) await messaging?.discardUploads([message]);
       await deleteMessage(deps.db, id);
       deps.broadcast({ type: 'data-changed' });
       const now = currentScreen();

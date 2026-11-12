@@ -37,6 +37,8 @@ export interface OutgoingEvents {
   web_app_request_write_access: undefined;
   web_app_open_popup: PopupParams;
   web_app_open_tg_link: { path_full: string };
+  /** Opens a link in the device's own browser (Telegram stays open). */
+  web_app_open_link: { url: string };
   web_app_trigger_haptic_feedback:
     | { type: 'impact'; impact_style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft' }
     | { type: 'notification'; notification_type: 'error' | 'success' | 'warning' }

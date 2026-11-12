@@ -258,9 +258,19 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   "incognitochat/v2/media")`, padded to the next power of two from 16 KiB up
   to 1 MiB, then to the next whole MiB.
 - The recipient gets a download URL with `GET /media/{id}` (no login; the ID
-  is the permission; at most 10 a day), fetches and decrypts the file, keeps
-  it on the device, then deletes the upload with
-  `POST /media/{id}/delete {secret}`.
+  is the permission; at most 10 a day), fetches and decrypts the file and
+  keeps it on the device. The upload stays until it's saved outside the app,
+  the message or conversation is deleted on the recipient's device, or it
+  expires; then it's deleted with `POST /media/{id}/delete {secret}`.
+- **Saving outside Telegram.** A Mini App can't hand a file to the device
+  (Telegram's download needs a public HTTPS URL, which would mean a decrypted
+  copy on a server). Where the app has a share sheet, it uses that.
+  Otherwise it opens `<site>/#save=<base64url(JSON {id, k, d, s, n?, m?})>`
+  in the device's own browser: the part after `#` is never sent to any
+  server, and the page removes it from the address at once. That page
+  fetches and decrypts the upload, offers it as a normal download, and then
+  deletes the upload. The link may stay in the browser's history; once the
+  upload is deleted it opens nothing.
 - Uploads that aren't fetched expire after 31 days. The bucket keeps no
   versions and no access logs.
 
