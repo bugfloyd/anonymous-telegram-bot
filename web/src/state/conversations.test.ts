@@ -391,6 +391,35 @@ describe('conversations in the app', () => {
     expect(screenOf(owner.screen.value, 'home').blockedCount).toBe(0);
   });
 
+  it('sends replies that quote a message, and deletes one message on this device', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    await sender.writeToLink('first question');
+    await owner.showTab('chats');
+    await owner.sync();
+    await owner.openConversation(screenOf(owner.screen.value, 'home').conversations[0]!.id);
+    const question = screenOf(owner.screen.value, 'conversation').messages[0]!;
+
+    await owner.sendMessage('the answer', question.id);
+    await sender.sync();
+    const theirs = screenOf(sender.screen.value, 'conversation').messages;
+    expect(theirs.map((m) => [m.text, m.replyTo ?? null])).toEqual([
+      ['first question', null],
+      ['the answer', theirs[0]!.id],
+    ]);
+    // Same message ID on both sides, so the quote finds it.
+    expect(theirs[0]!.id).toBe(question.id);
+
+    await owner.deleteMessage(question.id);
+    expect(screenOf(owner.screen.value, 'conversation').messages.map((m) => m.text)).toEqual(['the answer']);
+    // The other side still has it.
+    await sender.sync();
+    expect(screenOf(sender.screen.value, 'conversation').messages).toHaveLength(2);
+  });
+
   it("says when the day's tokens are used up", async () => {
     const b = await backend();
     const owner = await person(b);

@@ -69,6 +69,11 @@ export async function setMessageStatus(db: Database, id: string, status: Message
   if (record && (from === undefined || record.status === from)) await db.put('messages', { ...record, status });
 }
 
+/** Deletes one message from this device. */
+export async function deleteMessage(db: Database, id: string): Promise<void> {
+  await db.delete('messages', id);
+}
+
 /** Marks one of our messages in a conversation as seen, if it was sent; returns whether it did. */
 export async function markOwnSeen(db: Database, conv: string, id: string): Promise<boolean> {
   const record = await db.get('messages', id);
