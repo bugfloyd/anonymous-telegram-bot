@@ -162,6 +162,7 @@ JSON fields:
 | `text` | the text (`message` only; at most 12,000 UTF-8 bytes) |
 | `replyTo` | ID of the message this answers |
 | `seen` | IDs read (`seen` only, 1–100) |
+| `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, p?}`, see Media |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text; `seen` needs `seen` and no text; `key_update` and `end` carry neither.
@@ -246,12 +247,40 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   app PUTs exactly `size` bytes of ciphertext, typed
   `application/octet-stream`, to `url` (valid 15 minutes; the length and type
   are part of its signature).
-- The message carries the upload's ID, key and delete secret, inside the
-  encrypted envelope. The server never sees a key, name or type.
+- The message carries the attachment in `media`, inside the encrypted
+  envelope: kind `t` (`photo`, `video`, `gif` or `file`; voice, music, round
+  video and stickers come later), upload ID `id` (16 bytes), AES-256-GCM key
+  `k` (32 bytes), delete secret `d` (16 bytes), the file's size `s` (at most
+  25 MiB), and optionally its name `n`, MIME type `m`, pixel size `w`/`h`,
+  length in seconds `l` and a tiny JPEG preview `p` (base64url, at most 3000
+  characters). The server never sees a key, name or type. A kind the
+  recipient's version doesn't know (lowercase letters and `_`, at most 16)
+  is accepted and shown as a file.
+- What each kind is: a photo is redrawn on the sender's device (at most
+  1280 px, JPEG), which drops its metadata. A video is sent as recorded (no
+  compression), with its location, device and time metadata removed: the
+  MP4/QuickTime `udta` and `meta` boxes are renamed `free` and the header
+  times zeroed, so nothing else in the file moves. A GIF is sent as it is.
+  A file is the original bytes, untouched (location included, if it has
+  any). Photos and GIFs up to 10 MiB are fetched when their conversation
+  opens; videos and files on a tap.
+- The upload is `nonce (12) ‖ AES-GCM(k, nonce, file ‖ zeros, aad =
+  "incognitochat/v2/media")`, padded to the next power of two from 16 KiB up
+  to 1 MiB, then to the next whole MiB.
 - The recipient gets a download URL with `GET /media/{id}` (no login; the ID
-  is the permission; at most 10 a day), fetches and decrypts the file, keeps
-  it on the device, then deletes the upload with
-  `POST /media/{id}/delete {secret}`.
+  is the permission; at most 10 a day), fetches and decrypts the file and
+  keeps it on the device. The upload stays until it's saved outside the app,
+  the message or conversation is deleted on the recipient's device, or it
+  expires; then it's deleted with `POST /media/{id}/delete {secret}`.
+- **Saving outside Telegram.** A Mini App can't hand a file to the device
+  (Telegram's download needs a public HTTPS URL, which would mean a decrypted
+  copy on a server). Where the app has a share sheet, it uses that.
+  Otherwise it opens `<site>/#save=<base64url(JSON {id, k, d, s, n?, m?})>`
+  in the device's own browser: the part after `#` is never sent to any
+  server, and the page removes it from the address at once. That page
+  fetches and decrypts the upload, offers it as a normal download, and then
+  deletes the upload. The link may stay in the browser's history; once the
+  upload is deleted it opens nothing.
 - Uploads that aren't fetched expire after 31 days. The bucket keeps no
   versions and no access logs.
 

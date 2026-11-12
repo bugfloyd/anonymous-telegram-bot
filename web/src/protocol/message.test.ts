@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { concat, toBase64Url, utf8 } from '../crypto/encoding';
 import { exportPublicKey, generateCopyableAgreementKey } from '../crypto/keys';
 import { keyId, sealEnvelope } from './envelope';
-import { checkMessage, MAX_TEXT_BYTES, MessageError, newId, openMessage, sealMessage, type ConversationKey, type Draft } from './message';
+import { checkMessage, fileName, MAX_TEXT_BYTES, MessageError, newId, openMessage, sealMessage, shownAs, type ConversationKey, type Draft } from './message';
 
 async function conversationKey(): Promise<ConversationKey & { id: Uint8Array }> {
   const pair = await generateCopyableAgreementKey();
@@ -80,6 +80,18 @@ describe('checkMessage', () => {
     text: 'hi',
   };
 
+  const media = {
+    t: 'photo',
+    id: 'AAAAAAAAAAAAAAAAAAAAAA',
+    k: toBase64Url(new Uint8Array(32)),
+    d: 'AAAAAAAAAAAAAAAAAAAAAA',
+    s: 1234,
+    m: 'image/jpeg',
+    w: 800,
+    h: 600,
+    p: 'abcd',
+  };
+
   it('accepts a well-formed message and ignores unknown fields', () => {
     expect(checkMessage({ ...valid, future: true }).text).toBe('hi');
   });
@@ -96,7 +108,36 @@ describe('checkMessage', () => {
     ['seen without ids', { kind: 'seen', text: undefined }],
     ['text on end', { kind: 'end' }],
     ['bad reply', { reply: 'x' }],
+    ['media kind', { media: { ...media, t: 'Hologram!' } }],
+    ['media length', { media: { ...media, t: 'video', l: 1.5 } }],
+    ['media key', { media: { ...media, k: 'AAAA' } }],
+    ['media size', { media: { ...media, s: 26 * 1024 * 1024 } }],
+    ['media type', { media: { ...media, m: 'not a type' } }],
+    ['media preview', { media: { ...media, p: 'x'.repeat(3001) } }],
+    ['media on seen', { kind: 'seen', text: undefined, seen: ['AAAAAAAAAAAAAAAAAAAAAA'], media }],
+    ['media on end', { kind: 'end', text: undefined, media }],
   ])('rejects bad %s', (_, change) => {
     expect(() => checkMessage({ ...valid, ...change })).toThrow(MessageError);
+  });
+
+  it('accepts an attachment, with or without a caption', () => {
+    expect(checkMessage({ ...valid, media }).media).toEqual(media);
+    expect(checkMessage({ ...valid, text: undefined, media }).media?.t).toBe('photo');
+    const video = { ...media, t: 'video', m: 'video/mp4', l: 42 };
+    expect(checkMessage({ ...valid, media: video }).media).toEqual(video);
+  });
+
+  it('accepts kinds from newer versions and shows them as files', () => {
+    const voice = checkMessage({ ...valid, media: { ...media, t: 'voice_note' } }).media!;
+    expect(shownAs(voice)).toBe('file');
+    expect(shownAs({ t: 'gif' })).toBe('gif');
+  });
+
+  it('names attachments for saving', () => {
+    expect(fileName({ t: 'file', n: 'report.pdf' })).toBe('report.pdf');
+    expect(fileName({ t: 'photo', m: 'image/jpeg' })).toBe('photo.jpg');
+    expect(fileName({ t: 'video', m: 'video/quicktime' })).toBe('video.mov');
+    expect(fileName({ t: 'gif', m: 'image/gif' })).toBe('animation.gif');
+    expect(fileName({ t: 'voice_note' })).toBe('file');
   });
 });

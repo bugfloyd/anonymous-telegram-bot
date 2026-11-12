@@ -8,7 +8,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 export const DB_NAME = 'incognitochat';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export interface StoredKeyPair {
   privateKey: CryptoKey;
@@ -26,6 +26,8 @@ interface Schema extends DBSchema {
   conversations: { key: string; value: ConversationRecord };
   /** Message history, text encrypted under the device's storage key (messaging/store.ts). */
   messages: { key: string; value: MessageRecord; indexes: { byConversation: [string, number] } };
+  /** Attachments on this device, by message ID, encrypted under the storage key (messaging/store.ts). */
+  media: { key: string; value: Uint8Array<ArrayBuffer> };
 }
 
 /** A conversation, as kept on the device. */
@@ -70,6 +72,8 @@ export interface MessageRecord {
   out: boolean;
   /** Ours: sending, sent, failed, then seen once they open it. Theirs: received, then read once we told them. */
   status: 'sending' | 'sent' | 'failed' | 'seen' | 'received' | 'read';
+  /** An attachment's file: on this device, still to fetch, or gone (expired). */
+  file?: 'local' | 'remote' | 'gone';
   /** AES-GCM under the storage key: nonce ‖ ciphertext of {text, replyTo}. */
   sealed: Uint8Array<ArrayBuffer>;
 }
@@ -88,6 +92,10 @@ const upgrades: ((db: IDBPDatabase<Schema>) => void)[] = [
     db.createObjectStore('conversations', { keyPath: 'id' });
     const messages = db.createObjectStore('messages', { keyPath: 'id' });
     messages.createIndex('byConversation', ['conv', 'at']);
+  },
+  // Version 3: attachments.
+  (db) => {
+    db.createObjectStore('media');
   },
 ];
 
@@ -149,8 +157,14 @@ export async function deleteMeta(db: Database, name: string): Promise<void> {
  * deleted that account's mailboxes and links.
  */
 export async function wipe(db: Database, keep: string[] = []): Promise<void> {
-  const tx = db.transaction(['keys', 'vault', 'meta', 'conversations', 'messages'], 'readwrite');
-  await Promise.all([tx.objectStore('keys').clear(), tx.objectStore('vault').clear(), tx.objectStore('conversations').clear(), tx.objectStore('messages').clear()]);
+  const tx = db.transaction(['keys', 'vault', 'meta', 'conversations', 'messages', 'media'], 'readwrite');
+  await Promise.all([
+    tx.objectStore('keys').clear(),
+    tx.objectStore('vault').clear(),
+    tx.objectStore('conversations').clear(),
+    tx.objectStore('messages').clear(),
+    tx.objectStore('media').clear(),
+  ]);
   const meta = tx.objectStore('meta');
   for (const name of await meta.getAllKeys()) {
     if (!keep.includes(String(name))) await meta.delete(name);

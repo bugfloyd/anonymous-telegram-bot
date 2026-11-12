@@ -74,9 +74,10 @@ describe('upgrades', () => {
     v1.close();
 
     const db = await openDatabase(name);
-    expect(db.version).toBe(2);
+    expect(db.version).toBe(3);
     expect(await getMeta(db, 'account')).toEqual({ state: 'registered' });
     expect(db.objectStoreNames.contains('conversations')).toBe(true);
     expect(db.objectStoreNames.contains('messages')).toBe(true);
+    expect(db.objectStoreNames.contains('media')).toBe(true);
   });
 });

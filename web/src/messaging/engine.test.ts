@@ -12,7 +12,8 @@ import { countTokens, LOW_WATER } from '../account/wallet';
 import { getMeta, getSealed, openDatabase, putKey, putMeta, type Database } from '../storage/db';
 import { POOL_LOW, poolSize } from './pool';
 import { createMessaging } from './engine';
-import { getConversation, listConversations, listMessages } from './store';
+import { getConversation, getMedia, listConversations, listMessages } from './store';
+import type { Transfer } from '../net/transfer';
 import { KEY_RETENTION_MS, scheduleKeyDeletion, type KeyEntry } from './keys';
 
 let n = 0;
@@ -38,6 +39,21 @@ async function fakeBackend() {
   const seenEnvelopes: string[] = [];
   const sendHeaders: (Record<string, string> | undefined)[] = [];
   const quietSends: boolean[] = [];
+  const uploads = new Map<string, { size: number; deleteHash: string; body: Uint8Array<ArrayBuffer> | null }>();
+  // The bucket: presigned PUTs must carry exactly the paid-for size.
+  const transfer: Transfer = {
+    async put(url, body, onProgress) {
+      const up = uploads.get(url.split('/').pop()!);
+      if (!up || body.length !== up.size) throw new Error('refused by the bucket');
+      up.body = body;
+      onProgress?.(1);
+    },
+    async get(url) {
+      const up = uploads.get(url.split('/').pop()!);
+      if (!up?.body) throw new Error('not in the bucket');
+      return up.body;
+    },
+  };
 
   const api: Api = {
     post: (path, body, check) => api.request('POST', path, { body: JSON.stringify(body) }, check),
@@ -51,6 +67,27 @@ async function fakeBackend() {
         seenEnvelopes.push(envelope!);
         const owner = mailboxes.get(mailbox!);
         if (owner) inboxes.get(owner)!.push({ id: rand(), mailbox: mailbox!, envelope: envelope! });
+        return check({});
+      }
+      if (method === 'POST' && path === '/media') {
+        const { size, deleteHash, tokens } = JSON.parse(init.body!) as { size: number; deleteHash: string; tokens: string[] };
+        if (tokens.length !== Math.ceil(size / (5 * 1024 * 1024)) || tokens.some((t) => spent.has(t))) throw new ApiError(401, 'invalid_token');
+        tokens.forEach((t) => spent.add(t));
+        const id = rand();
+        uploads.set(id, { size, deleteHash, body: null });
+        return check({ id, url: `https://bucket.example/m/${id}` });
+      }
+      if (method === 'GET' && path.startsWith('/media/')) {
+        const up = uploads.get(path.split('/')[2]!);
+        if (!up?.body) throw new ApiError(404, 'not_found');
+        return check({ url: `https://bucket.example/m/${path.split('/')[2]!}` });
+      }
+      if (method === 'POST' && path.startsWith('/media/') && path.endsWith('/delete')) {
+        const id = path.split('/')[2]!;
+        const { secret } = JSON.parse(init.body!) as { secret: string };
+        const hash = toBase64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', fromBase64Url(secret))));
+        if (uploads.get(id)?.deleteHash !== hash) throw new ApiError(404, 'not_found');
+        uploads.delete(id);
         return check({});
       }
       if (method === 'GET' && path.startsWith('/links/')) {
@@ -117,14 +154,14 @@ async function fakeBackend() {
     };
   }
 
-  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends, mailboxes };
+  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends, mailboxes, uploads, transfer };
 }
 
 async function person(backend: Awaited<ReturnType<typeof fakeBackend>>, account: string, now?: () => number) {
   const db: Database = await openDatabase(`engine-test-${n++}`);
   await putKey(db, 'vault-key', await generateVaultKey());
   const session = backend.session(account);
-  return { db, session, messaging: createMessaging({ db, api: backend.api, session, issuer: backend.issuer, ...(now ? { now } : {}) }) };
+  return { db, session, messaging: createMessaging({ db, api: backend.api, session, issuer: backend.issuer, transfer: backend.transfer, ...(now ? { now } : {}) }) };
 }
 
 async function linkOf(backend: Awaited<ReturnType<typeof fakeBackend>>, owner: Awaited<ReturnType<typeof person>>) {
@@ -574,5 +611,63 @@ describe('healing dead mailboxes', () => {
     await sender.messaging.sync();
     await sender.messaging.send(conv, 'yes!');
     expect(await owner.messaging.sync()).toBe(1);
+  });
+});
+
+describe('attachments', () => {
+  it('sends a file encrypted, and the recipient fetches, keeps and deletes it', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+
+    // 6 MiB: two tokens; the bucket only takes the padded, encrypted size.
+    const file = crypto.getRandomValues(new Uint8Array(65536));
+    const big = new Uint8Array(6 * 1024 * 1024);
+    big.set(file);
+    const progress: number[] = [];
+    await sender.messaging.sendMedia(conv, { file: big, media: { t: 'file', s: big.length, n: 'notes.pdf', m: 'application/pdf' } }, 'see this', undefined, undefined, (f) => progress.push(f));
+    expect(progress).toEqual([1]);
+    const [upload] = [...backend.uploads.values()];
+    expect(upload!.body!.length).toBe(7 * 1024 * 1024);
+    // The server's copy is ciphertext: the file's bytes aren't in it.
+    const needle = toBase64Url(file.slice(0, 48));
+    expect(toBase64Url(upload!.body!).includes(needle)).toBe(false);
+    // Ours shows at once, from this device.
+    const mine = (await listMessages(sender.db, conv)).at(-1)!;
+    expect(mine).toMatchObject({ text: 'see this', file: 'local', status: 'sent', media: { t: 'file', n: 'notes.pdf', s: big.length } });
+    expect(await getMedia(sender.db, mine.id)).toEqual(big);
+
+    // Theirs arrives without the file, then fetches it.
+    expect(await owner.messaging.sync()).toBe(1);
+    const theirs = (await listMessages(owner.db, conv)).at(-1)!;
+    expect(theirs).toMatchObject({ text: 'see this', file: 'remote', media: { t: 'file', n: 'notes.pdf' } });
+    expect(await getMedia(owner.db, theirs.id)).toBeUndefined();
+    expect(await owner.messaging.fetchMedia(theirs.id)).toBe('local');
+    expect(await getMedia(owner.db, theirs.id)).toEqual(big);
+    expect((await listMessages(owner.db, conv)).at(-1)!.file).toBe('local');
+    // Kept in the bucket until it's saved outside the app...
+    expect(backend.uploads.size).toBe(1);
+    // ...or the conversation is deleted here.
+    await owner.messaging.remove(conv);
+    expect(backend.uploads.size).toBe(0);
+  });
+
+  it('marks an attachment gone when the upload has expired', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    const photo = crypto.getRandomValues(new Uint8Array(1000));
+    await sender.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 10, h: 10, m: 'image/jpeg' } });
+    backend.uploads.clear();
+    await owner.messaging.sync();
+    const theirs = (await listMessages(owner.db, conv)).at(-1)!;
+    expect(theirs.media).toMatchObject({ t: 'photo', w: 10, h: 10 });
+    expect(await owner.messaging.fetchMedia(theirs.id)).toBe('gone');
+    expect((await listMessages(owner.db, conv)).at(-1)!.file).toBe('gone');
   });
 });

@@ -23,7 +23,9 @@ theirs.
    (`main`), `API_URL` (the `api_url` Terraform output),
    `BOT_USERNAME`, `APP_NAME`, `ISSUER_KEY` (the name of the environment's
    send-token issuer key in `web/issuer-keys.json`), and `WS_URL` (the
-   `ws_url` Terraform output; optional: without it the app polls).
+   `ws_url` Terraform output; optional: without it the app polls), and
+   `MEDIA_ORIGIN` (the `media_origin` output; optional: without it
+   attachments are off).
 4. A fine-grained personal access token, owned by the hosting organization,
    for that one repository, with **Actions: read and write** only. It can start
    the workflow but not change the repository. Store it in this repository's

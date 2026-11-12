@@ -32,8 +32,11 @@ import { checkAccountInfo, createLink, listLinks, replaceLink, revokeLink, type 
 import type { Config } from '../config';
 import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
-import { createMessaging, NoTokens, type Messaging } from '../messaging/engine';
-import { deleteMessage, listConversations, listMessages, type MessageView } from '../messaging/store';
+import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
+import { deleteMessage, getMedia, listConversations, listMessages, type LocalMedia, type MessageView } from '../messaging/store';
+import { prepareFile, prepareGif, preparePhoto, prepareVideo, TooBig } from '../media/prepare';
+import { saveUrl } from '../media/save';
+import { fileName, type Media } from '../protocol/message';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
@@ -68,7 +71,7 @@ export type InvitationsNotice = 'created' | 'none-left' | 'network' | 'generic';
 export type AdminNotice = 'saved' | 'granted' | 'not-member' | 'not-found' | 'bad-link' | 'network' | 'generic';
 
 /** Why a message couldn't be sent. */
-export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'generic';
+export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'too-big' | 'unreadable' | 'generic';
 
 /** A conversation in the list. */
 export interface ConversationView {
@@ -79,7 +82,22 @@ export interface ConversationView {
   lastAt: number;
   status: 'active' | 'ended' | 'blocked';
   /** The latest message, if any. */
-  last: { text: string; out: boolean; status: MessageView['status'] } | null;
+  last: { text: string; out: boolean; status: MessageView['status']; media?: { t: string; n?: string } } | null;
+}
+
+/** What a picked file is sent as. */
+export type SendAs = 'photo' | 'video' | 'gif' | 'file';
+
+/** An attachment being prepared to send, shown before its message is stored. */
+export interface Preparing {
+  key: string;
+  conv: string;
+  as: SendAs;
+  /** The picked photo, video or GIF, for showing it meanwhile. */
+  url: string | null;
+  name: string;
+  size: number;
+  caption: string;
 }
 
 /** An invitation code with its shareable URL. */
@@ -169,6 +187,8 @@ export interface LinkView extends LinkRecord {
 
 /** How long the old copy waits before closing, so Telegram handles the link first (tested in phase 0). */
 const CLOSE_DELAY_MS = 400;
+/** GIFs up to this size are fetched without a tap, like photos. */
+const AUTO_GIF_BYTES = 10 * 1024 * 1024;
 
 export function createApp(deps: Deps) {
   const screen = signal<Screen>({ kind: 'loading' });
@@ -357,6 +377,7 @@ export function createApp(deps: Deps) {
     } else if (current.kind === 'conversation' && !current.busy) {
       // Not marked seen here: only once they're in view (markSeen, from the screen).
       screen.value = { ...current, messages: await listMessages(deps.db, current.id) };
+      autoFetch(current.id);
     }
   }
 
@@ -374,7 +395,9 @@ export function createApp(deps: Deps) {
           unread: c.unread,
           lastAt: c.lastAt,
           status: c.status,
-          last: last ? { text: last.text, out: last.out, status: last.status } : null,
+          last: last
+            ? { text: last.text, out: last.out, status: last.status, ...(last.media ? { media: { t: last.media.t, ...(last.media.n ? { n: last.media.n } : {}) } } : {}) }
+            : null,
         };
       }),
     );
@@ -448,6 +471,162 @@ export function createApp(deps: Deps) {
       error: null,
     };
     seen(id);
+    autoFetch(id);
+  }
+
+  // Upload and download progress of attachments, by message ID (0 to 1).
+  const transfers = signal<Record<string, number>>({});
+  const setProgress = (id: string, fraction: number | null) => {
+    const next = { ...transfers.value };
+    if (fraction === null) delete next[id];
+    else next[id] = fraction;
+    transfers.value = next;
+  };
+
+  // Attachments being prepared (a photo being shrunk), shown at once with
+  // the picked file until their message is stored.
+  const preparing = signal<Preparing[]>([]);
+  const unprepare = (key: string) => {
+    const item = preparing.value.find((p) => p.key === key);
+    if (item?.url) URL.revokeObjectURL(item.url);
+    preparing.value = preparing.value.filter((p) => p.key !== key);
+  };
+
+  /**
+   * Sends a picked file in the open conversation: as a photo (redrawn,
+   * smaller), a video or GIF (as it is, shown inline), or a file (untouched).
+   */
+  async function sendMedia(file: File, as: SendAs, caption: string, replyTo?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    const key = crypto.randomUUID();
+    preparing.value = [
+      ...preparing.value,
+      { key, conv: current.id, as, url: as === 'file' ? null : URL.createObjectURL(file), name: file.name, size: file.size, caption: caption.trim() },
+    ];
+    let out: Outgoing;
+    try {
+      out = await { photo: preparePhoto, video: prepareVideo, gif: prepareGif, file: prepareFile }[as](file);
+    } catch (err) {
+      unprepare(key);
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error: err instanceof TooBig ? 'too-big' : 'unreadable' };
+      return;
+    }
+    screen.value = { ...current, error: null };
+    let error: SendError | null = null;
+    let sent: string | null = null;
+    const show = async () => {
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) {
+        screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
+      }
+    };
+    try {
+      await messaging.sendMedia(
+        current.id,
+        out,
+        caption.trim(),
+        replyTo,
+        async (id) => {
+          sent = id;
+          setProgress(id, 0);
+          await show();
+          unprepare(key);
+        },
+        (f) => sent && setProgress(sent, f),
+      );
+    } catch (err) {
+      unprepare(key);
+      if (handleGone(err)) return;
+      error = sendError(err);
+    }
+    if (sent) setProgress(sent, null);
+    deps.broadcast({ type: 'data-changed' });
+    await show();
+  }
+
+  /** Fetches a received attachment (a tap, or automatically for photos and GIFs). */
+  async function fetchMedia(id: string): Promise<void> {
+    if (!messaging || transfers.value[id] !== undefined) return;
+    setProgress(id, 0);
+    try {
+      await messaging.fetchMedia(id, (f) => setProgress(id, f));
+    } catch {
+      // Tried again on the next tap or opening.
+    } finally {
+      setProgress(id, null);
+    }
+    const now = currentScreen();
+    if (now.kind === 'conversation') screen.value = { ...now, messages: await listMessages(deps.db, now.id) };
+  }
+
+  /**
+   * Saves an attachment to the device. Where the Mini App has a share sheet
+   * (some phones), through that. Otherwise, a received one opens the save
+   * page in the device's own browser (media/save.ts). Must run straight from
+   * a tap: Telegram only opens links then.
+   */
+  async function saveMedia(m: MessageView): Promise<'shared' | 'opened' | 'unavailable'> {
+    const media = m.media;
+    if (!media) return 'unavailable';
+    if (typeof navigator.canShare === 'function') {
+      const file = await getMedia(deps.db, m.id);
+      const shareable = file && new File([file], fileName(media), media.m ? { type: media.m } : {});
+      if (shareable && navigator.canShare({ files: [shareable] })) {
+        try {
+          await navigator.share({ files: [shareable] });
+          return 'shared';
+        } catch {
+          // Cancelled: nothing more to do.
+          return 'shared';
+        }
+      }
+    }
+    if (!m.out && media.id && media.k && media.d && deps.bridge) {
+      const base = location.origin + location.pathname;
+      deps.bridge.post('web_app_open_link', { url: saveUrl(base, media as Media) });
+      return 'opened';
+    }
+    return 'unavailable';
+  }
+
+  /**
+   * Photos and GIFs (up to 10 MB) are fetched as soon as their conversation
+   * is open, as in Telegram; videos and files wait for a tap.
+   */
+  function autoFetch(conv: string): void {
+    const now = currentScreen();
+    if (now.kind !== 'conversation' || now.id !== conv) return;
+    const automatic = (media: LocalMedia) => media.t === 'photo' || (media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
+    void (async () => {
+      for (const m of now.messages) {
+        if (m.file === 'remote' && m.media && automatic(m.media) && !m.out) await fetchMedia(m.id);
+      }
+    })();
+  }
+
+  // Object URLs of attachments on this device, for showing them; dropped when another conversation opens.
+  let urls = new Map<string, string>();
+  let urlsFor: string | null = null;
+  /** A URL for a message's attachment, if it's on this device. */
+  async function mediaUrl(id: string, type?: string): Promise<string | null> {
+    const now = currentScreen();
+    const conv = now.kind === 'conversation' ? now.id : null;
+    if (conv !== urlsFor) {
+      for (const u of urls.values()) URL.revokeObjectURL(u);
+      urls = new Map();
+      urlsFor = conv;
+    }
+    const cached = urls.get(id);
+    if (cached) return cached;
+    const file = await getMedia(deps.db, id);
+    if (!file) return null;
+    // QuickTime videos play as MP4 (the same container) where a browser doesn't know their type.
+    const shown = type === 'video/quicktime' ? 'video/mp4' : type;
+    const url = URL.createObjectURL(new Blob([file], shown ? { type: shown } : {}));
+    urls.set(id, url);
+    return url;
   }
 
   /** The Blocked list. */
@@ -809,10 +988,27 @@ export function createApp(deps: Deps) {
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     deleteConversation,
+    /** Whether this build can send and receive attachments. */
+    media: !!deps.config?.media,
+    /** A received or sent attachment as a file, for saving or sharing. */
+    mediaFile: async (id: string, name: string, type?: string) => {
+      const bytes = await getMedia(deps.db, id);
+      return bytes ? new File([bytes], name, type ? { type } : {}) : null;
+    },
+    sendMedia,
+    fetchMedia,
+    saveMedia,
+    mediaUrl,
+    transfers,
+    preparing,
+    /** The Telegram app's platform, e.g. "ios", "android", "tdesktop". */
+    platform: deps.launch.platform,
     /** Deletes one message from this device (the other side keeps theirs). */
     deleteMessage: async (id: string) => {
       const current = screen.value;
       if (current.kind !== 'conversation') return;
+      const message = current.messages.find((m) => m.id === id);
+      if (message) await messaging?.discardUploads([message]);
       await deleteMessage(deps.db, id);
       deps.broadcast({ type: 'data-changed' });
       const now = currentScreen();

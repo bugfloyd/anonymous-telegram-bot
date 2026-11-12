@@ -10,6 +10,8 @@ interface BuildSettings {
   apiOrigin: string | null;
   /** The WebSocket for pushes (optional: without it the app polls). */
   wsOrigin: string | null;
+  /** The media bucket (optional: without it attachments are off). */
+  mediaOrigin: string | null;
 }
 
 function checkSettings(env: Record<string, string>): BuildSettings {
@@ -17,7 +19,7 @@ function checkSettings(env: Record<string, string>): BuildSettings {
   const bot = env.VITE_BOT_USERNAME ?? '';
   const app = env.VITE_APP_NAME ?? '';
   const issuer = env.VITE_ISSUER_KEY ?? '';
-  if (!api && !bot && !app && !issuer) return { apiOrigin: null, wsOrigin: null };
+  if (!api && !bot && !app && !issuer) return { apiOrigin: null, wsOrigin: null, mediaOrigin: null };
   if (!api || !bot || !app || !issuer) {
     throw new Error('Set all of VITE_API_URL, VITE_BOT_USERNAME, VITE_APP_NAME and VITE_ISSUER_KEY, or none');
   }
@@ -38,13 +40,22 @@ function checkSettings(env: Record<string, string>): BuildSettings {
     }
     wsOrigin = ws.origin;
   }
-  return { apiOrigin: url.origin, wsOrigin };
+  let mediaOrigin: string | null = null;
+  if (env.VITE_MEDIA_ORIGIN) {
+    const media = new URL(env.VITE_MEDIA_ORIGIN);
+    if (media.protocol !== 'https:' || media.origin !== env.VITE_MEDIA_ORIGIN.replace(/\/+$/, '')) {
+      throw new Error('VITE_MEDIA_ORIGIN must be a plain https:// origin');
+    }
+    mediaOrigin = media.origin;
+  }
+  return { apiOrigin: url.origin, wsOrigin, mediaOrigin };
 }
 
 // The Content Security Policy is a <meta> tag because GitHub Pages can't send
 // headers. It is only added to production builds: Vite's dev server injects
 // inline scripts that the policy would block. The page may only connect to
-// its own origin, the API and the push socket.
+// its own origin, the API, the push socket and the media bucket; media
+// (decrypted attachments) only plays from blob: URLs.
 function policy(settings: BuildSettings): string {
   return [
     "default-src 'none'",
@@ -52,7 +63,8 @@ function policy(settings: BuildSettings): string {
     "style-src 'self'",
     "img-src 'self' data: blob:",
     "font-src 'self'",
-    ['connect-src', "'self'", settings.apiOrigin, settings.wsOrigin].filter(Boolean).join(' '),
+    ['connect-src', "'self'", settings.apiOrigin, settings.wsOrigin, settings.mediaOrigin].filter(Boolean).join(' '),
+    "media-src blob:",
     "manifest-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",

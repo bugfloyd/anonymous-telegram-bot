@@ -1,9 +1,11 @@
 import { signal, useSignal } from '@preact/signals';
-import type { ComponentChildren } from 'preact';
+import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
+import { showableAs } from './media/prepare';
+import { MAX_FILE_BYTES, shownAs } from './protocol/message';
 import {
   confirmationMatches,
   type AdminNotice,
@@ -14,6 +16,7 @@ import {
   type LinkStatus,
   type LinkView,
   type Screen,
+  type SendAs,
   type SendError,
 } from './state/app';
 
@@ -63,6 +66,8 @@ const SEND_ERROR_TEXT: Record<SendError, Key> = {
   'no-tokens': 'errorNoTokens',
   'rate-limited': 'errorTooFast',
   network: 'errorNetwork',
+  'too-big': 'errorTooBig',
+  unreadable: 'errorUnreadable',
   generic: 'errorGeneric',
 };
 
@@ -81,6 +86,11 @@ export function App({ app, language }: { app: AppState; language: Language }) {
     <>
       <Screen app={app} language={language} />
       <DeleteDialog app={app} language={language} />
+      {toast.value && (
+        <p class="toast" role="status">
+          {toast.value}
+        </p>
+      )}
     </>
   );
 }
@@ -368,6 +378,10 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
   const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const confirmingBlock = useSignal(false);
   const scroll = useChatScroll(app, screen.id, screen.messages);
+  const sending = app.preparing.value.filter((p) => p.conv === screen.id).length;
+  useEffect(() => {
+    if (sending > 0) window.scrollTo({ top: document.documentElement.scrollHeight });
+  }, [sending]);
   // The message being answered, the one whose menu is open, and the one just jumped to.
   const replying = useSignal<MessageView | null>(null);
   const menu = useSignal<MessageView | null>(null);
@@ -417,6 +431,7 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
         {screen.messages.map((m) => (
           <Bubble
             key={m.id}
+            app={app}
             message={m}
             quoted={m.replyTo ? (byId.get(m.replyTo) ?? null) : undefined}
             peer={screen.label}
@@ -428,6 +443,37 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             onMenu={() => (menu.value = m)}
             onQuote={() => m.replyTo && jumpTo(m.replyTo)}
           />
+        ))}
+      {app.preparing.value
+        .filter((p) => p.conv === screen.id)
+        .map((p) => (
+          <li key={p.key} class="bubble out" aria-busy="true">
+            {p.as !== 'file' && p.url ? (
+              <div class="photo">
+                {p.as === 'video' ? <video src={p.url} muted playsInline preload="metadata" /> : <img src={p.url} alt="" />}
+                <span class="media-progress">
+                  <Ring fraction={undefined} />
+                </span>
+              </div>
+            ) : (
+              <div class="file">
+                <span class="file-icon">
+                  <Ring fraction={undefined} />
+                </span>
+                <span class="file-info">
+                  <span class="file-name" dir="auto">
+                    {p.name}
+                  </span>
+                  <span class="file-size">{formatSize(language, p.size)}</span>
+                </span>
+              </div>
+            )}
+            {p.caption && (
+              <span class="text" dir="auto">
+                {p.caption}
+              </span>
+            )}
+          </li>
         ))}
       </ol>
       {menu.value && (
@@ -481,13 +527,26 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             <Composer
               language={language}
               busy={screen.busy}
-              reply={replying.value ? { name: replying.value.out ? tr('you') : screen.label, text: replying.value.text } : null}
+              reply={
+                replying.value
+                  ? { name: replying.value.out ? tr('you') : screen.label, text: mediaLine(language, replying.value.media, replying.value.text) }
+                  : null
+              }
               onCancelReply={() => (replying.value = null)}
               onSend={async (text) => {
                 const to = replying.value?.id;
                 replying.value = null;
                 await app.sendMessage(text, to);
               }}
+              {...(app.media
+                ? {
+                    onAttach: async (file: File, as: SendAs, caption: string) => {
+                      const to = replying.value?.id;
+                      replying.value = null;
+                      await app.sendMedia(file, as, caption, to);
+                    },
+                  }
+                : {})}
             />
           </>
         )}
@@ -755,7 +814,7 @@ function ChatRow({
         </span>
         <span class="chat-bottom">
           <span class="preview" dir="auto">
-            {c.last ? (c.last.out ? tr('youWrote', { text: c.last.text }) : c.last.text) : ''}
+            {c.last ? (c.last.out ? tr('youWrote', { text: mediaLine(language, c.last.media, c.last.text) }) : mediaLine(language, c.last.media, c.last.text)) : ''}
           </span>
           {c.unread > 0 && <span class="badge">{t(language, 'unreadCount', { count: c.unread })}</span>}
         </span>
@@ -770,6 +829,7 @@ function Composer({
   onSend,
   reply = null,
   onCancelReply,
+  onAttach,
 }: {
   language: Language;
   busy: boolean;
@@ -777,8 +837,21 @@ function Composer({
   /** The message being answered: who wrote it, and its text. */
   reply?: { name: string; text: string } | null;
   onCancelReply?: () => void;
+  /** Sends a picked file (absent when attachments are off). */
+  onAttach?: (file: File, as: SendAs, caption: string) => Promise<void>;
 }) {
   const text = useSignal('');
+  const attachMenu = useSignal(false);
+  const picked = useSignal<Picked | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  // From the gallery, a photo, video or GIF is shown as one; from Files, it's a file unless changed.
+  const pick = (fromGallery: boolean) => (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) picked.value = { file, shown: fromGallery };
+  };
   const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (reply) input.current?.focus();
@@ -800,6 +873,17 @@ function Composer({
         </div>
       )}
       <div class="composer">
+      {onAttach && (
+        <>
+          <button type="button" class="attach" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M16.5 6.5l-8 8a2.5 2.5 0 003.5 3.5l8.5-8.5a4.5 4.5 0 00-6.4-6.4L5.5 11.7a6.5 6.5 0 009.2 9.2l6.8-6.8" />
+            </svg>
+          </button>
+          <input type="file" accept="image/*,video/*" hidden ref={photoInput} onChange={pick(true)} />
+          <input type="file" hidden ref={fileInput} onChange={pick(false)} />
+        </>
+      )}
       <textarea
         ref={input}
         dir="auto"
@@ -814,7 +898,351 @@ function Composer({
         {t(language, 'send')}
       </Button>
       </div>
+      {attachMenu.value && (
+        <div class="overlay" onClick={() => (attachMenu.value = false)} onKeyDown={(e) => e.key === 'Escape' && (attachMenu.value = false)}>
+          <div class="dialog menu" role="dialog" aria-modal="true" aria-label={t(language, 'attach')} onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              class="menu-item"
+              onClick={() => {
+                attachMenu.value = false;
+                photoInput.current?.click();
+              }}
+            >
+              {t(language, 'attachPhoto')}
+            </button>
+            <button
+              type="button"
+              class="menu-item"
+              onClick={() => {
+                attachMenu.value = false;
+                fileInput.current?.click();
+              }}
+            >
+              {t(language, 'attachFile')}
+            </button>
+          </div>
+        </div>
+      )}
+      {picked.value && onAttach && (
+        <AttachDialog
+          language={language}
+          picked={picked.value}
+          onCancel={() => (picked.value = null)}
+          onSend={(as, caption) => {
+            const { file } = picked.value!;
+            picked.value = null;
+            void onAttach(file, as, caption);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** A picked file, and whether it starts out shown as a photo, video or GIF (rather than as a file). */
+interface Picked {
+  file: File;
+  shown: boolean;
+}
+
+/** The choice for each kind a file can be shown as: compress a photo, or send a video or GIF as one. */
+const SHOW_AS: Record<'photo' | 'video' | 'gif', Key> = { photo: 'compressImage', video: 'sendAsVideo', gif: 'sendAsGif' };
+
+/** Before sending a picked file: a preview, a caption, and (for photos, videos and GIFs) whether to send it as one. */
+function AttachDialog({
+  language,
+  picked,
+  onCancel,
+  onSend,
+}: {
+  language: Language;
+  picked: Picked;
+  onCancel: () => void;
+  onSend: (as: SendAs, caption: string) => void;
+}) {
+  const tr = (key: Key) => t(language, key);
+  const kind = showableAs(picked.file);
+  const shown = useSignal(picked.shown && kind !== null);
+  const caption = useSignal('');
+  const preview = useSignal<string | null>(null);
+  // A video this browser can't play shows as a file here (and is sent as one).
+  const unplayable = useSignal(false);
+  useEffect(() => {
+    if (!kind) return;
+    const url = URL.createObjectURL(picked.file);
+    preview.value = url;
+    return () => URL.revokeObjectURL(url);
+  }, [picked.file]);
+  const showable = kind === 'video' && unplayable.value ? null : kind;
+  const as: SendAs = showable && shown.value ? showable : 'file';
+  const tooBig = picked.file.size > MAX_FILE_BYTES && as !== 'photo';
+  return (
+    <div class="overlay" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label={tr('attach')}>
+        {preview.value && kind === 'video' && !unplayable.value ? (
+          <video class="attach-preview" src={preview.value} muted playsInline autoPlay loop onError={() => (unplayable.value = true)} />
+        ) : preview.value && kind !== 'video' ? (
+          <img class="attach-preview" src={preview.value} alt="" />
+        ) : (
+          <div class="file">
+            <span class="file-icon">{extension(picked.file.name) || '📄'}</span>
+            <span class="file-info">
+              <span class="file-name" dir="auto">
+                {picked.file.name}
+              </span>
+              <span class="file-size">{formatSize(language, picked.file.size)}</span>
+            </span>
+          </div>
+        )}
+        {showable && (
+          <label class="check">
+            <input type="checkbox" checked={shown.value} onChange={(e) => (shown.value = e.currentTarget.checked)} />
+            <span>{tr(SHOW_AS[showable])}</span>
+          </label>
+        )}
+        {tooBig && <p class="warning">{tr('errorTooBig')}</p>}
+        <input
+          class="caption"
+          type="text"
+          dir="auto"
+          maxLength={1024}
+          placeholder={tr('captionPlaceholder')}
+          value={caption.value}
+          onInput={(e) => (caption.value = e.currentTarget.value)}
+        />
+        <div class="row">
+          <Button disabled={tooBig} onClick={() => onSend(as, caption.value)}>
+            {tr('send')}
+          </Button>
+          <Button kind="secondary" onClick={onCancel}>
+            {tr('cancel')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** "📷 Photo", "📹 Video", "GIF" or "📎 name" before a caption: for chat previews, quotes and the reply bar. */
+function mediaLine(language: Language, media: { t: string; n?: string } | undefined, text: string): string {
+  if (!media) return text;
+  const label = {
+    photo: `📷 ${t(language, 'photo')}`,
+    video: `📹 ${t(language, 'video')}`,
+    gif: t(language, 'gif'),
+    file: `📎 ${media.n ?? t(language, 'file')}`,
+  }[shownAs(media)];
+  return text ? `${label}, ${text}` : label;
+}
+
+function extension(name: string | undefined): string {
+  const dot = name?.lastIndexOf('.') ?? -1;
+  return dot > 0 ? name!.slice(dot + 1, dot + 5).toUpperCase() : '';
+}
+
+function formatSize(language: Language, bytes: number): string {
+  const unit = bytes < 1024 * 1024 ? 'kilobyte' : 'megabyte';
+  const n = unit === 'kilobyte' ? Math.max(1, Math.round(bytes / 1024)) : bytes / 1024 / 1024;
+  // Persian spells the unit out (کیلوبایت), so it reads in the right direction.
+  return new Intl.NumberFormat(locale(language), { style: 'unit', unit, unitDisplay: language === 'fa' ? 'long' : 'short', maximumFractionDigits: 1 }).format(n);
+}
+
+/** A progress ring (fraction 0–1; undefined spins). */
+function Ring({ fraction }: { fraction: number | undefined }) {
+  const c = 2 * Math.PI * 9;
+  return (
+    <svg class={fraction === undefined ? 'ring spin' : 'ring'} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" style={{ strokeDasharray: `${c}`, strokeDashoffset: `${c * (1 - Math.max(0.05, fraction ?? 0.25))}` }} />
+    </svg>
+  );
+}
+
+/** A message's attachment: a photo, GIF, video or file. */
+function Attachment({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  switch (shownAs(m.media!)) {
+    case 'photo':
+    case 'gif':
+      return <PhotoView app={app} message={m} language={language} progress={progress} />;
+    case 'video':
+      return <VideoView app={app} message={m} language={language} progress={progress} />;
+    default:
+      return <FileView app={app} message={m} language={language} progress={progress} />;
+  }
+}
+
+/** The object URL of a message's attachment, once it's on this device. */
+function useMediaUrl(app: AppState, m: MessageView) {
+  const url = useSignal<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (m.file === 'local') void app.mediaUrl(m.id, m.media!.m).then((u) => alive && (url.value = u));
+    return () => {
+      alive = false;
+    };
+  }, [m.id, m.file]);
+  return url;
+}
+
+/** The tiny preview carried in the message, as an image URL. */
+function tinyPreview(p: string | undefined): string | null {
+  return p ? `data:image/jpeg;base64,${p.replace(/-/g, '+').replace(/_/g, '/')}` : null;
+}
+
+/** Progress, a download button, or "no longer available", over a photo or video. */
+function MediaState({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  return (
+    <>
+      {progress !== undefined && (
+        <span class="media-progress">
+          <Ring fraction={progress} />
+        </span>
+      )}
+      {m.file === 'remote' && progress === undefined && !m.out && (
+        <button type="button" class="media-progress" aria-label={t(language, 'download')} onClick={() => void app.fetchMedia(m.id)}>
+          ↓
+        </button>
+      )}
+      {m.file === 'gone' && <span class="media-gone">{t(language, 'mediaGone')}</span>}
+    </>
+  );
+}
+
+/** A photo or GIF: the tiny preview until it's here, then the image (a GIF plays); tap for full screen. */
+function PhotoView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const url = useMediaUrl(app, m);
+  const open = useSignal(false);
+  const { w = 4, h = 3, p } = m.media!;
+  const gif = m.media!.t === 'gif';
+  const tiny = tinyPreview(p);
+  const alt = t(language, gif ? 'gif' : 'photo');
+  return (
+    <div class="photo" style={{ aspectRatio: `${w} / ${h}` }}>
+      {url.value ? <img src={url.value} alt={alt} onClick={() => (open.value = true)} /> : tiny && <img class="tiny" src={tiny} alt="" />}
+      {gif && <span class="media-badge">{t(language, 'gif')}</span>}
+      <MediaState app={app} message={m} language={language} progress={progress} />
+      {open.value && url.value && (
+        <Viewer language={language} onClose={() => (open.value = false)} onSave={() => void save(app, m, language)}>
+          <img src={url.value} alt={alt} />
+        </Viewer>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A video: its preview frame, length (and size, until it's here) and a play
+ * button; it plays full screen. Fetched on a tap, as Telegram does by default.
+ */
+function VideoView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const url = useMediaUrl(app, m);
+  const open = useSignal(false);
+  const { w = 16, h = 9, p, l, s } = m.media!;
+  const tiny = tinyPreview(p);
+  const length = l !== undefined ? formatLength(language, l) : null;
+  const size = m.file === 'remote' ? formatSize(language, s) : null;
+  return (
+    <div class="photo" style={{ aspectRatio: `${w} / ${h}` }}>
+      {tiny && <img class="tiny" src={tiny} alt="" />}
+      {/* "#t" makes browsers that wait for a tap (iPhone) show a first frame. */}
+      {url.value && <video class="poster" src={`${url.value}#t=0.1`} muted playsInline preload="metadata" onClick={() => (open.value = true)} />}
+      {(length || size) && (
+        <span class="media-badge">
+          {length && <bdi dir="ltr">{length}</bdi>}
+          {length && size && ' · '}
+          {size}
+        </span>
+      )}
+      <MediaState app={app} message={m} language={language} progress={progress} />
+      {url.value && progress === undefined && (
+        <button type="button" class="media-progress" aria-label={t(language, 'play')} onClick={() => (open.value = true)}>
+          ▶
+        </button>
+      )}
+      {open.value && url.value && (
+        <Viewer language={language} onClose={() => (open.value = false)} onSave={() => void save(app, m, language)}>
+          <Player src={url.value} language={language} />
+        </Viewer>
+      )}
+    </div>
+  );
+}
+
+/** A video playing full screen, with the browser's controls; says so if it can't play here. */
+function Player({ src, language }: { src: string; language: Language }) {
+  const failed = useSignal(false);
+  return failed.value ? (
+    <p class="viewer-note">{t(language, 'videoUnplayable')}</p>
+  ) : (
+    <video src={src} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} onError={() => (failed.value = true)} />
+  );
+}
+
+/** Seconds as "0:42" or "1:02:03". */
+function formatLength(language: Language, seconds: number): string {
+  const n = new Intl.NumberFormat(locale(language), { useGrouping: false });
+  const two = new Intl.NumberFormat(locale(language), { useGrouping: false, minimumIntegerDigits: 2 });
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return h > 0 ? `${n.format(h)}:${two.format(m)}:${two.format(s)}` : `${n.format(m)}:${two.format(s)}`;
+}
+
+/**
+ * A full-screen photo, GIF or video, with Save. It's put on the page itself,
+ * not inside its message: there, a drag on the video's seek bar would also
+ * swipe the message (moving the viewer with it) and a long press open its menu.
+ */
+function Viewer({ language, onClose, onSave, children }: { language: Language; onClose: () => void; onSave: () => void; children: ComponentChildren }) {
+  const close = useRef<HTMLButtonElement>(null);
+  useEffect(() => close.current?.focus(), []);
+  return createPortal(
+    <div class="viewer" role="dialog" aria-modal="true" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+      {children}
+      <div class="viewer-bar" onClick={(e) => e.stopPropagation()}>
+        <button type="button" class="viewer-button" onClick={onSave}>
+          {t(language, 'save')}
+        </button>
+        <button type="button" class="viewer-button" ref={close} aria-label={t(language, 'closeApp')} onClick={onClose}>
+          ×
+        </button>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** A short message at the bottom of the screen. */
+const toast = signal<string | null>(null);
+function say(text: string): void {
+  toast.value = text;
+  setTimeout(() => toast.value === text && (toast.value = null), 3000);
+}
+
+/** Saves an attachment, saying so when it can't be saved here. */
+async function save(app: AppState, m: MessageView, language: Language): Promise<void> {
+  if ((await app.saveMedia(m)) === 'unavailable') say(t(language, 'saveUnavailable'));
+}
+
+/** A file: icon, name and size; tap to download it, then to save or share it. */
+function FileView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const media = m.media!;
+  const busy = progress !== undefined;
+  const onClick = () => {
+    if (busy) return;
+    if (m.file === 'remote' && !m.out) void app.fetchMedia(m.id);
+    else if (m.file === 'local') void save(app, m, language);
+  };
+  return (
+    <button type="button" class="file" onClick={onClick} disabled={m.file === 'gone'}>
+      <span class="file-icon">{busy ? <Ring fraction={progress} /> : m.file === 'remote' && !m.out ? '↓' : extension(media.n) || '📄'}</span>
+      <span class="file-info">
+        <span class="file-name" dir="auto">
+          {media.n ?? t(language, 'file')}
+        </span>
+        <span class="file-size">{m.file === 'gone' ? t(language, 'mediaGone') : formatSize(language, media.s)}</span>
+      </span>
+    </button>
   );
 }
 
@@ -846,6 +1274,7 @@ const REPLY_SWIPE = 56;
  * tapping it jumps there.
  */
 function Bubble({
+  app,
   message: m,
   quoted,
   peer,
@@ -857,6 +1286,7 @@ function Bubble({
   onMenu,
   onQuote,
 }: {
+  app: AppState;
   message: MessageView;
   /** The message it answers; null if that one is gone from this device. */
   quoted: MessageView | null | undefined;
@@ -928,10 +1358,17 @@ function Bubble({
         </span>
       )}
       {quoted !== undefined &&
-        (quoted ? <Quote name={quoteName} text={quoted.text} onClick={onQuote} /> : <Quote name={tr('deletedMessage')} text="" />)}
-      <span class="text" dir="auto">
-        {m.text}
-      </span>
+        (quoted ? (
+          <Quote name={quoteName} text={mediaLine(language, quoted.media, quoted.text)} onClick={onQuote} />
+        ) : (
+          <Quote name={tr('deletedMessage')} text="" />
+        ))}
+      {m.media && <Attachment app={app} message={m} language={language} progress={app.transfers.value[m.id]} />}
+      {m.text && (
+        <span class="text" dir="auto">
+          {m.text}
+        </span>
+      )}
       <span class="meta">
         <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
         {m.out && <Ticks status={m.status} language={language} />}
