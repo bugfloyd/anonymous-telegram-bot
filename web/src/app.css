@@ -1,0 +1,104 @@
+/* Design tokens. Telegram's theme overrides them (platform/theme.ts); outside
+   Telegram they follow the system's light or dark mode. Layout uses logical
+   properties throughout, so right-to-left needs no special cases. */
+:root {
+  --app-bg: #ffffff;
+  --app-text: #111111;
+  --app-muted: #6b7280;
+  --app-surface: #f3f4f6;
+  --app-accent: #2481cc;
+  --app-on-accent: #ffffff;
+  --app-link: #2481cc;
+  --app-danger: #dc2626;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='telegram']) {
+    --app-bg: #111827;
+    --app-text: #f9fafb;
+    --app-muted: #9ca3af;
+    --app-surface: #1f2937;
+    --app-accent: #60a5fa;
+    --app-on-accent: #0b1220;
+    --app-link: #93c5fd;
+    --app-danger: #f87171;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--app-bg); color: var(--app-text); }
+body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.muted { color: var(--app-muted); font-size: 0.875rem; }
+.page { max-inline-size: 32rem; margin-inline: auto; padding: 2rem 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.page h1 { font-size: 1.5rem; margin-block: 0; }
+.page p { margin-block: 0; }
+.notice { background: var(--app-surface); border-radius: 0.5rem; padding: 0.75rem; }
+.warning { border-inline-start: 4px solid var(--app-danger); background: var(--app-surface); border-radius: 0.5rem; padding: 0.75rem; }
+.field { display: flex; flex-direction: column; gap: 0.25rem; }
+.field input { font: inherit; padding: 0.625rem 0.75rem; border-radius: 0.5rem; border: 1px solid var(--app-muted); background: var(--app-bg); color: var(--app-text); }
+.button { font: inherit; font-weight: 600; padding: 0.75rem 1rem; border-radius: 0.5rem; border: 0; cursor: pointer; }
+.button.primary { background: var(--app-accent); color: var(--app-on-accent); }
+.button.secondary { background: var(--app-surface); color: var(--app-text); }
+.button.danger { background: var(--app-danger); color: #ffffff; }
+.button:disabled { opacity: 0.5; cursor: default; }
+.spinner { inline-size: 1.5rem; block-size: 1.5rem; border: 3px solid var(--app-surface); border-block-start-color: var(--app-accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+.links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.link { display: flex; flex-direction: column; gap: 0.5rem; background: var(--app-surface); border-radius: 0.5rem; padding: 0.75rem; }
+.link-url { font: 0.875rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 0.5rem; border-radius: 0.375rem; border: 1px solid var(--app-muted); background: var(--app-bg); color: var(--app-text); inline-size: 100%; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.row .warning { flex-basis: 100%; margin: 0; }
+.link .button.secondary { background: var(--app-bg); }
+
+.card { display: flex; flex-direction: column; gap: 0.5rem; background: var(--app-surface); border-radius: 0.5rem; padding: 0.75rem; }
+.card input { background: var(--app-bg); }
+.page h2 { font-size: 1.125rem; margin-block: 0.5rem 0; }
+.plain { margin: 0; padding-inline-start: 1.25rem; }
+.grow { flex: 1 1 8rem; }
+.spread { justify-content: space-between; align-items: baseline; }
+.code { font: 600 1.125rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.05em; }
+.highlight { outline: 2px solid var(--app-accent); }
+
+.tabs { display: flex; gap: 0.25rem; background: var(--app-surface); border-radius: 0.5rem; padding: 0.25rem; }
+.tab { flex: 1; font: inherit; font-weight: 600; padding: 0.5rem; border: 0; border-radius: 0.375rem; background: transparent; color: var(--app-muted); cursor: pointer; position: relative; }
+.tab.active { background: var(--app-bg); color: var(--app-text); }
+.dot { display: inline-block; inline-size: 0.5rem; block-size: 0.5rem; border-radius: 50%; background: var(--app-accent); margin-inline-start: 0.375rem; vertical-align: middle; }
+.chats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.chat-row { position: relative; overflow: hidden; }
+.chat { position: relative; inline-size: 100%; display: flex; flex-direction: column; gap: 0.125rem; padding: 0.625rem 0.25rem; border: 0; border-block-end: 1px solid var(--app-surface); background: var(--app-bg); color: var(--app-text); font: inherit; text-align: start; cursor: pointer; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; transition: transform 0.2s ease; }
+.chat-row.dragging .chat { transition: none; }
+.chat-action { position: absolute; inset-block: 0; inset-inline-end: 0; inline-size: 80px; border: 0; background: var(--app-danger); color: #ffffff; font: inherit; font-weight: 600; cursor: pointer; }
+.chat-time { display: inline-flex; align-items: center; gap: 0.25rem; flex: none; }
+.chat-time .tick { color: var(--app-accent); }
+.tick { block-size: 0.75rem; inline-size: auto; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.tick.failed { stroke: var(--app-danger); }
+.head-actions { display: flex; gap: 1.25rem; }
+.muted-link { color: var(--app-muted); margin-block-start: 0.5rem; }
+.blocked-row { display: flex; align-items: center; gap: 0.5rem; }
+.blocked-row .chat { flex: 1; min-inline-size: 0; }
+.overlay { position: fixed; inset: 0; z-index: 10; background: rgb(0 0 0 / 0.45); display: flex; align-items: flex-end; justify-content: center; padding: 1rem; }
+.dialog { inline-size: 100%; max-inline-size: 28rem; display: flex; flex-direction: column; gap: 0.75rem; background: var(--app-bg); color: var(--app-text); border-radius: 0.75rem; padding: 1rem; }
+.dialog p { margin: 0; }
+.check { display: flex; gap: 0.625rem; align-items: flex-start; cursor: pointer; }
+.check input { inline-size: 1.125rem; block-size: 1.125rem; margin: 0.125rem 0 0; accent-color: var(--app-danger); flex: none; }
+.chat-top, .chat-bottom { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.label { font-weight: 600; }
+.preview { color: var(--app-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }
+.badge { flex: none; min-inline-size: 1.25rem; padding: 0 0.375rem; border-radius: 1rem; background: var(--app-accent); color: var(--app-on-accent); font-size: 0.75rem; font-weight: 600; text-align: center; }
+.conversation { min-block-size: 100dvh; }
+.conversation-head { display: flex; flex-direction: column; gap: 0.125rem; }
+.messages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; flex: 1; }
+.bubble { max-inline-size: 85%; padding: 0.5rem 0.75rem; border-radius: 1rem; display: flex; flex-direction: column; gap: 0.125rem; }
+.bubble.in { align-self: flex-start; background: var(--app-surface); border-end-start-radius: 0.25rem; }
+.bubble.out { align-self: flex-end; background: var(--app-accent); color: var(--app-on-accent); border-end-end-radius: 0.25rem; }
+.bubble .text { white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.bubble .meta { font-size: 0.75rem; opacity: 0.75; align-self: flex-end; display: inline-flex; align-items: center; gap: 0.25rem; }
+.conversation-foot { position: sticky; inset-block-end: 0; background: var(--app-bg); display: flex; flex-direction: column; gap: 0.5rem; padding-block: 0.5rem; }
+.composer { display: flex; gap: 0.5rem; align-items: flex-end; }
+.to-end { position: absolute; inset-block-end: calc(100% + 0.5rem); inset-inline-end: 0; inline-size: 2.75rem; block-size: 2.75rem; border-radius: 50%; border: 0; background: var(--app-surface); color: var(--app-text); box-shadow: 0 1px 4px rgb(0 0 0 / 0.25); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.to-end svg { inline-size: 1.25rem; block-size: 1.25rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.to-end .badge { position: absolute; inset-block-start: -0.375rem; inset-inline-end: -0.25rem; }
+.composer textarea { flex: 1; font: inherit; resize: none; padding: 0.5rem 0.75rem; border-radius: 0.75rem; border: 1px solid var(--app-muted); background: var(--app-bg); color: var(--app-text); unicode-bidi: plaintext; }
+.conversation-head .label { align-self: flex-start; }
+.link-button { align-self: flex-start; font: inherit; font-size: 0.875rem; padding: 0; border: 0; background: none; color: var(--app-danger); cursor: pointer; }

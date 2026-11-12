@@ -1,0 +1,141 @@
+# The only way the site is published. Lives in the hosting repository
+# (<org>/<org>.github.io), whose Pages source is "GitHub Actions"; a copy is
+# kept in the code repository under hosting/.
+#
+# It builds one commit (dev) or release tag (production) of the code
+# repository, writes manifest.json (the commit, the build settings and the
+# SHA-256 of every file), attests every file with Sigstore, and deploys. Anyone
+# can check the live site against the attestations, and rebuild the same
+# commit with the same settings to get the same bytes (scripts/verify-site.sh).
+#
+# Repository variables:
+#   CODE_REPOSITORY  e.g. incognitochat/incognitochat
+#   REFS             "commits" (dev: commit SHAs on RELEASE_BRANCH) or "tags" (vX.Y.Z)
+#   RELEASE_BRANCH   the branch commits must be on, e.g. main
+#   API_URL, BOT_USERNAME, APP_NAME, ISSUER_KEY  the client's build settings
+#   WS_URL  the push socket (optional; without it the app polls)
+#   (ISSUER_KEY names a key published in the code repository's web/issuer-keys.json)
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit SHA or release tag of the code repository to build
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing for the attestations
+      attestations: write
+    steps:
+      - name: Check the requested ref
+        env:
+          REF: ${{ inputs.ref }}
+          REFS: ${{ vars.REFS }}
+        run: |
+          case "$REFS" in
+            commits) [[ "$REF" =~ ^[0-9a-f]{40}$ ]] ;;
+            tags) [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ;;
+            *) false ;;
+          esac || { echo "::error::This site only builds ${REFS:-nothing}; got an unexpected ref"; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.CODE_REPOSITORY }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the commit is released
+        env:
+          REFS: ${{ vars.REFS }}
+          RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH }}
+        run: |
+          if [ "$REFS" = commits ] && ! git merge-base --is-ancestor HEAD "origin/${RELEASE_BRANCH}"; then
+            echo "::error::The commit is not on ${RELEASE_BRANCH}"
+            exit 1
+          fi
+
+      # No dependency cache: this job is the site's root of trust.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+
+      - name: Install
+        working-directory: web
+        run: |
+          npm ci
+          npm audit signatures
+
+      - name: Build
+        working-directory: web
+        env:
+          VITE_API_URL: ${{ vars.API_URL }}
+          VITE_BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          VITE_APP_NAME: ${{ vars.APP_NAME }}
+          VITE_ISSUER_KEY: ${{ vars.ISSUER_KEY }}
+          VITE_WS_URL: ${{ vars.WS_URL }}
+        run: npm run build
+
+      - name: Write the manifest
+        working-directory: web/dist
+        env:
+          REF: ${{ inputs.ref }}
+          CODE_REPOSITORY: ${{ vars.CODE_REPOSITORY }}
+          API_URL: ${{ vars.API_URL }}
+          BOT_USERNAME: ${{ vars.BOT_USERNAME }}
+          APP_NAME: ${{ vars.APP_NAME }}
+          ISSUER_KEY: ${{ vars.ISSUER_KEY }}
+          WS_URL: ${{ vars.WS_URL }}
+        run: |
+          find . -type f | sed 's|^\./||' | sort | while read -r f; do
+            printf '%s\t%s\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"
+          done > "$RUNNER_TEMP/files.tsv"
+          jq -n \
+            --arg repository "$CODE_REPOSITORY" --arg ref "$REF" --arg commit "$(git rev-parse HEAD)" \
+            --arg node "$(node --version)" \
+            --arg apiUrl "$API_URL" --arg botUsername "$BOT_USERNAME" --arg appName "$APP_NAME" --arg issuerKey "$ISSUER_KEY" \
+            --arg wsUrl "$WS_URL" \
+            --rawfile files "$RUNNER_TEMP/files.tsv" \
+            '{repository: $repository, ref: $ref, commit: $commit, node: $node,
+              build: ({VITE_API_URL: $apiUrl, VITE_BOT_USERNAME: $botUsername, VITE_APP_NAME: $appName, VITE_ISSUER_KEY: $issuerKey}
+                + (if $wsUrl == "" then {} else {VITE_WS_URL: $wsUrl} end)),
+              files: ($files | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: .[1]}) | from_entries)}' \
+            > manifest.json
+          cat manifest.json
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: web/dist/**
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: web/dist
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

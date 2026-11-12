@@ -1,0 +1,430 @@
+name: CI
+
+# Every pull request and every push to main is tested and built. Pushes to
+# main then deploy to the dev environment (its own AWS account), which only
+# main may use (see scripts/bootstrap.sh).
+# Pull requests never get cloud access or secrets.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege by default; jobs opt in to more.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TERRAFORM_VERSION: "1.17.1"
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+
+jobs:
+  backend:
+    name: Backend – test, scan & reproducible build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # For the store tests (backend/internal/dynamotest). Pinned by digest.
+      dynamodb:
+        image: amazon/dynamodb-local:3.3.2@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86
+        ports:
+          - 8000:8000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Check the pinned toolchain
+        run: |
+          want=$(sed -n 's/^toolchain //p' go.mod)
+          got=$(go env GOVERSION)
+          if [ "$got" != "$want" ]; then
+            echo "::error::Go is $got, but go.mod pins $want"
+            exit 1
+          fi
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Run gofmt on: $unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Wait for DynamoDB Local
+        run: |
+          for _ in $(seq 1 30); do
+            curl -s -o /dev/null http://localhost:8000 && exit 0
+            sleep 1
+          done
+          echo "::error::DynamoDB Local didn't start"
+          exit 1
+
+      - name: Test
+        env:
+          DYNAMODB_ENDPOINT: http://localhost:8000
+          DYNAMODB_REQUIRED: "1" # store tests must run, not skip
+        run: go test -race ./...
+
+      - name: Scan for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+      - name: Build Lambda bundles twice and compare
+        run: |
+          ../scripts/build-lambdas.sh dist | tee first.txt
+          go clean -cache
+          ../scripts/build-lambdas.sh dist-again > second.txt
+          if ! diff first.txt second.txt; then
+            echo "::error::The Lambda build is not reproducible"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lambda-bundles
+          path: backend/dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  web:
+    name: Web – typecheck, test & reproducible build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify package signatures and provenance
+        run: npm audit signatures
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build twice and compare
+        run: |
+          npm run build
+          (cd dist && find . -type f | sort | xargs sha256sum) | tee ../first.txt
+          rm -rf dist node_modules/.vite
+          npm run build
+          (cd dist && find . -type f | sort | xargs sha256sum) > ../second.txt
+          if ! diff ../first.txt ../second.txt; then
+            echo "::error::The web build is not reproducible"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 7
+
+  terraform:
+    name: Terraform – format & validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff infra
+
+      - name: Validate
+        run: |
+          for dir in infra infra/init; do
+            terraform -chdir="$dir" init -backend=false -lockfile=readonly
+            terraform -chdir="$dir" validate
+          done
+
+  deploy-dev:
+    name: Deploy to dev
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [backend, web, terraform]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write # OIDC token for AWS, no stored AWS keys
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    steps:
+      - name: Check environment configuration
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ISSUER_KEY: ${{ secrets.ISSUER_KEY }}
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS }}
+          PAGES_REPO: ${{ vars.PAGES_REPO }}
+          PAGES_URL: ${{ vars.PAGES_URL }}
+          PAGES_DISPATCH_TOKEN: ${{ secrets.DEV_PAGES_DISPATCH_TOKEN }}
+        run: |
+          missing=0
+          for name in BOT_TOKEN ISSUER_KEY AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS \
+            PAGES_REPO PAGES_URL PAGES_DISPATCH_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is not set in the dev environment"
+              missing=1
+            fi
+          done
+          # Catch a mis-pasted secret before anything is written to AWS.
+          if [ -n "$BOT_TOKEN" ] && ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::BOT_TOKEN doesn't look like a Telegram bot token"
+            missing=1
+          fi
+          if [ -n "$ISSUER_KEY" ] && [[ "$ISSUER_KEY" != "-----BEGIN PRIVATE KEY-----"* ]]; then
+            echo "::error::ISSUER_KEY isn't a PKCS#8 PEM private key"
+            missing=1
+          fi
+          exit "$missing"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lambda-bundles
+          path: backend/dist
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          role-session-name: github-${{ github.run_id }}-${{ github.run_attempt }}
+          role-duration-seconds: 1800
+
+      - name: Terraform init
+        working-directory: infra
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: >-
+          terraform init -lockfile=readonly
+          -backend-config="bucket=${TF_STATE_BUCKET}"
+          -backend-config="region=${AWS_REGION}"
+
+      # Workflow logs are public. Hide the endpoints of earlier deploys before
+      # Terraform prints anything (there are none on the first deploy).
+      - name: Mask endpoints
+        working-directory: infra
+        run: |
+          for name in api_url ws_url webhook_url; do
+            value=$(terraform output -raw "$name" 2>/dev/null || true)
+            if [ -n "$value" ]; then
+              echo "::add-mask::${value}"
+              host=${value#*://}
+              echo "::add-mask::${host%%[/.]*}"
+            fi
+          done
+
+      - name: Terraform plan
+        working-directory: infra
+        env:
+          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+          TF_VAR_environment: dev
+          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+          TF_VAR_bot_token_version: ${{ vars.BOT_TOKEN_VERSION || '1' }}
+          TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
+          TF_VAR_issuer_key_version: ${{ vars.ISSUER_KEY_VERSION || '1' }}
+          TF_VAR_secrets_version: ${{ vars.SECRETS_VERSION || '1' }}
+          TF_VAR_client_origins: ${{ vars.CLIENT_ORIGINS }}
+          TF_VAR_deletion_protection: ${{ vars.DELETION_PROTECTION || 'true' }}
+          TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
+          # A secret only so that it is masked in these public logs.
+          TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          # Ephemeral variables aren't saved in the plan file; supply them again.
+          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
+          TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
+        # Resource IDs (such as the WebSocket API's) are printed on creation.
+        run: terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
+
+      - name: Read endpoints
+        working-directory: infra
+        run: |
+          for name in api_url ws_url webhook_url; do
+            value=$(terraform output -raw "$name")
+            echo "::add-mask::${value}"
+            host=${value#*://}
+            echo "::add-mask::${host%%[/.]*}"
+            echo "$(echo "$name" | tr '[:lower:]' '[:upper:]')=${value}" >> "$GITHUB_ENV"
+          done
+
+      - name: Smoke test – API answers with JSON errors
+        run: |
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' "${API_URL%/}/no-such-route")
+          status=${body##*$'\n'}
+          if [ "$status" != "404" ] || [[ "$body" != *'"error":"not_found"'* ]]; then
+            echo "::error::Expected a 404 JSON error from the API, got HTTP ${status}"
+            exit 1
+          fi
+          echo "API reachable (HTTP 404 with a JSON error)"
+
+      # A login for a device that doesn't exist: the function must have loaded
+      # its parameters and be able to read the directory table to refuse it.
+      - name: Smoke test – API refuses an unknown device
+        run: |
+          rand_id() { head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d "="; }
+          payload=$(printf '{"account":"%s","device":"%s","timestamp":%d,"nonce":"%s","signature":"%s"}' \
+            "$(rand_id)" "$(rand_id)" "$(date +%s)" "$(rand_id)" "$(head -c 64 /dev/zero | basenc -w0 --base64url | tr -d "=")")
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
+            -d "$payload" "${API_URL%/}/session")
+          status=${body##*$'\n'}
+          if [ "$status" != "401" ] || [[ "$body" != *'"error":"login_refused"'* ]]; then
+            echo "::error::Expected 401 login_refused from POST /session, got HTTP ${status}"
+            exit 1
+          fi
+          echo "API loaded its configuration and reads the directory (HTTP 401 login_refused)"
+
+      # A send without a token: the API must have loaded its issuer key to
+      # get this far, and refuses it after checking the envelope.
+      - name: Smoke test – sends need a token
+        run: |
+          envelope=$(head -n 1 backend/internal/envelope/testdata/client-envelopes.hex | tr -d '\n' | tr a-f A-F | basenc --base16 -d | basenc -w0 --base64url | tr -d '=')
+          mailbox=$(head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d '=')
+          body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
+            -d "{\"mailbox\":\"${mailbox}\",\"envelope\":\"${envelope}\"}" "${API_URL%/}/send")
+          status=${body##*$'\n'}
+          if [ "$status" != "401" ] || [[ "$body" != *'"error":"invalid_token"'* ]]; then
+            echo "::error::Expected 401 invalid_token from POST /send without a token, got HTTP ${status}"
+            exit 1
+          fi
+          echo "Sends need a token (HTTP 401 invalid_token)"
+
+      - name: Smoke test – webhook is reachable
+        run: |
+          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST -d '{}' "$WEBHOOK_URL")
+          if [ "$status" != "404" ]; then
+            echo "::error::Expected HTTP 404 from the webhook stub, got ${status}"
+            exit 1
+          fi
+          echo "Webhook reachable (HTTP 404 until the bot is built)"
+
+      # The bot registers its own webhook (with its secret) and menu button:
+      # neither the bot token nor the webhook secret passes through CI.
+      - name: Set up the bot
+        working-directory: infra
+        run: |
+          function=$(terraform output -raw bot_function_name)
+          payload=$(jq -nc --arg url "$WEBHOOK_URL" '{setup: {webhookUrl: $url}}')
+          failed=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
+            --payload "$payload" --query FunctionError --output text "$RUNNER_TEMP/bot-setup.json")
+          if [ "$failed" != "None" ] || ! jq -e '.ok == true' "$RUNNER_TEMP/bot-setup.json" >/dev/null; then
+            echo "::error::Bot setup failed"
+            exit 1
+          fi
+          echo "Webhook, menu button and /start command are set"
+
+      - name: Smoke test – the notify function starts
+        working-directory: infra
+        run: |
+          # An empty account is the no-op the api sends for unknown mailboxes;
+          # it proves the function reads its parameters and starts.
+          function=$(terraform output -raw notify_function_name)
+          failed=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
+            --payload '{"notify":{"account":""}}' --query FunctionError --output text "$RUNNER_TEMP/notify.json")
+          if [ "$failed" != "None" ]; then
+            echo "::error::The notify function failed"
+            exit 1
+          fi
+          echo "The notify function starts"
+
+      - name: Smoke test – sockets refuse unauthenticated connections
+        run: |
+          # Without a session token, and with a forged one (the ws function
+          # must start and check it).
+          for protocols in "" "v1, v1.forged.token"; do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \
+              -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
+              -H 'Sec-WebSocket-Key: c21va2UtdGVzdC1rZXktMQ==' ${protocols:+-H "Sec-WebSocket-Protocol: ${protocols}"} \
+              "https://${WS_URL#wss://}")
+            if [ "$status" != "403" ]; then
+              echo "::error::Expected HTTP 403 for a socket with protocols '${protocols}', got ${status}"
+              exit 1
+            fi
+          done
+          echo "Sockets refuse unauthenticated connections (HTTP 403)"
+
+      # The dev client is built, attested and deployed by the dev site's own
+      # workflow (hosting/deploy.yml, kept in that repository), from this very
+      # commit. The token can only start that workflow, not change the site.
+      - name: Ask the dev site to build this commit
+        env:
+          GH_TOKEN: ${{ secrets.DEV_PAGES_DISPATCH_TOKEN }}
+          PAGES_REPO: ${{ vars.PAGES_REPO }}
+        run: gh workflow run deploy.yml --repo "$PAGES_REPO" --field ref="$GITHUB_SHA"
+
+      - name: Wait for the dev client to go live
+        env:
+          PAGES_URL: ${{ vars.PAGES_URL }}
+        run: |
+          for _ in $(seq 1 60); do
+            manifest=$(curl -sS --max-time 10 "${PAGES_URL%/}/manifest.json?v=${GITHUB_SHA}-${RANDOM}" || true)
+            if [ "$(jq -r '.commit // empty' <<<"$manifest" 2>/dev/null)" = "$GITHUB_SHA" ]; then
+              if [ "$(jq -r '.build.VITE_API_URL' <<<"$manifest")" != "$API_URL" ]; then
+                echo "::error::The dev site was built for another API; update its API_URL variable"
+                exit 1
+              fi
+              echo "The dev client built from this commit is live"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The dev site didn't serve this commit within 10 minutes"
+          exit 1

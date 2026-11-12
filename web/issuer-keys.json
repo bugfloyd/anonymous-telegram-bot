@@ -1,0 +1,7 @@
+{
+  "_comment": "Public keys of the send-token issuers (design \u00a711). Clients only accept tokens for the key their build names (VITE_ISSUER_KEY), so the server can't give different users different keys to tell them apart. keyId = SHA-256 of the SubjectPublicKeyInfo (DER).",
+  "dev-2026-11": {
+    "spki": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAysL8yTeo1d6y-vDDWI0hR9p0tqqarujbfvrPlGKL2K6zX2yh-itrOKDE4CuqE3ZFXV04WXzAOfwHqxyd1rV24AA5D3_V5h78gElqkMvxdWDQjvmMzHkMNrdcko-ccfxzds6R6NwvX_Xgk8jLMBMXHofquu1v7F03O1LSVmJ1ZxaeUdmA7WMjKsEK2MjrsyeSqzeJCQHTjx2V8dIYUWkSzYixkXIaZEHPByQtkFcRKkv1uK80vpTUi1kPS34u7KD5tqnQTzwqXjdXD2mqqUt9msgqI8jBTdhPPgrjg6ObsgsueWxFwoOnnQTSrVmfVBhMfwMNLWeI-gQ9USOKXFbEZwIDAQAB",
+    "keyId": "8b286ff9bfa0424e9aa3de0b4ba36e659c2f491b727f35e3784a513ef45a0426"
+  }
+}

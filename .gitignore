@@ -2,3 +2,18 @@ docker/
 
 # IDE settings (run configs contain local AWS profiles / bucket names)
 .idea/
+
+# Local notes and plans, never committed
+_scratch/
+
+# Build output
+bootstrap
+*.zip
+dist/
+dist-*/
+
+# Web tooling
+node_modules/
+coverage/
+playwright-report/
+test-results/

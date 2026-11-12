@@ -1,15 +1,17 @@
 # Bootstrap stack: everything CI/CD needs before it can deploy the app stack
 # (../). It's applied by an account admin via scripts/bootstrap.sh, never by CI,
-# so the pipeline can't widen its own permissions.
+# so the pipeline can't widen its own permissions. One AWS account per
+# environment (dev, production).
 
 provider "aws" {
   region = var.aws_region
 
   default_tags {
     tags = {
-      Project   = "telegram-incognito-bot"
-      Stack     = "bootstrap"
-      ManagedBy = "terraform"
+      Project     = "incognitochat"
+      Environment = var.github_environment
+      Stack       = "bootstrap"
+      ManagedBy   = "terraform"
     }
   }
 }
@@ -22,26 +24,24 @@ locals {
   partition  = data.aws_partition.current.partition
   region     = var.aws_region
 
-  # Names of the resources managed by the app stack (../main.tf). The deploy
-  # role may only touch these, so keep both stacks in sync.
-  app = {
-    function_name    = "IncognitoChatBot"
-    table_name       = "IncognitoChatBot"
-    invitations_name = "IncognitoChatBot-Invitations"
-    secret_name      = "incognito-chat-bot-secrets"
-    lambda_role_name = "incognito-chat-bot-lambda"
-    lambda_log_group = "/aws/lambda/IncognitoChatBot"
-    api_log_group    = "/aws/apigateway/incognito-chat-bot"
-  }
+  # Every app resource is named "<prefix>-…". The deploy role may only touch
+  # names with this prefix, so keep both stacks in sync (../main.tf).
+  prefix = "incognitochat-${var.github_environment}"
+
+  # SSM parameters live under this path.
+  parameter_path = "/incognitochat/${var.github_environment}"
 
   arns = {
-    function     = "arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${local.app.function_name}"
-    table        = "arn:${local.partition}:dynamodb:${local.region}:${local.account_id}:table/${local.app.table_name}"
-    invitations  = "arn:${local.partition}:dynamodb:${local.region}:${local.account_id}:table/${local.app.invitations_name}"
-    secret       = "arn:${local.partition}:secretsmanager:${local.region}:${local.account_id}:secret:${local.app.secret_name}-*"
-    lambda_role  = "arn:${local.partition}:iam::${local.account_id}:role/${local.app.lambda_role_name}"
-    log_group    = "arn:${local.partition}:logs:${local.region}:${local.account_id}:log-group"
-    apigateway   = "arn:${local.partition}:apigateway:${local.region}::"
-    state_bucket = aws_s3_bucket.state.arn
+    functions  = "arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${local.prefix}-*"
+    notify     = "arn:${local.partition}:lambda:${local.region}:${local.account_id}:function:${local.prefix}-notify"
+    tables     = "arn:${local.partition}:dynamodb:${local.region}:${local.account_id}:table/${local.prefix}-*"
+    parameters = "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.parameter_path}/*"
+    # Function roles have their own prefix, so the deploy role ("<prefix>-github-deploy")
+    # can never match it and change itself.
+    lambda_roles  = "arn:${local.partition}:iam::${local.account_id}:role/${local.prefix}-fn-*"
+    log_groups    = "arn:${local.partition}:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/${local.prefix}-*"
+    apigateway    = "arn:${local.partition}:apigateway:${local.region}::"
+    ws_management = "arn:${local.partition}:execute-api:${local.region}:${local.account_id}:*/*/*/@connections/*"
+    state_bucket  = aws_s3_bucket.state.arn
   }
 }

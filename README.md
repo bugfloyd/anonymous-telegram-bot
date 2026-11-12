@@ -1,165 +1,123 @@
-# Telegram Incognito Bot
+# Incognito Chat
 
-A Telegram bot for receiving anonymous messages. Each user gets a personal link. Anyone who opens it can send them a message (any media type) without revealing who they are, and the recipient can open, reply to, or block the sender. Message content is never stored: it is copied from the sender's chat when the recipient opens it.
+Anonymous messaging through personal links, with end-to-end encryption.
 
-Runs on AWS: API Gateway (HTTP API) → Lambda (Go, arm64) → DynamoDB, with secrets in Secrets Manager. All infrastructure is Terraform and is deployed by GitHub Actions.
+> **Status:** version 2 is being built on `main`, and runs in a dev
+> environment. Version 1, an in-chat Telegram bot, is kept at tag
+> [`v1`](../../tree/v1).
 
-## Architecture & security
+Version 2 moves all messaging into a Telegram Mini App, a web app that
+encrypts messages on the device before they leave it. The server only ever
+holds encrypted messages waiting for delivery, and doesn't record who wrote to
+whom. A full description of the security model, including what users still
+have to trust, will be published here before release.
 
-| Area | How |
+## Layout
+
+| Path | What |
 |---|---|
-| CI/CD auth | GitHub Actions gets short-lived credentials via OIDC; no AWS keys are stored anywhere. |
-| Who can deploy | Only jobs in the `production` GitHub environment can assume the deploy role, and that environment only accepts the `main` branch. Pull requests run tests and checks without any cloud access. |
-| Deploy permissions | Least privilege: the deploy role can only manage this bot's own resources, by name. The Lambda role it creates must carry a permissions boundary, so it can't be used to escalate privileges. |
-| Bot token | Stored as a GitHub environment secret and written to Secrets Manager through a Terraform write-only argument, so it never lands in Terraform state, plan files, or the repo. |
-| Webhook | Telegram signs each update with a secret token derived from the bot token. The Lambda rejects anything else with `401`, and every deploy smoke-tests that. |
-| Anonymity | Buttons that refer to another user (Open, Reply, Block, Unblock) carry no user IDs: their data is encrypted and authenticated for the person who sees them, so it can't be read or forged with a modified client. Senders are shown as labels such as `🦊 K3F9` that differ for every recipient and for each direction of a conversation, so they can't be compared or linked to anyone's public link. Both use an identity key that Terraform generates once and keeps in Secrets Manager. |
-| Endpoint abuse | API Gateway throttling, access logs, 30-day log retention. |
-| Data | DynamoDB with point-in-time recovery and deletion protection. |
-| State | Encrypted, versioned, TLS-only S3 bucket with S3-native locking. |
-| Supply chain | Actions pinned to commit SHAs, provider lock files committed, `govulncheck` on every build, Dependabot for actions, Go modules, and Terraform. |
-| Public repo hygiene | No environment-specific values (account IDs, bucket names, profiles, tokens) are committed. They live in GitHub environment secrets/variables and are masked in workflow logs. |
+| `backend/` | Go, one module. `cmd/` holds one AWS Lambda entry point per trust boundary: `api` (HTTPS API), `bot` (Telegram webhook), `ws` (WebSocket connections), `notify` (Telegram notices). |
+| `web/` | The client: TypeScript, Vite and Preact. Runs as a Telegram Mini App and in a browser. |
+| `infra/` | App Terraform for one environment: DynamoDB tables (TTL, no point-in-time recovery), SSM parameters written write-only, the four functions with function URLs, the WebSocket API. Applied by CI. |
+| `infra/init/` | Bootstrap Terraform, one AWS account per environment: state bucket, GitHub OIDC provider, deploy role, Lambda permissions boundary. Applied by an account admin with `scripts/bootstrap.sh`; CI can't change its own permissions. |
+| `scripts/` | `bootstrap.sh`, and `build-lambdas.sh` for reproducible Lambda bundles. |
 
-Two Terraform stacks:
+## Checks
 
-- `infra/init` (**bootstrap**): state bucket, GitHub OIDC provider, deploy role and policy, Lambda permissions boundary. An account admin applies it with `scripts/bootstrap.sh`. CI can't change its own permissions.
-- `infra` (**app**): Lambda, API Gateway, DynamoDB, Secrets Manager, logs. Applied by CI on every push to `main`.
+Everything CI runs can be run locally.
 
-## Deployment
-
-### 1. Bootstrap (once per AWS account, or when `infra/init` changes)
-
-Requirements: admin credentials for the target AWS account, the [GitHub CLI](https://cli.github.com/) logged in as a repo admin, Terraform ≥ 1.11 and Python 3.
+Backend (the Go toolchain is pinned in `backend/go.mod`):
 
 ```shell
-AWS_PROFILE=<AWS_PROFILE> scripts/bootstrap.sh <AWS_REGION>
+cd backend
+gofmt -l .
+go vet ./...
+go test -race ./...
+../scripts/build-lambdas.sh   # prints the SHA-256 of each bundle
 ```
 
-This creates the AWS resources above (keeping the bootstrap state in the new bucket) and configures the GitHub `production` environment:
-
-| Name | Kind | Value |
-|---|---|---|
-| `AWS_ROLE_ARN` | secret | deploy role ARN |
-| `AWS_ACCOUNT_ID` | secret | target account (deploys refuse any other account) |
-| `TF_STATE_BUCKET` | secret | Terraform state bucket |
-| `AWS_REGION` | variable | target region |
-
-### 2. Set the bot token (once)
-
-Create a bot with [@BotFather](https://t.me/BotFather) (or reuse one) and store its token. Typing it at the prompt keeps it out of files and shell history:
+The DynamoDB store tests skip unless DynamoDB Local is running (CI always runs
+them):
 
 ```shell
-gh secret set BOT_TOKEN --env production
+podman run --rm -d -p 8000:8000 docker.io/amazon/dynamodb-local:3.3.2
+DYNAMODB_ENDPOINT=http://localhost:8000 go test -race ./...
 ```
 
-### 3. Deploy
-
-Push or merge to `main`, or run the **CI/CD** workflow manually on `main`. The pipeline:
-
-1. tests, vets, and vulnerability-scans the bot, then builds the Lambda bundle
-2. checks Terraform formatting and validates both stacks
-3. assumes the deploy role via OIDC, runs `terraform plan` and `apply`
-4. registers the Telegram webhook (with its secret token)
-5. smoke-tests that unauthenticated requests are rejected
-
-Optional `production` environment variables:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `DEFAULT_LANGUAGE` | *(empty: detect from client)* | `en_US` or `fa_IR` |
-| `BOT_SECRET_VERSION` | `1` | Increase after changing `BOT_TOKEN` so the new token is written to Secrets Manager (the identity key stays the same) |
-| `INVITE_ONLY` | `true` | Set to `false` to open the bot to everyone (see [Invitations](#invitations)) |
-
-Optional `production` environment secret:
-
-| Secret | Purpose |
-|---|---|
-| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs of admins (see [Invitations](#invitations)) |
-
-### Rotating the bot token
-
-1. In @BotFather, `/revoke` the token and copy the new one.
-2. `gh secret set BOT_TOKEN --env production`
-3. `gh variable set BOT_SECRET_VERSION --env production --body <previous + 1>`
-4. Run the workflow on `main`. It updates the secret, restarts the Lambda environments, and re-registers the webhook.
-
-### Tearing down
-
-The DynamoDB table has deletion protection and the state bucket has `prevent_destroy`. Turn those off deliberately before running `terraform destroy`.
-
-## Invitations
-
-The bot is **invite-only** by default. Anyone can send messages to registered users through their links, but getting your own link or username requires an invitation.
-
-- **Joining:** open an invitation link (`t.me/<bot>?start=inv-<code>`), or send `/register` and enter the code.
-- **Levels:** people invited by an admin are level 1, their invitees level 2, and so on. Only the level number is stored, never who invited whom.
-- **Inviting:** `/invite` shows how many invitations you can give and your codes, and lets you create a code for a number of people. Your budget is your level's allowance plus any personal grants, minus what you've already put into codes. It's enforced atomically, so it can't be overspent.
-- **Admins** (Telegram user IDs in the `ADMIN_TELEGRAM_IDS` secret) can invite without limit and use:
-
-  | Command | What it does |
-  |---|---|
-  | `/levels` | Show each level's allowance |
-  | `/setlevel <level> <invitations>` | Set a level's allowance; applies right away to existing and new users at that level (unset levels: 0) |
-  | `/grant <@username or link> <invitations>` | Give one user extra invitations on top of their level's allowance |
-
-  To make yourself an admin, find your Telegram user ID (e.g. with a user-info bot) and run `gh secret set ADMIN_TELEGRAM_IDS --env production`, then redeploy.
-
-**Opening the bot to everyone:** set the `INVITE_ONLY` variable to `false` and run the workflow on `main`. No code change is needed, and invitation commands then reply that no invitation is required.
-
-**Removing the system entirely:** delete `bot/common/invitations/`, `bot/common/invite.go` and the hooks that call them (`start`, `getLink`, the username flow, `processText`, and the command/callback registrations), the `aws_dynamodb_table.invitations` resource with its IAM entries, and the invitation texts.
-
-## Local development
-
-Use docker compose to run a local DynamoDB and a local development web server on port 8080:
+Web (Node is pinned in `web/.nvmrc`):
 
 ```shell
-export BOT_TOKEN=<BOT_TOKEN>              # a separate test bot is recommended
-export SQIDS_ALPHABET=<SHUFFLED_ALPHABET> # e.g. a shuffled a-zA-Z0-9
-export IDENTITY_KEY=$(openssl rand -base64 32)
-docker compose up -d
+cd web
+npm ci
+npm audit signatures
+npm run typecheck
+npm test
+npm run build
 ```
 
-Keep `IDENTITY_KEY` the same between runs: a new key makes existing buttons stop working and changes everyone's labels.
+## Environments
 
-The local DynamoDB starts empty. Create an `IncognitoChatBot` table with the same keys and indexes as `infra/main.tf` (for example with `aws dynamodb create-table --endpoint-url http://localhost:8000 ...`).
-
-After changing the bot code, restart the bot container:
+Each environment has its own AWS account and GitHub environment. Pushes to
+`main` deploy to **dev**, and pull requests never get cloud access. An account admin bootstraps an environment once:
 
 ```shell
-docker compose restart bot
+AWS_PROFILE=<profile> scripts/bootstrap.sh <aws-region> dev
+gh secret set BOT_TOKEN --env dev
+gh variable set CLIENT_ORIGINS --env dev --body '["https://<client-origin>"]'
 ```
 
-Expose port 8080 through a public HTTPS tunnel, for example [ngrok](https://ngrok.com/):
+While invite-only (the default; set the variable `INVITE_ONLY` to `false` to
+open it), only accounts that joined through an invitation, and admins, can
+own links. Admins are listed by Telegram user ID in a secret, so the IDs stay
+out of the public deploy logs; the API keeps only their keyed hashes:
 
 ```shell
-ngrok http 8080
+gh secret set ADMIN_TELEGRAM_IDS --env dev --body '<id>,<id>'
 ```
 
-Register the tunnel as the webhook. The script sets the same secret token the bot checks:
+Sends are paid for with anonymous tokens signed by an issuer key: an RSA-2048
+private key in a secret, whose public key is published in
+`web/issuer-keys.json` (the client only accepts that one):
 
 ```shell
-BOT_TOKEN=<BOT_TOKEN> scripts/set-webhook.sh <NGROK_FORWARDING_URL>
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out issuer.pem
+openssl pkey -in issuer.pem -pubout -outform DER | basenc -w0 --base64url  # the "spki" to publish
+gh secret set ISSUER_KEY --env dev < issuer.pem && shred -u issuer.pem
 ```
 
-You can see the incoming update requests sent by Telegram on ngrok's web interface: `http://127.0.0.1:4040`.
-
-### Tests
-
-Unit tests run anywhere with `go test ./...`. The DynamoDB repository tests need DynamoDB Local; without it they are skipped (CI always runs them):
+The dev client is published to its own GitHub Pages site, in a separate
+GitHub organization: sites of one owner share an origin, and with it the keys
+stored in the browser, so dev must never share production's. The site's own
+workflow builds, attests and deploys each `main` commit; CI only starts it, with
+a token that can do nothing else. See [hosting/](hosting/README.md), and check
+the live site with:
 
 ```shell
-docker run --rm -d -p 8000:8000 amazon/dynamodb-local:3.3.2
-cd bot
-DYNAMODB_ENDPOINT=http://localhost:8000 AWS_REGION=local \
-AWS_ACCESS_KEY_ID=dummy AWS_SECRET_ACCESS_KEY=dummy go test -race ./...
+scripts/verify-site.sh https://incognitochat-dev.github.io incognitochat-dev/incognitochat-dev.github.io --rebuild
 ```
 
-### Building the Lambda bundle manually
+The client takes its settings at build time (`VITE_API_URL`, `VITE_BOT_USERNAME`,
+`VITE_APP_NAME`, the hosting repository's variables); the API's origin is added to the page's Content Security
+Policy. A build without them works but can't reach a backend.
 
-CI does this for you. To reproduce it locally:
+Secrets (the bot token, the session key, the Telegram ID pepper, the webhook
+secret) are written to SSM through Terraform write-only arguments, so they
+never land in Terraform state or plans. Each function's role can read only the
+parameters it needs; only the `bot` and `notify` functions can read the bot
+token.
 
-```shell
-cd bot
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -trimpath -ldflags="-s -w" -o bootstrap .
-zip -X lambda_function.zip bootstrap
-```
+## Reproducible builds
+
+The same commit always produces byte-identical Lambda bundles and web files.
+CI builds everything twice and fails if anything differs, so anyone can
+rebuild a release and compare it with what is deployed.
+
+## Supply chain
+
+- GitHub Actions are pinned to commit SHAs; Terraform provider lock files are committed.
+- npm installs exact versions only, runs no install scripts, accepts no git
+  dependencies, and refuses packages published less than 7 days ago
+  (`web/.npmrc`). CI verifies registry signatures.
+- `govulncheck` runs on every build; Dependabot proposes updates with a 7-day cooldown.
+- No environment-specific values (account IDs, bucket names, bot names, tokens)
+  are committed.

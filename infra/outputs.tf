@@ -1,10 +1,29 @@
-output "webhook_url" {
-  description = "URL to register as the Telegram webhook"
-  value       = "${aws_apigatewayv2_stage.default.invoke_url}${trimprefix(local.webhook_path, "/")}"
+# All outputs are sensitive so Terraform never prints them: workflow logs are
+# public. CI reads them with `terraform output -raw` and masks them.
+output "api_url" {
+  description = "HTTPS API base URL (built into the client)"
+  value       = aws_lambda_function_url.api.function_url
   sensitive   = true
 }
 
-output "function_name" {
-  description = "Lambda function name"
-  value       = aws_lambda_function.bot.function_name
+output "ws_url" {
+  description = "WebSocket URL (built into the client)"
+  value       = "${aws_apigatewayv2_api.ws.api_endpoint}/${aws_apigatewayv2_stage.ws.name}"
+  sensitive   = true
+}
+
+output "webhook_url" {
+  description = "Telegram webhook URL"
+  value       = aws_lambda_function_url.bot.function_url
+  sensitive   = true
+}
+
+output "bot_function_name" {
+  description = "The bot function, which the deploy invokes to register the webhook"
+  value       = aws_lambda_function.fn["bot"].function_name
+}
+
+output "notify_function_name" {
+  description = "The notify function, which the deploy invokes once to check it starts"
+  value       = aws_lambda_function.fn["notify"].function_name
 }
