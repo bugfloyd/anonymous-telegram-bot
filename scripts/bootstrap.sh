@@ -3,9 +3,8 @@
 # needs to deploy:
 #   - AWS: Terraform state bucket, GitHub OIDC provider, least-privilege deploy
 #     role and the Lambda permissions boundary (infra/init)
-#   - GitHub: a deployment environment that only accepts one branch (main for
-#     production, v2 for dev while v2 is being built), plus its secrets and
-#     variables
+#   - GitHub: a deployment environment that only accepts one branch (main),
+#     plus its secrets and variables
 #
 # One AWS account per environment.
 #

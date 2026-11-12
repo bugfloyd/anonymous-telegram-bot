@@ -43,5 +43,6 @@ locals {
     apigateway    = "arn:${local.partition}:apigateway:${local.region}::"
     ws_management = "arn:${local.partition}:execute-api:${local.region}:${local.account_id}:*/*/*/@connections/*"
     state_bucket  = aws_s3_bucket.state.arn
+    media_buckets = "arn:${local.partition}:s3:::${local.prefix}-media-*"
   }
 }

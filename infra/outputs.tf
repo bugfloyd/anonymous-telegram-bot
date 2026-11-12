@@ -23,6 +23,12 @@ output "bot_function_name" {
   value       = aws_lambda_function.fn["bot"].function_name
 }
 
+output "media_origin" {
+  description = "The media bucket's origin (built into the client's security policy)"
+  value       = "https://${aws_s3_bucket.media.bucket_regional_domain_name}"
+  sensitive   = true
+}
+
 output "notify_function_name" {
   description = "The notify function, which the deploy invokes once to check it starts"
   value       = aws_lambda_function.fn["notify"].function_name

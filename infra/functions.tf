@@ -26,6 +26,7 @@ locals {
         PARAM_TELEGRAM_ID_PEPPER = aws_ssm_parameter.parameter["telegram-id-pepper"].name
         PARAM_ISSUER_KEY         = aws_ssm_parameter.parameter["issuer-key"].name
         NOTIFY_FUNCTION          = "${local.prefix}-notify"
+        MEDIA_BUCKET             = aws_s3_bucket.media.id
         WS_ENDPOINT              = local.ws_endpoint
         INVITE_ONLY              = tostring(var.invite_only)
         ADMIN_TELEGRAM_IDS       = var.admin_telegram_ids
@@ -156,6 +157,15 @@ data "aws_iam_policy_document" "fn" {
         variable = "dynamodb:LeadingKeys"
         values   = ["Q#*"]
       }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = each.key == "api" ? [1] : []
+    content {
+      sid       = "Media"
+      actions   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+      resources = ["${aws_s3_bucket.media.arn}/m/*"]
     }
   }
 

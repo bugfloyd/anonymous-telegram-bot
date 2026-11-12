@@ -58,6 +58,27 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${local.arns.state_bucket}/app/*"]
   }
 
+  # The media bucket's configuration, not its contents: the deploy role can't
+  # read, write or delete the encrypted attachments.
+  statement {
+    sid = "MediaBucket"
+    actions = [
+      "s3:CreateBucket",
+      "s3:DeleteBucket",
+      "s3:ListBucket",
+      "s3:GetBucket*",
+      "s3:PutBucket*",
+      "s3:DeleteBucketPolicy",
+      "s3:GetAccelerateConfiguration",
+      "s3:GetEncryptionConfiguration",
+      "s3:PutEncryptionConfiguration",
+      "s3:GetLifecycleConfiguration",
+      "s3:PutLifecycleConfiguration",
+      "s3:GetReplicationConfiguration",
+    ]
+    resources = [local.arns.media_buckets]
+  }
+
   # Functions, their versions and their function URLs.
   statement {
     sid       = "Lambda"
@@ -233,6 +254,13 @@ data "aws_iam_policy_document" "lambda_boundary" {
     sid       = "InvokeNotify"
     actions   = ["lambda:InvokeFunction"]
     resources = [local.arns.notify]
+  }
+
+  # Encrypted attachments (presigned uploads and downloads, deletion).
+  statement {
+    sid       = "Media"
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"]
+    resources = ["${local.arns.media_buckets}/*"]
   }
 }
 
