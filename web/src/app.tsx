@@ -372,6 +372,10 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
   const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const confirmingBlock = useSignal(false);
   const scroll = useChatScroll(app, screen.id, screen.messages);
+  const sending = app.preparing.value.filter((p) => p.conv === screen.id).length;
+  useEffect(() => {
+    if (sending > 0) window.scrollTo({ top: document.documentElement.scrollHeight });
+  }, [sending]);
   // The message being answered, the one whose menu is open, and the one just jumped to.
   const replying = useSignal<MessageView | null>(null);
   const menu = useSignal<MessageView | null>(null);
@@ -433,6 +437,37 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             onMenu={() => (menu.value = m)}
             onQuote={() => m.replyTo && jumpTo(m.replyTo)}
           />
+        ))}
+      {app.preparing.value
+        .filter((p) => p.conv === screen.id)
+        .map((p) => (
+          <li key={p.key} class="bubble out" aria-busy="true">
+            {p.photo && p.url ? (
+              <div class="photo">
+                <img src={p.url} alt="" />
+                <span class="media-progress">
+                  <Ring fraction={undefined} />
+                </span>
+              </div>
+            ) : (
+              <div class="file">
+                <span class="file-icon">
+                  <Ring fraction={undefined} />
+                </span>
+                <span class="file-info">
+                  <span class="file-name" dir="auto">
+                    {p.name}
+                  </span>
+                  <span class="file-size">{formatSize(language, p.size)}</span>
+                </span>
+              </div>
+            )}
+            {p.caption && (
+              <span class="text" dir="auto">
+                {p.caption}
+              </span>
+            )}
+          </li>
         ))}
       </ol>
       {menu.value && (

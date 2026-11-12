@@ -84,6 +84,18 @@ export interface ConversationView {
 }
 
 /** An invitation code with its shareable URL. */
+/** An attachment being prepared to send, shown before its message is stored. */
+export interface Preparing {
+  key: string;
+  conv: string;
+  photo: boolean;
+  /** The picked photo, for showing it meanwhile. */
+  url: string | null;
+  name: string;
+  size: number;
+  caption: string;
+}
+
 export interface InvitationView extends InvitationCode {
   url: string;
 }
@@ -464,15 +476,31 @@ export function createApp(deps: Deps) {
     transfers.value = next;
   };
 
+  // Attachments being prepared (a photo being shrunk), shown at once with
+  // the picked file until their message is stored.
+  const preparing = signal<Preparing[]>([]);
+  const unprepare = (key: string) => {
+    const item = preparing.value.find((p) => p.key === key);
+    if (item?.url) URL.revokeObjectURL(item.url);
+    preparing.value = preparing.value.filter((p) => p.key !== key);
+  };
+
   /** Sends a picked file in the open conversation: as a photo (redrawn, smaller) or as a file (untouched). */
   async function sendMedia(file: File, asPhoto: boolean, caption: string, replyTo?: string): Promise<void> {
     const current = screen.value;
     if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    const key = crypto.randomUUID();
+    preparing.value = [
+      ...preparing.value,
+      { key, conv: current.id, photo: asPhoto, url: asPhoto ? URL.createObjectURL(file) : null, name: file.name, size: file.size, caption: caption.trim() },
+    ];
     let out: Outgoing;
     try {
       out = asPhoto ? await preparePhoto(file) : await prepareFile(file);
     } catch (err) {
-      screen.value = { ...current, error: err instanceof TooBig ? 'too-big' : 'unreadable' };
+      unprepare(key);
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error: err instanceof TooBig ? 'too-big' : 'unreadable' };
       return;
     }
     screen.value = { ...current, error: null };
@@ -494,10 +522,12 @@ export function createApp(deps: Deps) {
           sent = id;
           setProgress(id, 0);
           await show();
+          unprepare(key);
         },
         (f) => sent && setProgress(sent, f),
       );
     } catch (err) {
+      unprepare(key);
       if (handleGone(err)) return;
       error = sendError(err);
     }
@@ -923,6 +953,9 @@ export function createApp(deps: Deps) {
     fetchMedia,
     mediaUrl,
     transfers,
+    preparing,
+    /** The Telegram app's platform, e.g. "ios", "android", "tdesktop". */
+    platform: deps.launch.platform,
     /** Deletes one message from this device (the other side keeps theirs). */
     deleteMessage: async (id: string) => {
       const current = screen.value;
