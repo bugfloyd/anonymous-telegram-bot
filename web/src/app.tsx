@@ -1,5 +1,5 @@
 import { signal, useSignal } from '@preact/signals';
-import type { ComponentChildren } from 'preact';
+import { createPortal, type ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
@@ -1188,11 +1188,15 @@ function formatLength(language: Language, seconds: number): string {
   return h > 0 ? `${n.format(h)}:${two.format(m)}:${two.format(s)}` : `${n.format(m)}:${two.format(s)}`;
 }
 
-/** A full-screen photo, GIF or video, with Save. */
+/**
+ * A full-screen photo, GIF or video, with Save. It's put on the page itself,
+ * not inside its message: there, a drag on the video's seek bar would also
+ * swipe the message (moving the viewer with it) and a long press open its menu.
+ */
 function Viewer({ language, onClose, onSave, children }: { language: Language; onClose: () => void; onSave: () => void; children: ComponentChildren }) {
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => close.current?.focus(), []);
-  return (
+  return createPortal(
     <div class="viewer" role="dialog" aria-modal="true" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
       {children}
       <div class="viewer-bar" onClick={(e) => e.stopPropagation()}>
@@ -1203,7 +1207,8 @@ function Viewer({ language, onClose, onSave, children }: { language: Language; o
           ×
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
