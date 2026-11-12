@@ -106,6 +106,10 @@ type Server struct {
 	// Push, if set, tells open apps that something arrived; a Telegram
 	// notice goes out only if none took it.
 	Push Pusher
+
+	// Media and Uploads, if set, hold encrypted attachments.
+	Media   Media
+	Uploads Uploads
 }
 
 // Pusher reaches an account's open apps (push.Pusher).
@@ -139,6 +143,9 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/ack", s.withDevice("POST /ack", s.ack))
 	r.Handle(http.MethodPost, "/notices", s.withDevice("POST /notices", s.setNotices))
 	r.Handle(http.MethodPost, "/accounts/lookup", s.lookupAccount)
+	r.Handle(http.MethodPost, "/media", s.upload)
+	r.Handle(http.MethodGet, "/media/{id}", s.download)
+	r.Handle(http.MethodPost, "/media/{id}/delete", s.deleteUpload)
 }
 
 // tokenResponse is what a successful registration or login returns.

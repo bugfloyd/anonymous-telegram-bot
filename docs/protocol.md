@@ -235,6 +235,26 @@ each mailbox's owner, to deliver, but not who writes to it.
   gone), so their app writes there from then on. What they sent meanwhile is
   lost. Only `message` sends trigger a Telegram notice.
 
+## Media
+
+Attachments travel outside the envelope, encrypted, through an S3 bucket.
+
+- The app encrypts the file with a fresh key, pads it, and asks
+  `POST /media {size, deleteHash, tokens}` for an upload URL. No login: it
+  pays with send tokens, one per started 5 MiB (at most 26 MiB). `deleteHash`
+  is the SHA-256 of a random delete secret. The answer is `{id, url}`, and the
+  app PUTs exactly `size` bytes of ciphertext, typed
+  `application/octet-stream`, to `url` (valid 15 minutes; the length and type
+  are part of its signature).
+- The message carries the upload's ID, key and delete secret, inside the
+  encrypted envelope. The server never sees a key, name or type.
+- The recipient gets a download URL with `GET /media/{id}` (no login; the ID
+  is the permission; at most 10 a day), fetches and decrypts the file, keeps
+  it on the device, then deletes the upload with
+  `POST /media/{id}/delete {secret}`.
+- Uploads that aren't fetched expire after 31 days. The bucket keeps no
+  versions and no access logs.
+
 ## Notices
 
 The bot can tell someone that a message is waiting: a generic "New message"
