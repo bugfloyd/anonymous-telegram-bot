@@ -33,7 +33,7 @@ import type { Config } from '../config';
 import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
 import { createMessaging, NoTokens, type Messaging } from '../messaging/engine';
-import { listConversations, listMessages, type MessageView } from '../messaging/store';
+import { deleteMessage, listConversations, listMessages, type MessageView } from '../messaging/store';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
@@ -484,7 +484,7 @@ export function createApp(deps: Deps) {
   }
 
   /** Sends a message in the open conversation. */
-  async function sendMessage(text: string): Promise<void> {
+  async function sendMessage(text: string, replyTo?: string): Promise<void> {
     const current = screen.value;
     if (current.kind !== 'conversation' || current.busy || !messaging || text.trim() === '') return;
     screen.value = { ...current, error: null };
@@ -497,7 +497,7 @@ export function createApp(deps: Deps) {
       }
     };
     try {
-      await messaging.send(current.id, text.trim(), undefined, show);
+      await messaging.send(current.id, text.trim(), replyTo, show);
     } catch (err) {
       if (handleGone(err)) return;
       error = sendError(err);
@@ -809,6 +809,15 @@ export function createApp(deps: Deps) {
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     deleteConversation,
+    /** Deletes one message from this device (the other side keeps theirs). */
+    deleteMessage: async (id: string) => {
+      const current = screen.value;
+      if (current.kind !== 'conversation') return;
+      await deleteMessage(deps.db, id);
+      deps.broadcast({ type: 'data-changed' });
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, messages: await listMessages(deps.db, current.id) };
+    },
     blocked: () => showBlocked(),
     unblock,
     /** Shows a native popup; resolves with the button pressed, or null. */

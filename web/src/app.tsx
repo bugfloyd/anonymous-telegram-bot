@@ -368,6 +368,22 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
   const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const confirmingBlock = useSignal(false);
   const scroll = useChatScroll(app, screen.id, screen.messages);
+  // The message being answered, the one whose menu is open, and the one just jumped to.
+  const replying = useSignal<MessageView | null>(null);
+  const menu = useSignal<MessageView | null>(null);
+  const highlight = useSignal<string | null>(null);
+  const byId = new Map(screen.messages.map((m) => [m.id, m]));
+  useEffect(() => {
+    replying.value = null;
+    menu.value = null;
+  }, [screen.id]);
+  const jumpTo = (id: string) => {
+    const el = document.getElementById(`m-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    highlight.value = id;
+    setTimeout(() => highlight.value === id && (highlight.value = null), 1500);
+  };
   const time = new Intl.DateTimeFormat(locale(language), { hour: 'numeric', minute: '2-digit' });
   return (
     <main class="page conversation">
@@ -399,17 +415,34 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
       </header>
       <ol class="messages">
         {screen.messages.map((m) => (
-          <li key={m.id} class={m.out ? 'bubble out' : 'bubble in'}>
-            <span class="text" dir="auto">
-              {m.text}
-            </span>
-            <span class="meta">
-              <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
-              {m.out && <Ticks status={m.status} language={language} />}
-            </span>
-          </li>
+          <Bubble
+            key={m.id}
+            message={m}
+            quoted={m.replyTo ? (byId.get(m.replyTo) ?? null) : undefined}
+            peer={screen.label}
+            language={language}
+            time={time}
+            highlighted={highlight.value === m.id}
+            canReply={!screen.blocked && !screen.ended}
+            onReply={() => (replying.value = m)}
+            onMenu={() => (menu.value = m)}
+            onQuote={() => m.replyTo && jumpTo(m.replyTo)}
+          />
         ))}
       </ol>
+      {menu.value && (
+        <MessageMenu
+          message={menu.value}
+          language={language}
+          canReply={!screen.blocked && !screen.ended}
+          onClose={() => (menu.value = null)}
+          onReply={(m) => (replying.value = m)}
+          onDelete={(m) => {
+            if (replying.value?.id === m.id) replying.value = null;
+            void app.deleteMessage(m.id);
+          }}
+        />
+      )}
       <div class="conversation-foot">
         {(scroll.away || scroll.fresh > 0) && (
           <button
@@ -445,7 +478,17 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
                 {tr(SEND_ERROR_TEXT[screen.error])}
               </p>
             )}
-            <Composer language={language} busy={screen.busy} onSend={app.sendMessage} />
+            <Composer
+              language={language}
+              busy={screen.busy}
+              reply={replying.value ? { name: replying.value.out ? tr('you') : screen.label, text: replying.value.text } : null}
+              onCancelReply={() => (replying.value = null)}
+              onSend={async (text) => {
+                const to = replying.value?.id;
+                replying.value = null;
+                await app.sendMessage(text, to);
+              }}
+            />
           </>
         )}
       </div>
@@ -721,8 +764,25 @@ function ChatRow({
   );
 }
 
-function Composer({ language, busy, onSend }: { language: Language; busy: boolean; onSend: (text: string) => Promise<void> }) {
+function Composer({
+  language,
+  busy,
+  onSend,
+  reply = null,
+  onCancelReply,
+}: {
+  language: Language;
+  busy: boolean;
+  onSend: (text: string) => Promise<void>;
+  /** The message being answered: who wrote it, and its text. */
+  reply?: { name: string; text: string } | null;
+  onCancelReply?: () => void;
+}) {
   const text = useSignal('');
+  const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (reply) input.current?.focus();
+  }, [reply?.text]);
   const send = async () => {
     const value = text.value;
     if (value.trim() === '') return;
@@ -730,8 +790,18 @@ function Composer({ language, busy, onSend }: { language: Language; busy: boolea
     await onSend(value);
   };
   return (
-    <div class="composer">
+    <div class="composer-wrap">
+      {reply && (
+        <div class="reply-bar">
+          <Quote name={t(language, 'replyingTo', { name: reply.name })} text={reply.text} />
+          <button type="button" class="reply-cancel" aria-label={t(language, 'cancelReply')} onClick={onCancelReply}>
+            ×
+          </button>
+        </div>
+      )}
+      <div class="composer">
       <textarea
+        ref={input}
         dir="auto"
         rows={2}
         maxLength={4000}
@@ -743,6 +813,193 @@ function Composer({ language, busy, onSend }: { language: Language; busy: boolea
       <Button disabled={busy || text.value.trim() === ''} onClick={send}>
         {t(language, 'send')}
       </Button>
+      </div>
+    </div>
+  );
+}
+
+/** A quoted message: whose, and the start of it. */
+function Quote({ name, text, onClick }: { name: string; text: string; onClick?: () => void }) {
+  const body = (
+    <>
+      <bdi class="quote-name">{name}</bdi>
+      <span class="quote-text" dir="auto">
+        {text}
+      </span>
+    </>
+  );
+  return onClick ? (
+    <button type="button" class="quote" onClick={onClick}>
+      {body}
+    </button>
+  ) : (
+    <span class="quote">{body}</span>
+  );
+}
+
+/** How far a message is pulled before letting go answers it, in px. */
+const REPLY_SWIPE = 56;
+
+/**
+ * A message. Swiping it toward the start answers it; a long press (or a
+ * right click) opens its menu. A quoted message shows above the text, and
+ * tapping it jumps there.
+ */
+function Bubble({
+  message: m,
+  quoted,
+  peer,
+  language,
+  time,
+  highlighted,
+  canReply,
+  onReply,
+  onMenu,
+  onQuote,
+}: {
+  message: MessageView;
+  /** The message it answers; null if that one is gone from this device. */
+  quoted: MessageView | null | undefined;
+  peer: string;
+  language: Language;
+  time: Intl.DateTimeFormat;
+  highlighted: boolean;
+  canReply: boolean;
+  onReply: () => void;
+  onMenu: () => void;
+  onQuote: () => void;
+}) {
+  const tr = (key: Key) => t(language, key);
+  const gesture = useRef<{ x: number; y: number; pointer: number; mode: 'pending' | 'swipe' | 'scroll'; timer: number; pressed: boolean } | null>(null);
+  const pulled = useSignal(0);
+  const direction = () => (document.documentElement.dir === 'rtl' ? -1 : 1);
+  const longPress = () => {
+    const g = gesture.current;
+    if (g && (g.pressed || g.mode !== 'pending')) return;
+    if (g) {
+      g.pressed = true;
+      clearTimeout(g.timer);
+    }
+    onMenu();
+  };
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    gesture.current = { x: e.clientX, y: e.clientY, pointer: e.pointerId, mode: 'pending', timer: window.setTimeout(longPress, LONG_PRESS_MS), pressed: false };
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    const g = gesture.current;
+    if (!g || e.pointerId !== g.pointer || g.pressed) return;
+    const dx = e.clientX - g.x;
+    const dy = e.clientY - g.y;
+    if (g.mode === 'pending') {
+      if (Math.abs(dx) < SLOP && Math.abs(dy) < SLOP) return;
+      clearTimeout(g.timer);
+      g.mode = canReply && Math.abs(dx) > Math.abs(dy) && -dx * direction() > 0 ? 'swipe' : 'scroll';
+      if (g.mode === 'swipe') (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    }
+    if (g.mode === 'swipe') pulled.value = Math.min(REPLY_SWIPE * 1.5, Math.max(0, -dx * direction()));
+  };
+  const onPointerEnd = (e: PointerEvent) => {
+    const g = gesture.current;
+    if (!g || e.pointerId !== g.pointer) return;
+    clearTimeout(g.timer);
+    gesture.current = null;
+    if (g.mode === 'swipe' && pulled.value >= REPLY_SWIPE) onReply();
+    pulled.value = 0;
+  };
+  const quoteName = quoted ? (quoted.out ? tr('you') : peer) : '';
+  return (
+    <li
+      id={`m-${m.id}`}
+      class={`bubble ${m.out ? 'out' : 'in'}${highlighted ? ' flash' : ''}${pulled.value ? ' pulling' : ''}`}
+      style={pulled.value ? { transform: `translateX(${-pulled.value * direction()}px)` } : undefined}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        longPress();
+      }}
+    >
+      {pulled.value > 0 && (
+        <span class={pulled.value >= REPLY_SWIPE ? 'reply-hint ready' : 'reply-hint'} aria-hidden="true">
+          ↩
+        </span>
+      )}
+      {quoted !== undefined &&
+        (quoted ? <Quote name={quoteName} text={quoted.text} onClick={onQuote} /> : <Quote name={tr('deletedMessage')} text="" />)}
+      <span class="text" dir="auto">
+        {m.text}
+      </span>
+      <span class="meta">
+        <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
+        {m.out && <Ticks status={m.status} language={language} />}
+      </span>
+    </li>
+  );
+}
+
+/** The long-press menu of a message: Reply, Copy, Delete for me. */
+function MessageMenu({
+  message,
+  language,
+  canReply,
+  onClose,
+  onReply,
+  onDelete,
+}: {
+  message: MessageView;
+  language: Language;
+  canReply: boolean;
+  onClose: () => void;
+  onReply: (m: MessageView) => void;
+  onDelete: (m: MessageView) => void;
+}) {
+  const tr = (key: Key) => t(language, key);
+  const confirming = useSignal(false);
+  const first = useRef<HTMLButtonElement>(null);
+  useEffect(() => first.current?.focus(), [confirming.value]);
+  const act = (f: () => void) => () => {
+    f();
+    onClose();
+  };
+  return (
+    <div class="overlay" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+      <div class="dialog menu" role="dialog" aria-modal="true" aria-label={tr('messageActions')} onClick={(e) => e.stopPropagation()}>
+        {confirming.value ? (
+          <>
+            <p>{tr('deleteMessageConfirm')}</p>
+            <div class="row">
+              <button type="button" class="button danger" ref={first} onClick={act(() => onDelete(message))}>
+                {tr('deleteForMe')}
+              </button>
+              <Button kind="secondary" onClick={onClose}>
+                {tr('cancel')}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            {canReply && (
+              <button type="button" class="menu-item" ref={first} onClick={act(() => onReply(message))}>
+                {tr('reply')}
+              </button>
+            )}
+            <button
+              type="button"
+              class="menu-item"
+              {...(canReply ? {} : { ref: first })}
+              onClick={act(() => void navigator.clipboard?.writeText(message.text).catch(() => {}))}
+            >
+              {tr('copy')}
+            </button>
+            <button type="button" class="menu-item danger" onClick={() => (confirming.value = true)}>
+              {tr('deleteForMe')}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
