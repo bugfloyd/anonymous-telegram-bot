@@ -142,6 +142,22 @@ export async function deleteMeta(db: Database, name: string): Promise<void> {
   await db.delete('meta', name);
 }
 
+/**
+ * Deletes everything stored for the previous account on this device: keys,
+ * sealed keys, conversations, messages and settings, except the settings
+ * named in keep. A new account must not inherit any of it: the server
+ * deleted that account's mailboxes and links.
+ */
+export async function wipe(db: Database, keep: string[] = []): Promise<void> {
+  const tx = db.transaction(['keys', 'vault', 'meta', 'conversations', 'messages'], 'readwrite');
+  await Promise.all([tx.objectStore('keys').clear(), tx.objectStore('vault').clear(), tx.objectStore('conversations').clear(), tx.objectStore('messages').clear()]);
+  const meta = tx.objectStore('meta');
+  for (const name of await meta.getAllKeys()) {
+    if (!keep.includes(String(name))) await meta.delete(name);
+  }
+  await tx.done;
+}
+
 /** Asks the browser not to evict our storage. Best effort: often refused. */
 export async function requestPersistence(): Promise<boolean> {
   try {

@@ -3,6 +3,7 @@ package directory
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/incognitochat/incognitochat/backend/internal/ids"
@@ -28,6 +29,16 @@ func TestMailboxes(t *testing.T) {
 	m, err := s.Mailbox(ctx, pool[0])
 	if err != nil || m.Owner != owner.ID || m.Link != "" {
 		t.Fatalf("Mailbox = %+v, %v", m, err)
+	}
+	owned, err := s.Mailboxes(ctx, owner.ID)
+	slices.Sort(owned)
+	want := slices.Clone(pool)
+	slices.Sort(want)
+	if err != nil || !slices.Equal(owned, want) {
+		t.Fatalf("Mailboxes = %v, %v", owned, err)
+	}
+	if theirs, _ := s.Mailboxes(ctx, other.ID); len(theirs) != 0 {
+		t.Fatalf("other's mailboxes = %v", theirs)
 	}
 
 	// Discarding: only by the owner, then it's gone like an unknown one.

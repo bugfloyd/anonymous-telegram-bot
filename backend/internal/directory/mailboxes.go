@@ -79,6 +79,35 @@ func (s *Store) Mailbox(ctx context.Context, id string) (Mailbox, error) {
 	return Mailbox{ID: id, Owner: owner, Link: link}, nil
 }
 
+// Mailboxes lists the mailboxes an account owns: pool, conversation and
+// intro mailboxes.
+func (s *Store) Mailboxes(ctx context.Context, accountID string) ([]string, error) {
+	var ids []string
+	var start map[string]types.AttributeValue
+	for {
+		out, err := s.DB.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 &s.Table,
+			KeyConditionExpression:    aws.String("pk = :pk AND begins_with(sk, :m)"),
+			ExpressionAttributeValues: attrs{":pk": sv(accountPK(accountID)), ":m": sv(mailboxPrefix)},
+			ProjectionExpression:      aws.String("sk"),
+			ConsistentRead:            aws.Bool(true),
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range out.Items {
+			if sk, ok := str(it, "sk"); ok {
+				ids = append(ids, strings.TrimPrefix(sk, mailboxPrefix))
+			}
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return ids, nil
+		}
+		start = out.LastEvaluatedKey
+	}
+}
+
 // DiscardMailbox deletes one of an account's pool or conversation mailboxes:
 // sends to it then go nowhere, exactly as to one that never existed. Intro
 // mailboxes go with their link. It returns ErrNotFound unless the account

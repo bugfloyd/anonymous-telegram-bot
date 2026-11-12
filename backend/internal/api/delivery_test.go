@@ -158,3 +158,32 @@ func TestMailboxLimits(t *testing.T) {
 	status, out = h.as(t, m, http.MethodPost, "/ack", map[string]any{"ids": []string{"x"}}, false)
 	wantError(t, status, out, http.StatusBadRequest, "bad_request")
 }
+
+func TestCheckMailboxes(t *testing.T) {
+	h := newHarness(t)
+	h.server.InviteOnly = false
+	owner := h.account(t, userID)
+	other := h.account(t, userID+1)
+	_, out := h.as(t, owner, http.MethodPost, "/mailboxes", map[string]any{"count": 2}, false)
+	mine := out["mailboxes"].([]any)
+	_, out = h.as(t, other, http.MethodPost, "/mailboxes", map[string]any{"count": 1}, false)
+	theirs := out["mailboxes"].([]any)[0].(string)
+	gone := ids.New()
+
+	status, out := h.as(t, owner, http.MethodPost, "/mailboxes/check", map[string]any{"ids": []any{mine[0], mine[1], theirs, gone}}, false)
+	missing := out["missing"].([]any)
+	if status != http.StatusOK || len(missing) != 2 || missing[0] != theirs || missing[1] != gone {
+		t.Fatalf("check: %d %v", status, out)
+	}
+	// After a discard, it's missing too.
+	h.as(t, owner, http.MethodPost, "/mailboxes/"+mine[0].(string)+"/discard", nil, false)
+	if _, out := h.as(t, owner, http.MethodPost, "/mailboxes/check", map[string]any{"ids": []any{mine[0], mine[1]}}, false); len(out["missing"].([]any)) != 1 {
+		t.Fatalf("after discard: %v", out)
+	}
+	for _, bad := range []any{[]any{}, []any{"x"}} {
+		status, out := h.as(t, owner, http.MethodPost, "/mailboxes/check", map[string]any{"ids": bad}, false)
+		wantError(t, status, out, http.StatusBadRequest, "bad_request")
+	}
+	status, out = h.call(t, nil, "", http.MethodPost, "/mailboxes/check", map[string]any{"ids": []any{gone}}, false)
+	wantError(t, status, out, http.StatusUnauthorized, "session_expired")
+}

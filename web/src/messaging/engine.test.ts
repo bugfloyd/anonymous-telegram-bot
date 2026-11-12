@@ -106,6 +106,7 @@ async function fakeBackend() {
           return check({});
         }
         if (method === 'GET' && path === '/inbox') return check({ items: [...inboxes.get(account)!], more: false });
+        if (path === '/mailboxes/check') return check({ missing: (b.ids as string[]).filter((id) => mailboxes.get(id) !== account) });
         if (path === '/ack') {
           const done = new Set(b.ids as string[]);
           inboxes.set(account, inboxes.get(account)!.filter((i) => !done.has(i.id)));
@@ -116,7 +117,7 @@ async function fakeBackend() {
     };
   }
 
-  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends };
+  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends, mailboxes };
 }
 
 async function person(backend: Awaited<ReturnType<typeof fakeBackend>>, account: string, now?: () => number) {
@@ -541,6 +542,37 @@ describe('unblocking', () => {
     await owner.messaging.unblock(conv);
     expect(backend.seenEnvelopes.length).toBe(sends);
     await sender.messaging.send(conv, 'still writing to your link');
+    expect(await owner.messaging.sync()).toBe(1);
+  });
+});
+
+describe('healing dead mailboxes', () => {
+  it('gives a conversation a new reply mailbox when the server lost ours', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi');
+    await sender.messaging.sync();
+    // The server no longer has the owner's reply mailbox, nor one in the pool
+    // (as after an account was replaced on the same device).
+    const dead = (await getConversation(owner.db, conv))!.myMailbox!;
+    backend.mailboxes.delete(dead);
+    const pool = (await getMeta<string[]>(owner.db, 'mailbox-pool'))!;
+    backend.mailboxes.delete(pool[0]!);
+    await sender.messaging.send(conv, 'lost');
+    expect(await owner.messaging.sync()).toBe(0);
+
+    await owner.messaging.maintain();
+    expect((await getConversation(owner.db, conv))!.myMailbox).toBeNull();
+    expect(await getMeta<string[]>(owner.db, 'mailbox-pool')).not.toContain(pool[0]);
+    // The next message carries a new reply mailbox; their answer arrives.
+    await owner.messaging.send(conv, 'are you there?');
+    expect((await getConversation(owner.db, conv))!.myMailbox).not.toBe(dead);
+    await sender.messaging.sync();
+    await sender.messaging.send(conv, 'yes!');
     expect(await owner.messaging.sync()).toBe(1);
   });
 });
