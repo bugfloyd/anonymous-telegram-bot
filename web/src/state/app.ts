@@ -32,8 +32,9 @@ import { checkAccountInfo, createLink, listLinks, replaceLink, revokeLink, type 
 import type { Config } from '../config';
 import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
-import { createMessaging, NoTokens, type Messaging } from '../messaging/engine';
-import { deleteMessage, listConversations, listMessages, type MessageView } from '../messaging/store';
+import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
+import { deleteMessage, getMedia, listConversations, listMessages, type MessageView } from '../messaging/store';
+import { preparePhoto, prepareFile, TooBig } from '../media/prepare';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
@@ -68,7 +69,7 @@ export type InvitationsNotice = 'created' | 'none-left' | 'network' | 'generic';
 export type AdminNotice = 'saved' | 'granted' | 'not-member' | 'not-found' | 'bad-link' | 'network' | 'generic';
 
 /** Why a message couldn't be sent. */
-export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'generic';
+export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'too-big' | 'unreadable' | 'generic';
 
 /** A conversation in the list. */
 export interface ConversationView {
@@ -79,7 +80,7 @@ export interface ConversationView {
   lastAt: number;
   status: 'active' | 'ended' | 'blocked';
   /** The latest message, if any. */
-  last: { text: string; out: boolean; status: MessageView['status'] } | null;
+  last: { text: string; out: boolean; status: MessageView['status']; media?: { t: string; n?: string } } | null;
 }
 
 /** An invitation code with its shareable URL. */
@@ -357,6 +358,7 @@ export function createApp(deps: Deps) {
     } else if (current.kind === 'conversation' && !current.busy) {
       // Not marked seen here: only once they're in view (markSeen, from the screen).
       screen.value = { ...current, messages: await listMessages(deps.db, current.id) };
+      autoFetch(current.id);
     }
   }
 
@@ -374,7 +376,9 @@ export function createApp(deps: Deps) {
           unread: c.unread,
           lastAt: c.lastAt,
           status: c.status,
-          last: last ? { text: last.text, out: last.out, status: last.status } : null,
+          last: last
+            ? { text: last.text, out: last.out, status: last.status, ...(last.media ? { media: { t: last.media.t, ...(last.media.n ? { n: last.media.n } : {}) } } : {}) }
+            : null,
         };
       }),
     );
@@ -448,6 +452,105 @@ export function createApp(deps: Deps) {
       error: null,
     };
     seen(id);
+    autoFetch(id);
+  }
+
+  // Upload and download progress of attachments, by message ID (0 to 1).
+  const transfers = signal<Record<string, number>>({});
+  const setProgress = (id: string, fraction: number | null) => {
+    const next = { ...transfers.value };
+    if (fraction === null) delete next[id];
+    else next[id] = fraction;
+    transfers.value = next;
+  };
+
+  /** Sends a picked file in the open conversation: as a photo (redrawn, smaller) or as a file (untouched). */
+  async function sendMedia(file: File, asPhoto: boolean, caption: string, replyTo?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    let out: Outgoing;
+    try {
+      out = asPhoto ? await preparePhoto(file) : await prepareFile(file);
+    } catch (err) {
+      screen.value = { ...current, error: err instanceof TooBig ? 'too-big' : 'unreadable' };
+      return;
+    }
+    screen.value = { ...current, error: null };
+    let error: SendError | null = null;
+    let sent: string | null = null;
+    const show = async () => {
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) {
+        screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
+      }
+    };
+    try {
+      await messaging.sendMedia(
+        current.id,
+        out,
+        caption.trim(),
+        replyTo,
+        async (id) => {
+          sent = id;
+          setProgress(id, 0);
+          await show();
+        },
+        (f) => sent && setProgress(sent, f),
+      );
+    } catch (err) {
+      if (handleGone(err)) return;
+      error = sendError(err);
+    }
+    if (sent) setProgress(sent, null);
+    deps.broadcast({ type: 'data-changed' });
+    await show();
+  }
+
+  /** Fetches a received attachment (a tap, or automatically for photos). */
+  async function fetchMedia(id: string): Promise<void> {
+    if (!messaging || transfers.value[id] !== undefined) return;
+    setProgress(id, 0);
+    try {
+      await messaging.fetchMedia(id, (f) => setProgress(id, f));
+    } catch {
+      // Tried again on the next tap or opening.
+    } finally {
+      setProgress(id, null);
+    }
+    const now = currentScreen();
+    if (now.kind === 'conversation') screen.value = { ...now, messages: await listMessages(deps.db, now.id) };
+  }
+
+  /** Photos are fetched as soon as their conversation is open, as in Telegram; files wait for a tap. */
+  function autoFetch(conv: string): void {
+    const now = currentScreen();
+    if (now.kind !== 'conversation' || now.id !== conv) return;
+    void (async () => {
+      for (const m of now.messages) {
+        if (m.file === 'remote' && m.media?.t === 'photo' && !m.out) await fetchMedia(m.id);
+      }
+    })();
+  }
+
+  // Object URLs of attachments on this device, for showing them; dropped when another conversation opens.
+  let urls = new Map<string, string>();
+  let urlsFor: string | null = null;
+  /** A URL for a message's attachment, if it's on this device. */
+  async function mediaUrl(id: string, type?: string): Promise<string | null> {
+    const now = currentScreen();
+    const conv = now.kind === 'conversation' ? now.id : null;
+    if (conv !== urlsFor) {
+      for (const u of urls.values()) URL.revokeObjectURL(u);
+      urls = new Map();
+      urlsFor = conv;
+    }
+    const cached = urls.get(id);
+    if (cached) return cached;
+    const file = await getMedia(deps.db, id);
+    if (!file) return null;
+    const url = URL.createObjectURL(new Blob([file], type ? { type } : {}));
+    urls.set(id, url);
+    return url;
   }
 
   /** The Blocked list. */
@@ -809,6 +912,17 @@ export function createApp(deps: Deps) {
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     deleteConversation,
+    /** Whether this build can send and receive attachments. */
+    media: !!deps.config?.media,
+    /** A received or sent attachment as a file, for saving or sharing. */
+    mediaFile: async (id: string, name: string, type?: string) => {
+      const bytes = await getMedia(deps.db, id);
+      return bytes ? new File([bytes], name, type ? { type } : {}) : null;
+    },
+    sendMedia,
+    fetchMedia,
+    mediaUrl,
+    transfers,
     /** Deletes one message from this device (the other side keeps theirs). */
     deleteMessage: async (id: string) => {
       const current = screen.value;
