@@ -4,6 +4,8 @@ import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
+import { isPhoto } from './media/prepare';
+import { MAX_FILE_BYTES } from './protocol/message';
 import {
   confirmationMatches,
   type AdminNotice,
@@ -63,6 +65,8 @@ const SEND_ERROR_TEXT: Record<SendError, Key> = {
   'no-tokens': 'errorNoTokens',
   'rate-limited': 'errorTooFast',
   network: 'errorNetwork',
+  'too-big': 'errorTooBig',
+  unreadable: 'errorUnreadable',
   generic: 'errorGeneric',
 };
 
@@ -417,6 +421,7 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
         {screen.messages.map((m) => (
           <Bubble
             key={m.id}
+            app={app}
             message={m}
             quoted={m.replyTo ? (byId.get(m.replyTo) ?? null) : undefined}
             peer={screen.label}
@@ -481,13 +486,26 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             <Composer
               language={language}
               busy={screen.busy}
-              reply={replying.value ? { name: replying.value.out ? tr('you') : screen.label, text: replying.value.text } : null}
+              reply={
+                replying.value
+                  ? { name: replying.value.out ? tr('you') : screen.label, text: mediaLine(language, replying.value.media, replying.value.text) }
+                  : null
+              }
               onCancelReply={() => (replying.value = null)}
               onSend={async (text) => {
                 const to = replying.value?.id;
                 replying.value = null;
                 await app.sendMessage(text, to);
               }}
+              {...(app.media
+                ? {
+                    onAttach: async (file: File, asPhoto: boolean, caption: string) => {
+                      const to = replying.value?.id;
+                      replying.value = null;
+                      await app.sendMedia(file, asPhoto, caption, to);
+                    },
+                  }
+                : {})}
             />
           </>
         )}
@@ -755,7 +773,7 @@ function ChatRow({
         </span>
         <span class="chat-bottom">
           <span class="preview" dir="auto">
-            {c.last ? (c.last.out ? tr('youWrote', { text: c.last.text }) : c.last.text) : ''}
+            {c.last ? (c.last.out ? tr('youWrote', { text: mediaLine(language, c.last.media, c.last.text) }) : mediaLine(language, c.last.media, c.last.text)) : ''}
           </span>
           {c.unread > 0 && <span class="badge">{t(language, 'unreadCount', { count: c.unread })}</span>}
         </span>
@@ -770,6 +788,7 @@ function Composer({
   onSend,
   reply = null,
   onCancelReply,
+  onAttach,
 }: {
   language: Language;
   busy: boolean;
@@ -777,8 +796,20 @@ function Composer({
   /** The message being answered: who wrote it, and its text. */
   reply?: { name: string; text: string } | null;
   onCancelReply?: () => void;
+  /** Sends a picked file (absent when attachments are off). */
+  onAttach?: (file: File, asPhoto: boolean, caption: string) => Promise<void>;
 }) {
   const text = useSignal('');
+  const attachMenu = useSignal(false);
+  const picked = useSignal<{ file: File; asPhoto: boolean } | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const pick = (asPhoto: boolean) => (e: Event) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) picked.value = { file, asPhoto: asPhoto && isPhoto(file) };
+  };
   const input = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (reply) input.current?.focus();
@@ -800,6 +831,17 @@ function Composer({
         </div>
       )}
       <div class="composer">
+      {onAttach && (
+        <>
+          <button type="button" class="attach" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M16.5 6.5l-8 8a2.5 2.5 0 003.5 3.5l8.5-8.5a4.5 4.5 0 00-6.4-6.4L5.5 11.7a6.5 6.5 0 009.2 9.2l6.8-6.8" />
+            </svg>
+          </button>
+          <input type="file" accept="image/*" hidden ref={photoInput} onChange={pick(true)} />
+          <input type="file" hidden ref={fileInput} onChange={pick(false)} />
+        </>
+      )}
       <textarea
         ref={input}
         dir="auto"
@@ -814,7 +856,243 @@ function Composer({
         {t(language, 'send')}
       </Button>
       </div>
+      {attachMenu.value && (
+        <div class="overlay" onClick={() => (attachMenu.value = false)} onKeyDown={(e) => e.key === 'Escape' && (attachMenu.value = false)}>
+          <div class="dialog menu" role="dialog" aria-modal="true" aria-label={t(language, 'attach')} onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              class="menu-item"
+              onClick={() => {
+                attachMenu.value = false;
+                photoInput.current?.click();
+              }}
+            >
+              {t(language, 'attachPhoto')}
+            </button>
+            <button
+              type="button"
+              class="menu-item"
+              onClick={() => {
+                attachMenu.value = false;
+                fileInput.current?.click();
+              }}
+            >
+              {t(language, 'attachFile')}
+            </button>
+          </div>
+        </div>
+      )}
+      {picked.value && onAttach && (
+        <AttachDialog
+          language={language}
+          picked={picked.value}
+          onCancel={() => (picked.value = null)}
+          onSend={(asPhoto, caption) => {
+            const { file } = picked.value!;
+            picked.value = null;
+            void onAttach(file, asPhoto, caption);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Before sending a picked file: a preview, a caption, and (for images) whether to compress it. */
+function AttachDialog({
+  language,
+  picked,
+  onCancel,
+  onSend,
+}: {
+  language: Language;
+  picked: { file: File; asPhoto: boolean };
+  onCancel: () => void;
+  onSend: (asPhoto: boolean, caption: string) => void;
+}) {
+  const tr = (key: Key) => t(language, key);
+  const compress = useSignal(picked.asPhoto);
+  const caption = useSignal('');
+  const preview = useSignal<string | null>(null);
+  const image = isPhoto(picked.file);
+  useEffect(() => {
+    if (!image) return;
+    const url = URL.createObjectURL(picked.file);
+    preview.value = url;
+    return () => URL.revokeObjectURL(url);
+  }, [picked.file]);
+  const tooBig = picked.file.size > MAX_FILE_BYTES && !(image && compress.value);
+  return (
+    <div class="overlay" onKeyDown={(e) => e.key === 'Escape' && onCancel()}>
+      <div class="dialog" role="dialog" aria-modal="true" aria-label={tr('attach')}>
+        {preview.value ? (
+          <img class="attach-preview" src={preview.value} alt="" />
+        ) : (
+          <div class="file">
+            <span class="file-icon">{extension(picked.file.name) || '📄'}</span>
+            <span class="file-info">
+              <span class="file-name" dir="auto">
+                {picked.file.name}
+              </span>
+              <span class="file-size">{formatSize(language, picked.file.size)}</span>
+            </span>
+          </div>
+        )}
+        {image && (
+          <label class="check">
+            <input type="checkbox" checked={compress.value} onChange={(e) => (compress.value = e.currentTarget.checked)} />
+            <span>{tr('compressImage')}</span>
+          </label>
+        )}
+        {tooBig && <p class="warning">{tr('errorTooBig')}</p>}
+        <input
+          class="caption"
+          type="text"
+          dir="auto"
+          maxLength={1024}
+          placeholder={tr('captionPlaceholder')}
+          value={caption.value}
+          onInput={(e) => (caption.value = e.currentTarget.value)}
+        />
+        <div class="row">
+          <Button disabled={tooBig} onClick={() => onSend(image && compress.value, caption.value)}>
+            {tr('send')}
+          </Button>
+          <Button kind="secondary" onClick={onCancel}>
+            {tr('cancel')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** "📷 Photo" or "📎 name" before a caption: for chat previews, quotes and the reply bar. */
+function mediaLine(language: Language, media: { t: string; n?: string } | undefined, text: string): string {
+  if (!media) return text;
+  const label = media.t === 'photo' ? `📷 ${t(language, 'photo')}` : `📎 ${media.n ?? t(language, 'file')}`;
+  return text ? `${label}, ${text}` : label;
+}
+
+function extension(name: string | undefined): string {
+  const dot = name?.lastIndexOf('.') ?? -1;
+  return dot > 0 ? name!.slice(dot + 1, dot + 5).toUpperCase() : '';
+}
+
+function formatSize(language: Language, bytes: number): string {
+  const unit = bytes < 1024 * 1024 ? 'kilobyte' : 'megabyte';
+  const n = unit === 'kilobyte' ? Math.max(1, Math.round(bytes / 1024)) : bytes / 1024 / 1024;
+  // Persian spells the unit out (کیلوبایت), so it reads in the right direction.
+  return new Intl.NumberFormat(locale(language), { style: 'unit', unit, unitDisplay: language === 'fa' ? 'long' : 'short', maximumFractionDigits: 1 }).format(n);
+}
+
+/** A progress ring (fraction 0–1; undefined spins). */
+function Ring({ fraction }: { fraction: number | undefined }) {
+  const c = 2 * Math.PI * 9;
+  return (
+    <svg class={fraction === undefined ? 'ring spin' : 'ring'} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" style={{ strokeDasharray: `${c}`, strokeDashoffset: `${c * (1 - Math.max(0.05, fraction ?? 0.25))}` }} />
+    </svg>
+  );
+}
+
+/** A message's attachment: a photo, or a file. */
+function Attachment({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  return m.media!.t === 'photo' ? (
+    <PhotoView app={app} message={m} language={language} progress={progress} />
+  ) : (
+    <FileView app={app} message={m} language={language} progress={progress} />
+  );
+}
+
+/** A photo: the tiny preview until it's here, then the photo; tap for full screen. */
+function PhotoView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const url = useSignal<string | null>(null);
+  const open = useSignal(false);
+  useEffect(() => {
+    let alive = true;
+    if (m.file === 'local') void app.mediaUrl(m.id, m.media!.m).then((u) => alive && (url.value = u));
+    return () => {
+      alive = false;
+    };
+  }, [m.id, m.file]);
+  const { w = 4, h = 3, p } = m.media!;
+  const tiny = p ? `data:image/jpeg;base64,${p.replace(/-/g, '+').replace(/_/g, '/')}` : null;
+  return (
+    <div class="photo" style={{ aspectRatio: `${w} / ${h}` }}>
+      {url.value ? (
+        <img src={url.value} alt={t(language, 'photo')} onClick={() => (open.value = true)} />
+      ) : (
+        tiny && <img class="tiny" src={tiny} alt="" />
+      )}
+      {progress !== undefined && (
+        <span class="media-progress">
+          <Ring fraction={progress} />
+        </span>
+      )}
+      {m.file === 'remote' && progress === undefined && !m.out && (
+        <button type="button" class="media-progress" aria-label={t(language, 'download')} onClick={() => void app.fetchMedia(m.id)}>
+          ↓
+        </button>
+      )}
+      {m.file === 'gone' && <span class="media-gone">{t(language, 'mediaGone')}</span>}
+      {open.value && url.value && <Viewer src={url.value} language={language} onClose={() => (open.value = false)} />}
+    </div>
+  );
+}
+
+/** A full-screen photo. */
+function Viewer({ src, language, onClose }: { src: string; language: Language; onClose: () => void }) {
+  const close = useRef<HTMLButtonElement>(null);
+  useEffect(() => close.current?.focus(), []);
+  return (
+    <div class="viewer" role="dialog" aria-modal="true" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+      <img src={src} alt={t(language, 'photo')} />
+      <button type="button" class="viewer-close" ref={close} aria-label={t(language, 'closeApp')} onClick={onClose}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+/** A file: icon, name and size; tap to download it, then to save or share it. */
+function FileView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const media = m.media!;
+  const save = async () => {
+    const file = await app.mediaFile(m.id, media.n ?? 'file', media.m);
+    if (!file) return;
+    // The share sheet where there is one (phones), otherwise a download.
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+        return;
+      } catch {
+        // Cancelled, or not allowed here: fall back to a download.
+      }
+    }
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+  const busy = progress !== undefined;
+  const onClick = () => {
+    if (busy) return;
+    if (m.file === 'remote' && !m.out) void app.fetchMedia(m.id);
+    else if (m.file === 'local') void save();
+  };
+  return (
+    <button type="button" class="file" onClick={onClick} disabled={m.file === 'gone'}>
+      <span class="file-icon">{busy ? <Ring fraction={progress} /> : m.file === 'remote' && !m.out ? '↓' : extension(media.n) || '📄'}</span>
+      <span class="file-info">
+        <span class="file-name" dir="auto">
+          {media.n ?? t(language, 'file')}
+        </span>
+        <span class="file-size">{m.file === 'gone' ? t(language, 'mediaGone') : formatSize(language, media.s)}</span>
+      </span>
+    </button>
   );
 }
 
@@ -846,6 +1124,7 @@ const REPLY_SWIPE = 56;
  * tapping it jumps there.
  */
 function Bubble({
+  app,
   message: m,
   quoted,
   peer,
@@ -857,6 +1136,7 @@ function Bubble({
   onMenu,
   onQuote,
 }: {
+  app: AppState;
   message: MessageView;
   /** The message it answers; null if that one is gone from this device. */
   quoted: MessageView | null | undefined;
@@ -928,10 +1208,17 @@ function Bubble({
         </span>
       )}
       {quoted !== undefined &&
-        (quoted ? <Quote name={quoteName} text={quoted.text} onClick={onQuote} /> : <Quote name={tr('deletedMessage')} text="" />)}
-      <span class="text" dir="auto">
-        {m.text}
-      </span>
+        (quoted ? (
+          <Quote name={quoteName} text={mediaLine(language, quoted.media, quoted.text)} onClick={onQuote} />
+        ) : (
+          <Quote name={tr('deletedMessage')} text="" />
+        ))}
+      {m.media && <Attachment app={app} message={m} language={language} progress={app.transfers.value[m.id]} />}
+      {m.text && (
+        <span class="text" dir="auto">
+          {m.text}
+        </span>
+      )}
       <span class="meta">
         <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
         {m.out && <Ticks status={m.status} language={language} />}

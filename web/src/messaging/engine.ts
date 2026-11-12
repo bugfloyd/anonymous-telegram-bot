@@ -191,7 +191,7 @@ export function createMessaging(deps: MessagingDeps) {
     out: Outgoing,
     caption = '',
     replyTo?: string,
-    onStored?: () => void | Promise<void>,
+    onStored?: (id: string) => void | Promise<void>,
     onProgress?: (fraction: number) => void,
   ): Promise<void> {
     const conversation = await getConversation(db, conv);
@@ -202,7 +202,7 @@ export function createMessaging(deps: MessagingDeps) {
     await putMedia(db, id, out.file);
     await addMessage(db, { id, conv, at, out: true, status: 'sending', file: 'local' }, body(out.media));
     await putConversation(db, { ...conversation, lastAt: at, hidden: false });
-    await onStored?.();
+    await onStored?.(id);
     try {
       const media = await upload(out, onProgress);
       await addMessage(db, { id, conv, at, out: true, status: 'sending', file: 'local' }, body(media));
