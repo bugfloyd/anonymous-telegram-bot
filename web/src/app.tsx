@@ -1203,7 +1203,7 @@ function Viewer({ language, onClose, onSave, children }: { language: Language; o
         <button type="button" class="viewer-button" onClick={onSave}>
           {t(language, 'save')}
         </button>
-        <button type="button" class="viewer-button" ref={close} aria-label={t(language, 'closeApp')} onClick={onClose}>
+        <button type="button" class="viewer-button close" ref={close} aria-label={t(language, 'closeApp')} onClick={onClose}>
           ×
         </button>
       </div>
