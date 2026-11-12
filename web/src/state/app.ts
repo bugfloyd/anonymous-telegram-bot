@@ -33,10 +33,10 @@ import type { Config } from '../config';
 import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
 import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
-import { deleteMessage, getMedia, listConversations, listMessages, type MessageView } from '../messaging/store';
-import { preparePhoto, prepareFile, TooBig } from '../media/prepare';
+import { deleteMessage, getMedia, listConversations, listMessages, type LocalMedia, type MessageView } from '../messaging/store';
+import { prepareFile, prepareGif, preparePhoto, prepareVideo, TooBig } from '../media/prepare';
 import { saveUrl } from '../media/save';
-import type { Media } from '../protocol/message';
+import { fileName, type Media } from '../protocol/message';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
@@ -85,19 +85,22 @@ export interface ConversationView {
   last: { text: string; out: boolean; status: MessageView['status']; media?: { t: string; n?: string } } | null;
 }
 
-/** An invitation code with its shareable URL. */
+/** What a picked file is sent as. */
+export type SendAs = 'photo' | 'video' | 'gif' | 'file';
+
 /** An attachment being prepared to send, shown before its message is stored. */
 export interface Preparing {
   key: string;
   conv: string;
-  photo: boolean;
-  /** The picked photo, for showing it meanwhile. */
+  as: SendAs;
+  /** The picked photo, video or GIF, for showing it meanwhile. */
   url: string | null;
   name: string;
   size: number;
   caption: string;
 }
 
+/** An invitation code with its shareable URL. */
 export interface InvitationView extends InvitationCode {
   url: string;
 }
@@ -184,6 +187,8 @@ export interface LinkView extends LinkRecord {
 
 /** How long the old copy waits before closing, so Telegram handles the link first (tested in phase 0). */
 const CLOSE_DELAY_MS = 400;
+/** GIFs up to this size are fetched without a tap, like photos. */
+const AUTO_GIF_BYTES = 10 * 1024 * 1024;
 
 export function createApp(deps: Deps) {
   const screen = signal<Screen>({ kind: 'loading' });
@@ -487,18 +492,21 @@ export function createApp(deps: Deps) {
     preparing.value = preparing.value.filter((p) => p.key !== key);
   };
 
-  /** Sends a picked file in the open conversation: as a photo (redrawn, smaller) or as a file (untouched). */
-  async function sendMedia(file: File, asPhoto: boolean, caption: string, replyTo?: string): Promise<void> {
+  /**
+   * Sends a picked file in the open conversation: as a photo (redrawn,
+   * smaller), a video or GIF (as it is, shown inline), or a file (untouched).
+   */
+  async function sendMedia(file: File, as: SendAs, caption: string, replyTo?: string): Promise<void> {
     const current = screen.value;
     if (current.kind !== 'conversation' || current.busy || !messaging) return;
     const key = crypto.randomUUID();
     preparing.value = [
       ...preparing.value,
-      { key, conv: current.id, photo: asPhoto, url: asPhoto ? URL.createObjectURL(file) : null, name: file.name, size: file.size, caption: caption.trim() },
+      { key, conv: current.id, as, url: as === 'file' ? null : URL.createObjectURL(file), name: file.name, size: file.size, caption: caption.trim() },
     ];
     let out: Outgoing;
     try {
-      out = asPhoto ? await preparePhoto(file) : await prepareFile(file);
+      out = await { photo: preparePhoto, video: prepareVideo, gif: prepareGif, file: prepareFile }[as](file);
     } catch (err) {
       unprepare(key);
       const now = currentScreen();
@@ -538,7 +546,7 @@ export function createApp(deps: Deps) {
     await show();
   }
 
-  /** Fetches a received attachment (a tap, or automatically for photos). */
+  /** Fetches a received attachment (a tap, or automatically for photos and GIFs). */
   async function fetchMedia(id: string): Promise<void> {
     if (!messaging || transfers.value[id] !== undefined) return;
     setProgress(id, 0);
@@ -564,7 +572,7 @@ export function createApp(deps: Deps) {
     if (!media) return 'unavailable';
     if (typeof navigator.canShare === 'function') {
       const file = await getMedia(deps.db, m.id);
-      const shareable = file && new File([file], media.n ?? (media.t === 'photo' ? 'photo.jpg' : 'file'), media.m ? { type: media.m } : {});
+      const shareable = file && new File([file], fileName(media), media.m ? { type: media.m } : {});
       if (shareable && navigator.canShare({ files: [shareable] })) {
         try {
           await navigator.share({ files: [shareable] });
@@ -583,13 +591,17 @@ export function createApp(deps: Deps) {
     return 'unavailable';
   }
 
-  /** Photos are fetched as soon as their conversation is open, as in Telegram; files wait for a tap. */
+  /**
+   * Photos and GIFs (up to 10 MB) are fetched as soon as their conversation
+   * is open, as in Telegram; videos and files wait for a tap.
+   */
   function autoFetch(conv: string): void {
     const now = currentScreen();
     if (now.kind !== 'conversation' || now.id !== conv) return;
+    const automatic = (media: LocalMedia) => media.t === 'photo' || (media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
     void (async () => {
       for (const m of now.messages) {
-        if (m.file === 'remote' && m.media?.t === 'photo' && !m.out) await fetchMedia(m.id);
+        if (m.file === 'remote' && m.media && automatic(m.media) && !m.out) await fetchMedia(m.id);
       }
     })();
   }
@@ -610,7 +622,9 @@ export function createApp(deps: Deps) {
     if (cached) return cached;
     const file = await getMedia(deps.db, id);
     if (!file) return null;
-    const url = URL.createObjectURL(new Blob([file], type ? { type } : {}));
+    // QuickTime videos play as MP4 (the same container) where a browser doesn't know their type.
+    const shown = type === 'video/quicktime' ? 'video/mp4' : type;
+    const url = URL.createObjectURL(new Blob([file], shown ? { type: shown } : {}));
     urls.set(id, url);
     return url;
   }

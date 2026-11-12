@@ -14,7 +14,7 @@ import { fromBase64Url, toBase64Url, utf8 } from '../crypto/encoding';
 import { decryptFile } from '../crypto/media';
 import { checkObject, type Api } from '../net/api';
 import type { Transfer } from '../net/transfer';
-import type { Media } from '../protocol/message';
+import { fileName, type Media } from '../protocol/message';
 
 export const SAVE_PREFIX = '#save=';
 
@@ -23,7 +23,7 @@ export type SaveTicket = Pick<Media, 'id' | 'k' | 'd' | 's' | 'n' | 'm'>;
 
 /** The address that opens the save page for an attachment. */
 export function saveUrl(base: string, media: Media): string {
-  const ticket: SaveTicket = { id: media.id, k: media.k, d: media.d, s: media.s, ...(media.n ? { n: media.n } : {}), ...(media.m ? { m: media.m } : {}) };
+  const ticket: SaveTicket = { id: media.id, k: media.k, d: media.d, s: media.s, n: fileName(media), ...(media.m ? { m: media.m } : {}) };
   return `${base}${SAVE_PREFIX}${toBase64Url(utf8(JSON.stringify(ticket)))}`;
 }
 
