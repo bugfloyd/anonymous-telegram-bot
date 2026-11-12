@@ -23,6 +23,7 @@ import {
   conversationKey,
   createConversationKey,
   deleteExpiredKeys,
+  hasKey,
   hasLinkKey,
   indexKey,
   KEY_RETENTION_MS,
@@ -182,8 +183,9 @@ export function createMessaging(deps: MessagingDeps) {
       const myKey = await conversationKey(db, c.myKey!);
       const draft: Draft = { ...fields, conv: c.id, reply: c.myMailbox!, ...(c.lastReceived ? { last: c.lastReceived } : {}) };
       if (c.role === 'sender') draft.tag = toBase64Url(await senderTag(await accountSecret(db), c.link.fingerprint));
-      // Seen receipts don't trigger a Telegram notice for the other side.
-      await deliver(c.sendTo, await sealMessage(draft, myKey, fromBase64Url(c.peerKey)), fields.kind === 'seen');
+      // Only messages trigger a Telegram notice for the other side, not
+      // receipts or key updates.
+      await deliver(c.sendTo, await sealMessage(draft, myKey, fromBase64Url(c.peerKey)), fields.kind !== 'message');
     });
   }
 
@@ -227,7 +229,8 @@ export function createMessaging(deps: MessagingDeps) {
    * Blocks a conversation, silently (design §11): our mailbox for it is
    * discarded, so their sends go nowhere, and for someone who wrote to our
    * link their sender tag is remembered, so new conversations they start
-   * through that link are dropped too. Nobody is told.
+   * through that link are dropped too. Nobody is told. The keys stay, so it
+   * can be undone (unblock).
    */
   async function block(conv: string): Promise<void> {
     const c = await getConversation(db, conv);
@@ -241,8 +244,28 @@ export function createMessaging(deps: MessagingDeps) {
     }
     if (c.role === 'owner' && c.tag) await addBlockedTag(c.link.fingerprint, c.tag);
     await putConversation(db, { ...c, status: 'blocked', unread: 0 });
-    // Nothing more will be read in it: its keys can go at the next upkeep.
-    await scheduleKeyDeletion(db, (e) => e.conv === c.id, now());
+  }
+
+  /**
+   * Undoes a block. Their sender tag is forgotten, so they can write through
+   * our link again. Their app still writes to the mailbox we discarded, so
+   * if we had one, we send them a quiet key update from a new mailbox (and,
+   * if our key is gone, a new key): the conversation then carries on.
+   * Whatever they sent while blocked is lost.
+   */
+  async function unblock(conv: string): Promise<void> {
+    const c = await getConversation(db, conv);
+    if (!c || c.status !== 'blocked') return;
+    if (c.myMailbox !== null) {
+      // Blocks used to delete the conversation's keys: then a new one.
+      const keyKept = c.myKey !== null && (await hasKey(db, c.myKey));
+      await putConversation(db, { ...c, myMailbox: null, myKey: keyKept ? c.myKey : null });
+      // If this fails, it stays blocked, and unblocking can be tried again.
+      await transmit(c.id, { kind: 'key_update', id: newId(), at: now() });
+    }
+    if (c.role === 'owner' && c.tag) await removeBlockedTag(c.link.fingerprint, c.tag);
+    const updated = (await getConversation(db, conv))!;
+    await putConversation(db, { ...updated, status: 'active' });
   }
 
   /**
@@ -268,6 +291,12 @@ export function createMessaging(deps: MessagingDeps) {
   function addBlockedTag(linkFingerprint: string, tag: string): Promise<void> {
     return withLock(META_BLOCKED, async () => {
       await putMeta(db, META_BLOCKED, [...(await blockedTags()), `${linkFingerprint}:${tag}`]);
+    });
+  }
+
+  function removeBlockedTag(linkFingerprint: string, tag: string): Promise<void> {
+    return withLock(META_BLOCKED, async () => {
+      await putMeta(db, META_BLOCKED, [...(await blockedTags())].filter((t) => t !== `${linkFingerprint}:${tag}`));
     });
   }
 
@@ -456,7 +485,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sync, markRead, markSeen, block, remove, maintain };
+  return { startConversation, send, sync, markRead, markSeen, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

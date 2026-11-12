@@ -82,6 +82,11 @@ export function deleteExpiredKeys(db: Database, nowMs: number): Promise<number> 
   });
 }
 
+/** Whether we still have the private key for this public key (base64url). */
+export async function hasKey(db: Database, pub: string): Promise<boolean> {
+  return (await index(db))[toBase64Url(await keyId(fromBase64Url(pub)))] !== undefined;
+}
+
 /** Whether any key of a link is indexed. */
 export async function hasLinkKey(db: Database, linkId: string): Promise<boolean> {
   return Object.values(await index(db)).some((e) => e.link?.id === linkId);

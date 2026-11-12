@@ -346,6 +346,51 @@ describe('conversations in the app', () => {
     expect(screenOf(sender.screen.value, 'conversation').messages.map((m) => m.status)).toEqual(['seen']);
   });
 
+  it('lists blocked conversations, opens them read-only, and unblocks from either place', async () => {
+    const b = await backend();
+    const owner = await person(b);
+    await owner.createLink();
+    const payload = new URL(screenOf(owner.screen.value, 'home').links[0]!.url).searchParams.get('startapp')!;
+    const sender = await person(b, payload);
+    await sender.writeToLink('hello');
+    await owner.showTab('chats');
+    await owner.sync();
+    const id = screenOf(owner.screen.value, 'home').conversations[0]!.id;
+    await owner.openConversation(id);
+    await owner.sendMessage('hi');
+
+    // Delete, ticking "also block": gone from the chats, counted under Blocked.
+    await owner.deleteConversation(id, true);
+    let home = screenOf(owner.screen.value, 'home');
+    expect(home.conversations).toEqual([]);
+    expect(home.blockedCount).toBe(1);
+    await owner.blocked();
+    const list = screenOf(owner.screen.value, 'blocked');
+    expect(list.conversations.map((c) => [c.id, c.status])).toEqual([[id, 'blocked']]);
+
+    // Opened from the list: read-only.
+    await owner.openConversation(id);
+    expect(screenOf(owner.screen.value, 'conversation')).toMatchObject({ id, blocked: true });
+    // Unblocked from the conversation: it's an ordinary conversation again.
+    await owner.unblock(id);
+    expect(screenOf(owner.screen.value, 'conversation')).toMatchObject({ id, blocked: false });
+    await sender.sync();
+    await sender.sendMessage('back again');
+    await owner.sync();
+    expect(screenOf(owner.screen.value, 'conversation').messages.map((m) => m.text)).toEqual(['back again']);
+
+    // Blocked again, then unblocked from the list.
+    await owner.home();
+    await owner.deleteConversation(id, true);
+    await owner.blocked();
+    await owner.unblock(id);
+    const after = screenOf(owner.screen.value, 'blocked');
+    expect(after.notice).toBe('unblocked');
+    expect(after.conversations).toEqual([]);
+    await owner.home();
+    expect(screenOf(owner.screen.value, 'home').blockedCount).toBe(0);
+  });
+
   it("says when the day's tokens are used up", async () => {
     const b = await backend();
     const owner = await person(b);

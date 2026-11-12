@@ -74,6 +74,14 @@ body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; 
 .tick { block-size: 0.75rem; inline-size: auto; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .tick.failed { stroke: var(--app-danger); }
 .head-actions { display: flex; gap: 1.25rem; }
+.muted-link { color: var(--app-muted); margin-block-start: 0.5rem; }
+.blocked-row { display: flex; align-items: center; gap: 0.5rem; }
+.blocked-row .chat { flex: 1; min-inline-size: 0; }
+.overlay { position: fixed; inset: 0; z-index: 10; background: rgb(0 0 0 / 0.45); display: flex; align-items: flex-end; justify-content: center; padding: 1rem; }
+.dialog { inline-size: 100%; max-inline-size: 28rem; display: flex; flex-direction: column; gap: 0.75rem; background: var(--app-bg); color: var(--app-text); border-radius: 0.75rem; padding: 1rem; }
+.dialog p { margin: 0; }
+.check { display: flex; gap: 0.625rem; align-items: flex-start; cursor: pointer; }
+.check input { inline-size: 1.125rem; block-size: 1.125rem; margin: 0.125rem 0 0; accent-color: var(--app-danger); flex: none; }
 .chat-top, .chat-bottom { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
 .label { font-weight: 600; }
 .preview { color: var(--app-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: plaintext; }

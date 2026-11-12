@@ -13,7 +13,7 @@ import { getMeta, getSealed, openDatabase, putKey, putMeta, type Database } from
 import { POOL_LOW, poolSize } from './pool';
 import { createMessaging } from './engine';
 import { getConversation, listConversations, listMessages } from './store';
-import { KEY_RETENTION_MS, type KeyEntry } from './keys';
+import { KEY_RETENTION_MS, scheduleKeyDeletion, type KeyEntry } from './keys';
 
 let n = 0;
 const rand = () => toBase64Url(crypto.getRandomValues(new Uint8Array(16)));
@@ -37,13 +37,15 @@ async function fakeBackend() {
   const spent = new Set<string>();
   const seenEnvelopes: string[] = [];
   const sendHeaders: (Record<string, string> | undefined)[] = [];
+  const quietSends: boolean[] = [];
 
   const api: Api = {
     post: (path, body, check) => api.request('POST', path, { body: JSON.stringify(body) }, check),
     async request(method, path, init, check) {
       if (method === 'POST' && path === '/send') {
         sendHeaders.push(init.headers);
-        const { mailbox, envelope, token } = JSON.parse(init.body!) as Record<string, string>;
+        const { mailbox, envelope, token, quiet } = JSON.parse(init.body!) as Record<string, string>;
+        quietSends.push(quiet === (true as unknown as string));
         if (!token || spent.has(token)) throw new ApiError(401, 'invalid_token');
         spent.add(token);
         seenEnvelopes.push(envelope!);
@@ -114,7 +116,7 @@ async function fakeBackend() {
     };
   }
 
-  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes };
+  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends };
 }
 
 async function person(backend: Awaited<ReturnType<typeof fakeBackend>>, account: string, now?: () => number) {
@@ -489,5 +491,56 @@ describe('key rotation', () => {
     expect(after.map((k) => k.pub)).not.toContain(toBase64Url(firstKey));
     expect(await getSealed(owner.db, firstName)).toBeUndefined();
     expect(after.map((k) => k.deleteAfter !== undefined)).toEqual([true, false]);
+  });
+});
+
+describe('unblocking', () => {
+  it('lets the conversation carry on, through a new mailbox they learn quietly', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi');
+    await sender.messaging.sync();
+
+    await owner.messaging.block(conv);
+    await sender.messaging.send(conv, 'lost while blocked');
+    // A new conversation through the link is dropped too.
+    await sender.messaging.startConversation(ref, bundle, 'lost as well');
+    expect(await owner.messaging.sync()).toBe(0);
+    // Blocks used to delete the keys: unblocking copes either way.
+    await scheduleKeyDeletion(owner.db, (e) => e.conv === conv, 0);
+    await owner.messaging.maintain();
+
+    const before = backend.quietSends.length;
+    await owner.messaging.unblock(conv);
+    expect((await getConversation(owner.db, conv))!.status).toBe('active');
+    // One quiet key update went out: no Telegram notice for them.
+    expect(backend.quietSends.slice(before)).toEqual([true]);
+    await sender.messaging.sync();
+    await sender.messaging.send(conv, 'can you hear me now?');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['hello', 'hi', 'can you hear me now?']);
+    // And new conversations through the link get through again.
+    const other = await sender.messaging.startConversation(ref, bundle, 'a fresh start');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect((await getConversation(owner.db, other))!.status).toBe('active');
+  });
+
+  it('needs nothing sent when the owner never replied', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.block(conv);
+    const sends = backend.seenEnvelopes.length;
+    await owner.messaging.unblock(conv);
+    expect(backend.seenEnvelopes.length).toBe(sends);
+    await sender.messaging.send(conv, 'still writing to your link');
+    expect(await owner.messaging.sync()).toBe(1);
   });
 });

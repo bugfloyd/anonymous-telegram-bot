@@ -1,4 +1,4 @@
-import { useSignal } from '@preact/signals';
+import { signal, useSignal } from '@preact/signals';
 import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
@@ -37,6 +37,7 @@ const LINK_TEXT: Record<LinkStatus, Key> = {
 const NOTICE_TEXT: Record<HomeNotice, Key> = {
   blocked: 'noticeBlocked',
   deleted: 'noticeDeleted',
+  unblocked: 'noticeUnblocked',
   replaced: 'noticeReplaced',
   created: 'noticeCreated',
   revoked: 'noticeRevoked',
@@ -76,6 +77,15 @@ const ADMIN_NOTICE_TEXT: Record<AdminNotice, Key> = {
 };
 
 export function App({ app, language }: { app: AppState; language: Language }) {
+  return (
+    <>
+      <Screen app={app} language={language} />
+      <DeleteDialog app={app} language={language} />
+    </>
+  );
+}
+
+function Screen({ app, language }: { app: AppState; language: Language }) {
   const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const screen = app.screen.value;
 
@@ -115,6 +125,8 @@ export function App({ app, language }: { app: AppState; language: Language }) {
       );
     case 'confirm-replace':
       return <ConfirmReplace app={app} language={language} busy={screen.busy} />;
+    case 'blocked':
+      return <Blocked app={app} language={language} screen={screen} />;
     case 'home':
       return <Home app={app} language={language} screen={screen} />;
     case 'invitations':
@@ -230,6 +242,11 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
               />
             ))}
           </ul>
+        )}
+        {screen.blockedCount > 0 && (
+          <button type="button" class="link-button muted-link" onClick={() => void app.blocked()}>
+            {tr('blockedCount', { count: screen.blockedCount })}
+          </button>
         )}
       </main>
     );
@@ -359,7 +376,7 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           {screen.label}
         </bdi>
         <span class="muted">{tr(screen.role === 'owner' ? 'aboutOwnerConversation' : 'aboutSenderConversation')}</span>
-        {confirmingBlock.value ? (
+        {screen.blocked ? null : confirmingBlock.value ? (
           <div class="row">
             <p class="warning">{tr(screen.role === 'owner' ? 'blockConfirmOwner' : 'blockConfirmSender')}</p>
             <Button kind="danger" disabled={screen.busy} onClick={app.block}>
@@ -407,7 +424,19 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             {scroll.fresh > 0 && <span class="badge">{t(language, 'unreadCount', { count: scroll.fresh })}</span>}
           </button>
         )}
-        {screen.ended ? (
+        {screen.blocked ? (
+          <>
+            <p class="notice">{tr('blockedConversation')}</p>
+            {screen.error && (
+              <p class="notice" role="alert">
+                {tr(SEND_ERROR_TEXT[screen.error])}
+              </p>
+            )}
+            <Button disabled={screen.busy} onClick={() => app.unblock(screen.id)}>
+              {tr('unblock')}
+            </Button>
+          </>
+        ) : screen.ended ? (
           <p class="notice">{tr('conversationEnded')}</p>
         ) : (
           <>
@@ -425,16 +454,85 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
 }
 
 /** Asks, in Telegram's own popup, whether to delete a conversation from this device, or delete and block it. */
-async function confirmDelete(app: AppState, language: Language, id: string): Promise<void> {
-  const choice = await app.popup({
-    message: t(language, 'deleteConfirm'),
-    buttons: [
-      { id: 'delete', type: 'destructive', text: t(language, 'delete') },
-      { id: 'block', type: 'destructive', text: t(language, 'deleteAndBlock') },
-      { id: 'cancel', type: 'cancel' },
-    ],
-  });
-  if (choice === 'delete' || choice === 'block') await app.deleteConversation(id, choice === 'block');
+/** The conversation the delete dialog is open for. */
+const deleting = signal<string | null>(null);
+
+/** Asks before deleting a conversation, with blocking as an extra, unchecked choice. */
+function confirmDelete(_app: AppState, _language: Language, id: string): void {
+  deleting.value = id;
+}
+
+function DeleteDialog({ app, language }: { app: AppState; language: Language }) {
+  const alsoBlock = useSignal(false);
+  const first = useRef<HTMLButtonElement>(null);
+  const id = deleting.value;
+  useEffect(() => {
+    if (id) first.current?.focus();
+  }, [id]);
+  if (!id) return null;
+  const close = () => {
+    deleting.value = null;
+    alsoBlock.value = false;
+  };
+  const confirm = () => {
+    const block = alsoBlock.value;
+    close();
+    void app.deleteConversation(id, block);
+  };
+  return (
+    <div class="overlay" onClick={close} onKeyDown={(e) => e.key === 'Escape' && close()}>
+      <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-text" onClick={(e) => e.stopPropagation()}>
+        <p id="delete-text">{t(language, 'deleteConfirm')}</p>
+        <label class="check">
+          <input type="checkbox" checked={alsoBlock.value} onChange={(e) => (alsoBlock.value = e.currentTarget.checked)} />
+          <span>{t(language, 'alsoBlock')}</span>
+        </label>
+        <div class="row">
+          <button type="button" class="button danger" ref={first} onClick={confirm}>
+            {t(language, 'delete')}
+          </button>
+          <Button kind="secondary" onClick={close}>
+            {t(language, 'cancel')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The Blocked list: open a blocked conversation (read-only), or unblock it. */
+function Blocked({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'blocked' }> }) {
+  const tr = (key: Key) => t(language, key);
+  return (
+    <Page title={tr('blockedTitle')} busy={screen.busy}>
+      {screen.notice && (
+        <p class="notice" role="status">
+          {tr(NOTICE_TEXT[screen.notice])}
+        </p>
+      )}
+      {screen.conversations.length === 0 ? (
+        <p class="muted">{tr('noBlocked')}</p>
+      ) : (
+        <ul class="chats">
+          {screen.conversations.map((c) => (
+            <li key={c.id} class="blocked-row">
+              <button type="button" class="chat" onClick={() => void app.openConversation(c.id)}>
+                <bdi dir="ltr" class="label">
+                  {c.label}
+                </bdi>
+                <span class="preview" dir="auto">
+                  {c.last ? c.last.text : ''}
+                </span>
+              </button>
+              <Button kind="secondary" disabled={screen.busy} onClick={() => app.unblock(c.id)}>
+                {tr('unblock')}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Page>
+  );
 }
 
 /** Asks, in Telegram's own popup, before swapping the link for a new one. */
