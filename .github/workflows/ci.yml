@@ -223,6 +223,26 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      # release-please rewrites its pull request only when the next release
+      # changes. After other merges (docs, CI) the branch falls behind main,
+      # and branch rules then refuse to merge it. Bring it up to date; with
+      # the app's token, CI runs on the result.
+      - name: Keep the release pull request up to date with main
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          for pr in $(gh pr list --repo "$GITHUB_REPOSITORY" --state open --label "autorelease: pending" \
+            --json number --jq '.[].number'); do
+            head=$(gh pr view "$pr" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+            behind=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${head}" --jq .behind_by)
+            if [ "$behind" -gt 0 ]; then
+              gh pr update-branch "$pr" --repo "$GITHUB_REPOSITORY"
+              echo "Brought #${pr} up to date with main (it was ${behind} commits behind)"
+            else
+              echo "#${pr} is up to date with main"
+            fi
+          done
+
   # A published release (tag vX.Y.Z on main) deploys production after the
   # production environment's required reviewer approves it.
   deploy-production:

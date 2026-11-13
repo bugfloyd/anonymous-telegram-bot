@@ -41,6 +41,8 @@ them is done by hand:
    reads them and keeps one release pull request open with the next version
    (`fix` → patch, `feat` → minor, `!` → major) and `CHANGELOG.md`. The
    current version is kept in `.release-please-manifest.json` and the tags.
+   After every push to `main`, the release job also brings that pull
+   request up to date with `main`, so it can always be merged.
 2. Merging that pull request is the decision to release. release-please then
    tags the merge commit and publishes a GitHub Release with the changelog.
 3. The published release runs CI on the tag: everything is built and tested
