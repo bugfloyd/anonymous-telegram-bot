@@ -162,7 +162,7 @@ JSON fields:
 | `text` | the text (`message` only; at most 12,000 UTF-8 bytes) |
 | `replyTo` | ID of the message this answers |
 | `seen` | IDs read (`seen` only, 1–100) |
-| `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, p?}`, see Media |
+| `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, v?, p?}`, see Media |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text; `seen` needs `seen` and no text; `key_update` and `end` carry neither.
@@ -248,12 +248,13 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   `application/octet-stream`, to `url` (valid 15 minutes; the length and type
   are part of its signature).
 - The message carries the attachment in `media`, inside the encrypted
-  envelope: kind `t` (`photo`, `video`, `gif` or `file`; voice, music, round
-  video and stickers come later), upload ID `id` (16 bytes), AES-256-GCM key
-  `k` (32 bytes), delete secret `d` (16 bytes), the file's size `s` (at most
-  25 MiB), and optionally its name `n`, MIME type `m`, pixel size `w`/`h`,
-  length in seconds `l` and a tiny JPEG preview `p` (base64url, at most 3000
-  characters). The server never sees a key, name or type. A kind the
+  envelope: kind `t` (`photo`, `video`, `gif`, `voice`, `audio` (music) or
+  `file`; round video and stickers come later), upload ID `id` (16 bytes),
+  AES-256-GCM key `k` (32 bytes), delete secret `d` (16 bytes), the file's
+  size `s` (at most 25 MiB), and optionally its name `n`, MIME type `m`,
+  pixel size `w`/`h`, length in seconds `l`, a voice message's waveform `v`
+  (base64url of 1–100 bytes, one bar each, 0–255) and a tiny JPEG preview `p`
+  (base64url, at most 3000 characters). The server never sees a key, name or type. A kind the
   recipient's version doesn't know (lowercase letters and `_`, at most 16)
   is accepted and shown as a file.
 - What each kind is: a photo is redrawn on the sender's device (at most
@@ -261,9 +262,13 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   compression), with its location, device and time metadata removed: the
   MP4/QuickTime `udta` and `meta` boxes are renamed `free` and the header
   times zeroed, so nothing else in the file moves. A GIF is sent as it is.
-  A file is the original bytes, untouched (location included, if it has
-  any). Photos and GIFs up to 10 MiB are fetched when their conversation
-  opens; videos and files on a tap.
+  A voice message is recorded in the app (AAC in MP4 where the browser can,
+  else Opus in WebM or Ogg; at most 15 minutes), with a waveform taken from
+  the microphone level while recording; it carries no device or place
+  metadata. Music is the audio file as it is, with its length. A file is the
+  original bytes, untouched (location included, if it has any). Photos,
+  voice messages and GIFs up to 10 MiB are fetched when their conversation
+  opens; videos, music and files on a tap.
 - The upload is `nonce (12) ‖ AES-GCM(k, nonce, file ‖ zeros, aad =
   "incognitochat/v2/media")`, padded to the next power of two from 16 KiB up
   to 1 MiB, then to the next whole MiB.

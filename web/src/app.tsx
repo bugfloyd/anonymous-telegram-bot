@@ -4,7 +4,9 @@ import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
+import { fromBase64Url } from './crypto/encoding';
 import { showableAs } from './media/prepare';
+import { canRecord, MAX_VOICE_MS, MicUnavailable, startRecording, type Recorder, type Recording } from './media/record';
 import { MAX_FILE_BYTES, shownAs } from './protocol/message';
 import {
   confirmationMatches,
@@ -545,6 +547,11 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
                       replying.value = null;
                       await app.sendMedia(file, as, caption, to);
                     },
+                    onVoice: async (recording: Recording) => {
+                      const to = replying.value?.id;
+                      replying.value = null;
+                      await app.sendVoice(recording, to);
+                    },
                   }
                 : {})}
             />
@@ -830,6 +837,7 @@ function Composer({
   reply = null,
   onCancelReply,
   onAttach,
+  onVoice,
 }: {
   language: Language;
   busy: boolean;
@@ -839,8 +847,11 @@ function Composer({
   onCancelReply?: () => void;
   /** Sends a picked file (absent when attachments are off). */
   onAttach?: (file: File, as: SendAs, caption: string) => Promise<void>;
+  /** Sends a recorded voice message (absent when attachments are off). */
+  onVoice?: (recording: Recording) => Promise<void>;
 }) {
   const text = useSignal('');
+  const voice = useVoiceRecorder(language, onVoice);
   const attachMenu = useSignal(false);
   const picked = useSignal<Picked | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -873,6 +884,32 @@ function Composer({
         </div>
       )}
       <div class="composer">
+      {voice.recording ? (
+        <>
+          <button type="button" class="attach" aria-label={t(language, 'cancelRecording')} onClick={voice.cancel}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+            </svg>
+          </button>
+          <div class="recorder" role="status">
+            <span class="rec-dot" />
+            <bdi class="rec-time" dir="ltr">
+              {formatLength(language, Math.floor(voice.elapsed / 1000))}
+            </bdi>
+            <span class="meter" dir="ltr" aria-hidden="true">
+              {voice.levels.map((level, i) => (
+                <span key={i} style={{ blockSize: `${Math.max(8, level * 100)}%` }} />
+              ))}
+            </span>
+          </div>
+          <button type="button" class="round-button" aria-label={t(language, 'send')} onClick={voice.finish}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 11.5L21 3l-8.5 18-2-7.5z" />
+            </svg>
+          </button>
+        </>
+      ) : (
+        <>
       {onAttach && (
         <>
           <button type="button" class="attach" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
@@ -894,9 +931,19 @@ function Composer({
         disabled={busy}
         onInput={(e) => (text.value = e.currentTarget.value)}
       />
-      <Button disabled={busy || text.value.trim() === ''} onClick={send}>
-        {t(language, 'send')}
-      </Button>
+      {voice.available && text.value.trim() === '' ? (
+        <button type="button" class="round-button" aria-label={t(language, 'recordVoice')} disabled={busy || voice.starting} onClick={voice.start}>
+          <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM5 11a7 7 0 0014 0M12 18v3" />
+          </svg>
+        </button>
+      ) : (
+        <Button disabled={busy || text.value.trim() === ''} onClick={send}>
+          {t(language, 'send')}
+        </Button>
+      )}
+        </>
+      )}
       </div>
       {attachMenu.value && (
         <div class="overlay" onClick={() => (attachMenu.value = false)} onKeyDown={(e) => e.key === 'Escape' && (attachMenu.value = false)}>
@@ -940,6 +987,69 @@ function Composer({
   );
 }
 
+const MIC_TEXT: Record<MicUnavailable['reason'], Key> = { denied: 'micDenied', missing: 'micMissing', unsupported: 'micUnavailable' };
+
+/**
+ * Recording a voice message from the composer: a tap on the microphone
+ * starts, Send stops and sends, the bin drops it. Leaving the conversation
+ * drops a recording in progress; at 15 minutes it's sent.
+ */
+function useVoiceRecorder(language: Language, onVoice: ((recording: Recording) => Promise<void>) | undefined) {
+  const recorder = useRef<Recorder | null>(null);
+  const recording = useSignal(false);
+  const starting = useSignal(false);
+  const elapsed = useSignal(0);
+  const levels = useSignal<number[]>([]);
+  const finish = async () => {
+    const r = recorder.current;
+    if (!r || !onVoice) return;
+    recorder.current = null;
+    recording.value = false;
+    try {
+      const result = await r.stop();
+      if (result) await onVoice(result);
+    } catch {
+      say(t(language, 'micUnavailable'));
+    }
+  };
+  useEffect(() => () => recorder.current?.cancel(), []);
+  useEffect(() => {
+    if (!recording.value) return;
+    const timer = setInterval(() => {
+      elapsed.value = recorder.current?.elapsed() ?? 0;
+      if (elapsed.value >= MAX_VOICE_MS) void finish();
+    }, 200);
+    return () => clearInterval(timer);
+  }, [recording.value]);
+  return {
+    available: !!onVoice && canRecord(),
+    recording: recording.value,
+    starting: starting.value,
+    elapsed: elapsed.value,
+    levels: levels.value,
+    start: async () => {
+      if (!onVoice || starting.value || recording.value) return;
+      starting.value = true;
+      levels.value = [];
+      elapsed.value = 0;
+      try {
+        recorder.current = await startRecording((level) => (levels.value = [...levels.value.slice(-31), level]));
+        recording.value = true;
+      } catch (err) {
+        say(t(language, err instanceof MicUnavailable ? MIC_TEXT[err.reason] : 'micUnavailable'));
+      } finally {
+        starting.value = false;
+      }
+    },
+    finish: () => void finish(),
+    cancel: () => {
+      recorder.current?.cancel();
+      recorder.current = null;
+      recording.value = false;
+    },
+  };
+}
+
 /** A picked file, and whether it starts out shown as a photo, video or GIF (rather than as a file). */
 interface Picked {
   file: File;
@@ -947,7 +1057,7 @@ interface Picked {
 }
 
 /** The choice for each kind a file can be shown as: compress a photo, or send a video or GIF as one. */
-const SHOW_AS: Record<'photo' | 'video' | 'gif', Key> = { photo: 'compressImage', video: 'sendAsVideo', gif: 'sendAsGif' };
+const SHOW_AS: Record<'photo' | 'video' | 'gif' | 'audio', Key> = { photo: 'compressImage', video: 'sendAsVideo', gif: 'sendAsGif', audio: 'sendAsMusic' };
 
 /** Before sending a picked file: a preview, a caption, and (for photos, videos and GIFs) whether to send it as one. */
 function AttachDialog({
@@ -963,13 +1073,14 @@ function AttachDialog({
 }) {
   const tr = (key: Key) => t(language, key);
   const kind = showableAs(picked.file);
-  const shown = useSignal(picked.shown && kind !== null);
+  // Music shows as music from Files too, as in Telegram.
+  const shown = useSignal(kind !== null && (picked.shown || kind === 'audio'));
   const caption = useSignal('');
   const preview = useSignal<string | null>(null);
   // A video this browser can't play shows as a file here (and is sent as one).
   const unplayable = useSignal(false);
   useEffect(() => {
-    if (!kind) return;
+    if (kind !== 'photo' && kind !== 'gif' && kind !== 'video') return;
     const url = URL.createObjectURL(picked.file);
     preview.value = url;
     return () => URL.revokeObjectURL(url);
@@ -982,7 +1093,7 @@ function AttachDialog({
       <div class="dialog" role="dialog" aria-modal="true" aria-label={tr('attach')}>
         {preview.value && kind === 'video' && !unplayable.value ? (
           <video class="attach-preview" src={preview.value} muted playsInline autoPlay loop onError={() => (unplayable.value = true)} />
-        ) : preview.value && kind !== 'video' ? (
+        ) : preview.value && (kind === 'photo' || kind === 'gif') ? (
           <img class="attach-preview" src={preview.value} alt="" />
         ) : (
           <div class="file">
@@ -1031,9 +1142,16 @@ function mediaLine(language: Language, media: { t: string; n?: string } | undefi
     photo: `📷 ${t(language, 'photo')}`,
     video: `📹 ${t(language, 'video')}`,
     gif: t(language, 'gif'),
+    voice: `🎤 ${t(language, 'voice')}`,
+    audio: `🎵 ${songTitle(media.n) || t(language, 'music')}`,
     file: `📎 ${media.n ?? t(language, 'file')}`,
   }[shownAs(media)];
   return text ? `${label}, ${text}` : label;
+}
+
+/** A song's title: its file name without the extension. */
+function songTitle(name: string | undefined): string {
+  return name ? name.replace(/\.[A-Za-z0-9]{1,5}$/, '') : '';
 }
 
 function extension(name: string | undefined): string {
@@ -1066,6 +1184,10 @@ function Attachment({ app, message: m, language, progress }: { app: AppState; me
       return <PhotoView app={app} message={m} language={language} progress={progress} />;
     case 'video':
       return <VideoView app={app} message={m} language={language} progress={progress} />;
+    case 'voice':
+      return <VoiceView app={app} message={m} language={language} progress={progress} />;
+    case 'audio':
+      return <AudioView app={app} message={m} language={language} progress={progress} />;
     default:
       return <FileView app={app} message={m} language={language} progress={progress} />;
   }
@@ -1175,6 +1297,188 @@ function Player({ src, language }: { src: string; language: Language }) {
     <p class="viewer-note">{t(language, 'videoUnplayable')}</p>
   ) : (
     <video src={src} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} onError={() => (failed.value = true)} />
+  );
+}
+
+/** The voice message or song playing: starting another pauses it. */
+let nowPlaying: HTMLAudioElement | null = null;
+
+/** Plays an attachment's audio once it's on this device: play/pause, position, seeking and speed. */
+function useAudio(url: string | null, knownLength: number | undefined) {
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const playing = useSignal(false);
+  const time = useSignal(0);
+  const length = useSignal<number | null>(null);
+  const failed = useSignal(false);
+  const rate = useSignal(1);
+  useEffect(() => {
+    if (!url) return;
+    const a = new Audio(url);
+    a.preload = 'metadata';
+    a.addEventListener('play', () => {
+      if (nowPlaying && nowPlaying !== a) nowPlaying.pause();
+      nowPlaying = a;
+      playing.value = true;
+    });
+    a.addEventListener('pause', () => (playing.value = false));
+    a.addEventListener('ended', () => {
+      playing.value = false;
+      time.value = 0;
+    });
+    a.addEventListener('timeupdate', () => (time.value = a.currentTime));
+    a.addEventListener('loadedmetadata', () => Number.isFinite(a.duration) && (length.value = a.duration));
+    a.addEventListener('error', () => (failed.value = true));
+    audio.current = a;
+    return () => {
+      a.pause();
+      if (nowPlaying === a) nowPlaying = null;
+      a.removeAttribute('src');
+      a.load();
+      audio.current = null;
+    };
+  }, [url]);
+  // Recorded WebM has no length in it; the message's own is used then.
+  const total = length.value ?? knownLength ?? 0;
+  return {
+    playing: playing.value,
+    failed: failed.value,
+    time: time.value,
+    total,
+    fraction: total > 0 ? Math.min(1, time.value / total) : 0,
+    rate: rate.value,
+    toggle: () => {
+      const a = audio.current;
+      if (!a) return;
+      if (!a.paused) return a.pause();
+      a.playbackRate = rate.value;
+      void a.play().catch((err: { name?: string }) => err.name === 'NotSupportedError' && (failed.value = true));
+    },
+    seek: (fraction: number) => {
+      const a = audio.current;
+      if (!a || total <= 0) return;
+      a.currentTime = Math.max(0, Math.min(1, fraction)) * total;
+      time.value = a.currentTime;
+    },
+    nextRate: () => {
+      rate.value = rate.value === 1 ? 1.5 : rate.value === 1.5 ? 2 : 1;
+      if (audio.current) audio.current.playbackRate = rate.value;
+    },
+  };
+}
+
+/** The round button of a voice message or song: progress, download, or play/pause. */
+function PlayButton({ app, message: m, language, progress, playing, onPlay }: { app: AppState; message: MessageView; language: Language; progress: number | undefined; playing: boolean; onPlay: () => void }) {
+  if (progress !== undefined) {
+    return (
+      <span class="play">
+        <Ring fraction={progress} />
+      </span>
+    );
+  }
+  if (m.file === 'remote' && !m.out) {
+    return (
+      <button type="button" class="play" aria-label={t(language, 'download')} onClick={() => void app.fetchMedia(m.id)}>
+        ↓
+      </button>
+    );
+  }
+  return (
+    <button type="button" class="play" aria-label={t(language, playing ? 'pause' : 'play')} disabled={m.file !== 'local'} onClick={onPlay}>
+      <svg class="icon-fill" viewBox="0 0 24 24" aria-hidden="true">
+        <path d={playing ? 'M7 5h4v14H7zM13 5h4v14h-4z' : 'M8 5v14l11-7z'} />
+      </svg>
+    </button>
+  );
+}
+
+/** Where a tap or click fell along an element, 0–1 from its left (timelines run left to right). */
+function along(e: MouseEvent): number {
+  const box = (e.currentTarget as Element).getBoundingClientRect();
+  return box.width > 0 ? (e.clientX - box.left) / box.width : 0;
+}
+
+/** Stops a press from reaching the message's swipe and long-press gestures. */
+const keepPress = (e: PointerEvent) => e.stopPropagation();
+
+/** A voice message: play/pause, the waveform (tap to jump), its length, and the speed. Fetched on opening, as in Telegram. */
+function VoiceView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const url = useMediaUrl(app, m);
+  const { l, v } = m.media!;
+  const player = useAudio(url.value, l);
+  let bars: number[];
+  try {
+    bars = v ? [...fromBase64Url(v)] : [];
+  } catch {
+    bars = [];
+  }
+  if (bars.length === 0) bars = new Array<number>(32).fill(0);
+  const shown = player.playing || player.time > 0 ? player.time : player.total;
+  return (
+    <div class="voice">
+      <PlayButton app={app} message={m} language={language} progress={progress} playing={player.playing} onPlay={player.toggle} />
+      <div class="voice-body">
+        <div class="waveform" dir="ltr" onPointerDown={keepPress} onClick={(e) => player.seek(along(e))}>
+          {bars.map((b, i) => (
+            <span key={i} class={(i + 0.5) / bars.length <= player.fraction ? 'played' : ''} style={{ blockSize: `${Math.max(12, (b / 255) * 100)}%` }} />
+          ))}
+        </div>
+        <span class="media-meta">
+          <bdi dir="ltr">{formatLength(language, Math.round(shown))}</bdi>
+          {m.file === 'gone' && <span>{t(language, 'mediaGone')}</span>}
+          {player.failed && <span>{t(language, 'audioUnplayable')}</span>}
+          {url.value && !player.failed && (
+            <button type="button" class="rate" aria-label={t(language, 'playbackSpeed')} onPointerDown={keepPress} onClick={player.nextRate}>
+              <bdi dir="ltr">{`${player.rate}×`}</bdi>
+            </button>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** A song: play/pause, its title, a seek bar once it's here, and its length (and size, until it's here). Fetched on a tap. */
+function AudioView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const url = useMediaUrl(app, m);
+  const { l, n, s } = m.media!;
+  const player = useAudio(url.value, l);
+  const total = player.total ? formatLength(language, Math.round(player.total)) : null;
+  return (
+    <div class="audio">
+      <PlayButton app={app} message={m} language={language} progress={progress} playing={player.playing} onPlay={player.toggle} />
+      <div class="audio-body">
+        <span class="audio-title" dir="auto">
+          {songTitle(n) || t(language, 'music')}
+        </span>
+        {url.value && (
+          <input
+            class="seek"
+            type="range"
+            dir="ltr"
+            min={0}
+            max={1000}
+            value={Math.round(player.fraction * 1000)}
+            aria-label={t(language, 'seek')}
+            onPointerDown={keepPress}
+            onInput={(e) => player.seek(Number(e.currentTarget.value) / 1000)}
+          />
+        )}
+        <span class="media-meta">
+          {url.value ? (
+            <bdi dir="ltr">
+              {formatLength(language, Math.round(player.time))}
+              {total && ` / ${total}`}
+            </bdi>
+          ) : (
+            <>
+              {total && <bdi dir="ltr">{total}</bdi>}
+              <span>{m.file === 'gone' ? t(language, 'mediaGone') : formatSize(language, s)}</span>
+            </>
+          )}
+          {player.failed && <span>{t(language, 'audioUnplayable')}</span>}
+        </span>
+      </div>
+    </div>
   );
 }
 

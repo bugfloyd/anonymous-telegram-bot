@@ -25,12 +25,14 @@ export type Kind = 'message' | 'seen' | 'key_update' | 'end';
 const KINDS: readonly Kind[] = ['message', 'seen', 'key_update', 'end'];
 
 /**
- * What an attachment is shown as. Voice, music, round videos and stickers
- * come later. Kinds this version doesn't know are accepted and shown as
- * files, so a newer sender's attachments still arrive (see shownAs).
+ * What an attachment is shown as: music is `audio`. Round videos and
+ * stickers come later. Kinds this version doesn't know are accepted and
+ * shown as files, so a newer sender's attachments still arrive (see shownAs).
  */
-export type MediaKind = 'photo' | 'video' | 'gif' | 'file';
-const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'file'];
+export type MediaKind = 'photo' | 'video' | 'gif' | 'voice' | 'audio' | 'file';
+const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'voice', 'audio', 'file'];
+/** Most waveform bars a voice message carries. */
+export const MAX_WAVEFORM = 100;
 /** Longest video, voice or music length, in seconds. */
 const MAX_LENGTH = 24 * 60 * 60;
 /** Largest file that can be attached. */
@@ -59,8 +61,10 @@ export interface Media {
   /** Pixel width and height (photos, videos, GIFs). */
   w?: number;
   h?: number;
-  /** Length in whole seconds (videos). */
+  /** Length in whole seconds (videos, voice, music). */
   l?: number;
+  /** Voice: the waveform, one byte (0–255) per bar, base64url. */
+  v?: string;
   /** A tiny JPEG preview, base64url, shown until the file is here. */
   p?: string;
 }
@@ -223,6 +227,16 @@ function checkMedia(value: unknown): void {
     if (a[dim] !== undefined && (!Number.isSafeInteger(a[dim]) || (a[dim] as number) < 1 || (a[dim] as number) > 20_000)) throw new MessageError('bad media size');
   }
   if (a.l !== undefined && (!Number.isSafeInteger(a.l) || (a.l as number) < 0 || (a.l as number) > MAX_LENGTH)) throw new MessageError('bad media length');
+  if (a.v !== undefined) {
+    let bars: Uint8Array;
+    try {
+      if (typeof a.v !== 'string' || !/^[A-Za-z0-9_-]+$/.test(a.v)) throw new Error();
+      bars = fromBase64Url(a.v);
+    } catch {
+      throw new MessageError('bad media waveform');
+    }
+    if (bars.length === 0 || bars.length > MAX_WAVEFORM || toBase64Url(bars) !== a.v) throw new MessageError('bad media waveform');
+  }
   if (a.p !== undefined && (typeof a.p !== 'string' || a.p.length > MAX_PREVIEW || !/^[A-Za-z0-9_-]+$/.test(a.p))) throw new MessageError('bad media preview');
 }
 
@@ -237,12 +251,16 @@ const EXTENSIONS: Record<string, string> = {
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
 };
 
 /** The name to save an attachment under: its own, or one made from its kind and type ("video.mp4"). */
 export function fileName(media: { t: string; n?: string; m?: string }): string {
   if (media.n) return media.n;
-  const base = { photo: 'photo', video: 'video', gif: 'animation', file: 'file' }[shownAs(media)];
+  const base = { photo: 'photo', video: 'video', gif: 'animation', voice: 'voice', audio: 'audio', file: 'file' }[shownAs(media)];
   const ext = media.m ? EXTENSIONS[media.m] : undefined;
   return ext ? `${base}.${ext}` : base;
 }
