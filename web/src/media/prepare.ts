@@ -61,7 +61,7 @@ export async function preparePhoto(file: Blob): Promise<Outgoing> {
 }
 
 /** A tiny blurred-preview JPEG, base64url, if it's small enough to carry. */
-async function preview(image: ImageBitmap | HTMLCanvasElement | HTMLVideoElement): Promise<{ p?: string }> {
+export async function preview(image: ImageBitmap | HTMLCanvasElement | HTMLVideoElement): Promise<{ p?: string }> {
   const tiny = toBase64Url((await drawJpeg(image, PREVIEW_SIDE, 0.5)).bytes);
   return tiny.length <= MAX_PREVIEW ? { p: tiny } : {};
 }

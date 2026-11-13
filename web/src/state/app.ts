@@ -36,7 +36,7 @@ import { toBase64Url } from '../crypto/encoding';
 import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
 import { deleteMessage, getMedia, listConversations, listMessages, type LocalMedia, type MessageView } from '../messaging/store';
 import { prepareAudio, prepareFile, prepareGif, preparePhoto, prepareVideo, TooBig } from '../media/prepare';
-import type { Recording } from '../media/record';
+import type { Recording, RoundRecording } from '../media/record';
 import { saveUrl } from '../media/save';
 import { fileName, type Media } from '../protocol/message';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
@@ -94,8 +94,8 @@ export type SendAs = 'photo' | 'video' | 'gif' | 'audio' | 'file';
 export interface Preparing {
   key: string;
   conv: string;
-  as: SendAs | 'voice';
-  /** The picked photo, video or GIF, for showing it meanwhile. */
+  as: SendAs | 'voice' | 'round';
+  /** The picked photo, video or GIF (or the recorded video message), for showing it meanwhile. */
   url: string | null;
   name: string;
   size: number;
@@ -530,6 +530,18 @@ export function createApp(deps: Deps) {
     await sendPrepared(current.id, key, { file: recording.file, media }, '', replyTo);
   }
 
+  /** Sends a recorded video message in the open conversation. */
+  async function sendRound(recording: RoundRecording, replyTo?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    const key = crypto.randomUUID();
+    const { file, type, length, side } = recording;
+    const media = { t: 'round', s: file.length, m: type, l: length, w: side, h: side, ...(recording.preview ? { p: recording.preview } : {}) };
+    const url = URL.createObjectURL(new Blob([file], { type }));
+    preparing.value = [...preparing.value, { key, conv: current.id, as: 'round', url, name: fileName(media), size: media.s, caption: '' }];
+    await sendPrepared(current.id, key, { file, media }, '', replyTo);
+  }
+
   /** Stores, uploads and sends a prepared attachment; its "preparing" stand-in goes once it's stored. */
   async function sendPrepared(conv: string, key: string, out: Outgoing, caption: string, replyTo?: string): Promise<void> {
     if (!messaging) return unprepare(key);
@@ -567,7 +579,7 @@ export function createApp(deps: Deps) {
     await show();
   }
 
-  /** Fetches a received attachment (a tap, or automatically for photos, GIFs and voice). */
+  /** Fetches a received attachment (a tap, or automatically for photos, GIFs, voice and video messages). */
   async function fetchMedia(id: string): Promise<void> {
     if (!messaging || transfers.value[id] !== undefined) return;
     setProgress(id, 0);
@@ -613,14 +625,14 @@ export function createApp(deps: Deps) {
   }
 
   /**
-   * Photos, voice messages and GIFs (up to 10 MB) are fetched as soon as
-   * their conversation is open, as in Telegram; videos, music and files wait
-   * for a tap.
+   * Photos, voice and video messages and GIFs (up to 10 MB) are fetched as
+   * soon as their conversation is open, as in Telegram; videos, music and
+   * files wait for a tap.
    */
   function autoFetch(conv: string): void {
     const now = currentScreen();
     if (now.kind !== 'conversation' || now.id !== conv) return;
-    const automatic = (media: LocalMedia) => media.t === 'photo' || media.t === 'voice' || (media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
+    const automatic = (media: LocalMedia) => media.t === 'photo' || media.t === 'voice' || media.t === 'round' || (media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
     void (async () => {
       for (const m of now.messages) {
         if (m.file === 'remote' && m.media && automatic(m.media) && !m.out) await fetchMedia(m.id);
@@ -1019,6 +1031,7 @@ export function createApp(deps: Deps) {
     },
     sendMedia,
     sendVoice,
+    sendRound,
     fetchMedia,
     saveMedia,
     mediaUrl,
