@@ -16,7 +16,7 @@ import { countTokens, LOW_WATER, refillTokens, returnToken, takeToken, type Stor
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
-import { newId, openMessage, sealMessage, type Draft, type Media, type Message } from '../protocol/message';
+import { newId, openMessage, sealMessage, type Draft, type Media, type Message, type Sticker } from '../protocol/message';
 import { getMeta, getSealed, putMeta, type ConversationRecord, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
 import {
@@ -150,29 +150,35 @@ export function createMessaging(deps: MessagingDeps) {
       linkCheckedAt: now(),
     };
     await putConversation(db, conversation);
-    await write(conversation, text, undefined, () => onStored?.(id));
+    await write(conversation, { text }, undefined, () => onStored?.(id));
     return id;
   }
 
   /**
-   * Writes a message in a conversation. onStored runs as soon as the message
-   * is stored (shown as sending), before delivery.
+   * Writes a message (or sends a sticker) in a conversation. onStored runs as
+   * soon as the message is stored (shown as sending), before delivery.
    */
-  async function send(conv: string, text: string, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
+  async function send(conv: string, content: string | { sticker: Sticker }, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
     const conversation = await getConversation(db, conv);
     if (!conversation) throw new Error('unknown conversation');
-    await write(conversation, text, replyTo, onStored);
+    await write(conversation, typeof content === 'string' ? { text: content } : content, replyTo, onStored);
   }
 
-  async function write(conversation: ConversationRecord, text: string, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
+  async function write(
+    conversation: ConversationRecord,
+    content: { text: string } | { sticker: Sticker },
+    replyTo?: string,
+    onStored?: () => void | Promise<void>,
+  ): Promise<void> {
     // Stored and shown first; everything slow happens after.
     const id = newId();
     const at = now();
-    await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text, ...(replyTo ? { replyTo } : {}) });
+    const answer = replyTo ? { replyTo } : {};
+    await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text: '', ...content, ...answer });
     await putConversation(db, { ...conversation, lastAt: at, hidden: false });
     await onStored?.();
     try {
-      await transmit(conversation.id, { kind: 'message', id, at, text, ...(replyTo ? { replyTo } : {}) });
+      await transmit(conversation.id, { kind: 'message', id, at, ...content, ...answer });
       // Unless their receipt came in first.
       await setMessageStatus(db, id, 'sent', 'sending');
     } catch (err) {
@@ -545,11 +551,16 @@ export function createMessaging(deps: MessagingDeps) {
     // Shown no later than it arrived, so a fast clock can't push a message above newer ones.
     const at = Math.min(message.at, t);
     let changed = false;
-    if (message.kind === 'message' && (message.text || message.media)) {
+    if (message.kind === 'message' && (message.text || message.media || message.sticker)) {
       await addMessage(
         db,
         { id: message.id, conv: conv.id, at, out: false, status: 'received', ...(message.media ? { file: 'remote' as const } : {}) },
-        { text: message.text ?? '', ...(message.replyTo ? { replyTo: message.replyTo } : {}), ...(message.media ? { media: message.media } : {}) },
+        {
+          text: message.text ?? '',
+          ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+          ...(message.media ? { media: message.media } : {}),
+          ...(message.sticker ? { sticker: message.sticker } : {}),
+        },
       );
       conv.unread += 1;
       conv.lastAt = Math.max(conv.lastAt, at);

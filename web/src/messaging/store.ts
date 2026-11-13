@@ -3,7 +3,7 @@
 // non-extractable AES-GCM key, and bound to the message ID.
 
 import { concat, randomBytes, utf8 } from '../crypto/encoding';
-import type { Media } from '../protocol/message';
+import type { Media, Sticker } from '../protocol/message';
 import { getKey, putKey, type ConversationRecord, type Database, type MessageRecord } from '../storage/db';
 import { withLock } from '../sync/locks';
 
@@ -18,6 +18,8 @@ export interface MessageBody {
   replyTo?: string;
   /** An attachment: what it is and how to fetch it (the file itself is in the media store). */
   media?: LocalMedia;
+  /** A sticker (then the text is empty). */
+  sticker?: Sticker;
 }
 
 /** A message with its text, for showing. */

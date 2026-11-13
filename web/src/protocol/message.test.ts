@@ -133,6 +133,24 @@ describe('checkMessage', () => {
     expect(shownAs(checkMessage({ ...valid, text: undefined, media: round }).media!)).toBe('round');
   });
 
+  it('accepts a sticker on its own', () => {
+    const sticker = { id: 'faces/winking_face', e: '😉' };
+    expect(checkMessage({ ...valid, text: undefined, sticker }).sticker).toEqual(sticker);
+    expect(checkMessage({ ...valid, text: undefined, sticker: { id: 'new_pack/cat' } }).sticker?.id).toBe('new_pack/cat');
+    for (const bad of [
+      { ...valid, sticker },
+      { ...valid, text: undefined, media, sticker },
+      { ...valid, text: undefined, sticker: { id: 'Faces/Wink' } },
+      { ...valid, text: undefined, sticker: { id: 'faces' } },
+      { ...valid, text: undefined, sticker: { id: '../x/y' } },
+      { ...valid, text: undefined, sticker: { id: 'faces/x', e: '' } },
+      { ...valid, text: undefined, sticker: 'faces/x' },
+      { ...valid, kind: 'end', text: undefined, sticker },
+    ]) {
+      expect(() => checkMessage(bad)).toThrow(MessageError);
+    }
+  });
+
   it('accepts kinds from newer versions and shows them as files', () => {
     const voice = checkMessage({ ...valid, media: { ...media, t: 'voice_note' } }).media!;
     expect(shownAs(voice)).toBe('file');

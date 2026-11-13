@@ -19,7 +19,8 @@ import {
   type RoundRecorder,
   type RoundRecording,
 } from './media/record';
-import { MAX_FILE_BYTES, shownAs } from './protocol/message';
+import { MAX_FILE_BYTES, shownAs, type Sticker } from './protocol/message';
+import { ART_CREDIT, ART_LICENSE, findSticker, loadArt, PACKS, type StickerInfo } from './stickers/catalog';
 import {
   confirmationMatches,
   type AdminNotice,
@@ -413,6 +414,10 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
     setTimeout(() => highlight.value === id && (highlight.value = null), 1500);
   };
   const time = new Intl.DateTimeFormat(locale(language), { hour: 'numeric', minute: '2-digit' });
+  useEffect(() => {
+    const timer = setTimeout(loadStickerArt, 300);
+    return () => clearTimeout(timer);
+  }, []);
   return (
     <main class="page conversation">
       <header class="conversation-head">
@@ -550,7 +555,7 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
               busy={screen.busy}
               reply={
                 replying.value
-                  ? { name: replying.value.out ? tr('you') : screen.label, text: mediaLine(language, replying.value.media, replying.value.text) }
+                  ? { name: replying.value.out ? tr('you') : screen.label, text: contentLine(language, replying.value) }
                   : null
               }
               onCancelReply={() => (replying.value = null)}
@@ -558,6 +563,11 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
                 const to = replying.value?.id;
                 replying.value = null;
                 await app.sendMessage(text, to);
+              }}
+              onSticker={async (sticker) => {
+                const to = replying.value?.id;
+                replying.value = null;
+                await app.sendMessage({ sticker }, to);
               }}
               {...(app.media
                 ? {
@@ -654,7 +664,7 @@ function Blocked({ app, language, screen }: { app: AppState; language: Language;
                   {c.label}
                 </bdi>
                 <span class="preview" dir="auto">
-                  {c.last ? c.last.text : ''}
+                  {c.last ? contentLine(language, c.last) : ''}
                 </span>
               </button>
               <Button kind="secondary" disabled={screen.busy} onClick={() => app.unblock(c.id)}>
@@ -845,7 +855,7 @@ function ChatRow({
         </span>
         <span class="chat-bottom">
           <span class="preview" dir="auto">
-            {c.last ? (c.last.out ? tr('youWrote', { text: mediaLine(language, c.last.media, c.last.text) }) : mediaLine(language, c.last.media, c.last.text)) : ''}
+            {c.last ? (c.last.out ? tr('youWrote', { text: contentLine(language, c.last) }) : contentLine(language, c.last)) : ''}
           </span>
           {c.unread > 0 && <span class="badge">{t(language, 'unreadCount', { count: c.unread })}</span>}
         </span>
@@ -863,6 +873,7 @@ function Composer({
   onAttach,
   onVoice,
   onRound,
+  onSticker,
 }: {
   language: Language;
   busy: boolean;
@@ -876,8 +887,11 @@ function Composer({
   onVoice?: (recording: Recording) => Promise<void>;
   /** Sends a recorded video message (absent when attachments are off). */
   onRound?: (recording: RoundRecording) => Promise<void>;
+  /** Sends a sticker. */
+  onSticker?: (sticker: Sticker) => Promise<void>;
 }) {
   const text = useSignal('');
+  const stickers = useSignal(false);
   const rec = useRecorder(language, onVoice, onRound);
   const attachMenu = useSignal(false);
   const picked = useSignal<Picked | null>(null);
@@ -954,17 +968,45 @@ function Composer({
             )}
           </div>
         ) : (
-          <textarea
-            key="text"
-            ref={input}
-            dir="auto"
-            rows={2}
-            maxLength={4000}
-            placeholder={t(language, 'messagePlaceholder')}
-            value={text.value}
-            disabled={busy}
-            onInput={(e) => (text.value = e.currentTarget.value)}
-          />
+          <div key="text" class={onSticker ? 'text-field with-stickers' : 'text-field'}>
+            <textarea
+              ref={input}
+              dir="auto"
+              rows={2}
+              maxLength={4000}
+              placeholder={t(language, 'messagePlaceholder')}
+              value={text.value}
+              disabled={busy}
+              onInput={(e) => (text.value = e.currentTarget.value)}
+              onFocus={() => (stickers.value = false)}
+            />
+            {onSticker && (
+              <button
+                type="button"
+                class="sticker-toggle"
+                aria-label={t(language, 'stickers')}
+                aria-expanded={stickers.value}
+                disabled={busy}
+                onClick={() => {
+                  const atEnd = isAtEnd();
+                  stickers.value = !stickers.value;
+                  if (stickers.value) {
+                    input.current?.blur();
+                    loadStickerArt();
+                    if (atEnd) requestAnimationFrame(() => scrollToEnd());
+                  } else input.current?.focus();
+                }}
+              >
+                <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+                  {stickers.value ? (
+                    <path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10" />
+                  ) : (
+                    <path d="M20 12a8 8 0 11-8-8h3l5 5zM15 4v5h5M8.5 14a4 4 0 007 0M9 10h.01M15 10h.01" />
+                  )}
+                </svg>
+              </button>
+            )}
+          </div>
         )}
         {rec.available && (recording || text.value.trim() === '') ? (
           <button
@@ -1003,6 +1045,7 @@ function Composer({
           </Button>
         )}
       </div>
+      {stickers.value && onSticker && !recording && <StickerPanel language={language} busy={busy} onPick={(s) => void onSticker({ id: s.id, e: s.e })} />}
       {rec.mode === 'round' && recording && <RoundStage live={rec.live} elapsed={rec.elapsed} locked={locked} language={language} />}
       {attachMenu.value && (
         <div class="overlay" onClick={() => (attachMenu.value = false)} onKeyDown={(e) => e.key === 'Escape' && (attachMenu.value = false)}>
@@ -1043,6 +1086,75 @@ function Composer({
         />
       )}
     </div>
+  );
+}
+
+/** The sticker images, once loaded (stickers/catalog.ts). */
+const stickerArt = signal<Readonly<Record<string, string>> | null>(null);
+function loadStickerArt(): void {
+  if (!stickerArt.peek()) void loadArt().then((art) => (stickerArt.value = art), () => {});
+}
+
+/** Stickers sent since the app opened, newest first: the Recent tab. Kept in memory only. */
+const recentStickers = signal<string[]>([]);
+const PACK_NAMES: Record<string, Key> = { faces: 'packFaces', love: 'packLove', animals: 'packAnimals' };
+
+/** The sticker panel under the composer: a tab per pack (and Recent), a tap sends. */
+function StickerPanel({ language, busy, onPick }: { language: Language; busy: boolean; onPick: (sticker: StickerInfo) => void }) {
+  const art = stickerArt.value;
+  const recent = recentStickers.value.map(findSticker).filter((s): s is StickerInfo => !!s);
+  const tab = useSignal(recent.length > 0 ? 'recent' : PACKS[0]!.id);
+  const shown = tab.value === 'recent' ? recent : (PACKS.find((p) => p.id === tab.value)?.stickers ?? []);
+  const pick = (sticker: StickerInfo) => {
+    recentStickers.value = [sticker.id, ...recentStickers.peek().filter((id) => id !== sticker.id)].slice(0, 20);
+    onPick(sticker);
+  };
+  return (
+    <div class="sticker-panel">
+      <div class="sticker-tabs" role="tablist">
+        {recent.length > 0 && (
+          <button type="button" role="tab" class="sticker-tab" aria-selected={tab.value === 'recent'} aria-label={t(language, 'recentStickers')} onClick={() => (tab.value = 'recent')}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 7v5l3 2M21 12a9 9 0 11-9-9 9 9 0 019 9z" />
+            </svg>
+          </button>
+        )}
+        {PACKS.map((p) => {
+          const cover = art?.[p.stickers[0]!.id];
+          const name = PACK_NAMES[p.id] ? t(language, PACK_NAMES[p.id]!) : p.id;
+          return (
+            <button key={p.id} type="button" role="tab" class="sticker-tab" aria-selected={tab.value === p.id} aria-label={name} onClick={() => (tab.value = p.id)}>
+              {cover ? <img src={cover} alt="" /> : <span aria-hidden="true">{p.stickers[0]!.e}</span>}
+            </button>
+          );
+        })}
+      </div>
+      <div class="sticker-grid" role="tabpanel">
+        {shown.map((s) => (
+          <button key={s.id} type="button" class="sticker-cell" aria-label={s.e} disabled={busy} onClick={() => pick(s)}>
+            {art?.[s.id] ? <img src={art[s.id]} alt="" draggable={false} /> : <span aria-hidden="true">{s.e}</span>}
+          </button>
+        ))}
+        <details class="sticker-credit">
+          <summary>{ART_CREDIT}</summary>
+          <pre dir="ltr">{ART_LICENSE}</pre>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+/** A sticker in a message; one this version doesn't have (a newer pack) shows as its emoji. */
+function StickerView({ sticker, language }: { sticker: Sticker; language: Language }) {
+  const emoji = findSticker(sticker.id)?.e ?? sticker.e ?? '';
+  const url = stickerArt.value?.[sticker.id];
+  const label = `${emoji} ${t(language, 'sticker')}`.trim();
+  return url ? (
+    <img class="sticker" src={url} alt={label} draggable={false} />
+  ) : (
+    <span class="sticker missing" role="img" aria-label={label}>
+      {emoji || '🖼️'}
+    </span>
   );
 }
 
@@ -1369,8 +1481,9 @@ function AttachDialog({
   );
 }
 
-/** "📷 Photo", "📹 Video", "GIF" or "📎 name" before a caption: for chat previews, quotes and the reply bar. */
-function mediaLine(language: Language, media: { t: string; n?: string } | undefined, text: string): string {
+/** A message in a line: its text, with "📷 Photo", "📹 Video", "📎 name" and so on before a caption, or "😉 Sticker". For chat previews, quotes and the reply bar. */
+function contentLine(language: Language, { text, media, sticker }: { text: string; media?: { t: string; n?: string } | undefined; sticker?: Sticker | undefined }): string {
+  if (sticker) return `${findSticker(sticker.id)?.e ?? sticker.e ?? ''} ${t(language, 'sticker')}`.trim();
   if (!media) return text;
   const label = {
     photo: `📷 ${t(language, 'photo')}`,
@@ -1987,8 +2100,8 @@ function Bubble({
     pulled.value = 0;
   };
   const quoteName = quoted ? (quoted.out ? tr('you') : peer) : '';
-  // A video message stands on its own, without a bubble, as in Telegram.
-  const bare = !!m.media && shownAs(m.media) === 'round' && !m.text;
+  // A sticker or video message stands on its own, without a bubble, as in Telegram.
+  const bare = !!m.sticker || (!!m.media && shownAs(m.media) === 'round' && !m.text);
   return (
     <li
       id={`m-${m.id}`}
@@ -2010,11 +2123,12 @@ function Bubble({
       )}
       {quoted !== undefined &&
         (quoted ? (
-          <Quote name={quoteName} text={mediaLine(language, quoted.media, quoted.text)} onClick={onQuote} />
+          <Quote name={quoteName} text={contentLine(language, quoted)} onClick={onQuote} />
         ) : (
           <Quote name={tr('deletedMessage')} text="" />
         ))}
       {m.media && <Attachment app={app} message={m} language={language} progress={app.transfers.value[m.id]} />}
+      {m.sticker && <StickerView sticker={m.sticker} language={language} />}
       {m.text && (
         <span class="text" dir="auto">
           {m.text}
@@ -2074,15 +2188,17 @@ function MessageMenu({
                 {tr('reply')}
               </button>
             )}
-            <button
-              type="button"
-              class="menu-item"
-              {...(canReply ? {} : { ref: first })}
-              onClick={act(() => void navigator.clipboard?.writeText(message.text).catch(() => {}))}
-            >
-              {tr('copy')}
-            </button>
-            <button type="button" class="menu-item danger" onClick={() => (confirming.value = true)}>
+            {message.text && (
+              <button
+                type="button"
+                class="menu-item"
+                {...(canReply ? {} : { ref: first })}
+                onClick={act(() => void navigator.clipboard?.writeText(message.text).catch(() => {}))}
+              >
+                {tr('copy')}
+              </button>
+            )}
+            <button type="button" class="menu-item danger" {...(!canReply && !message.text ? { ref: first } : {})} onClick={() => (confirming.value = true)}>
               {tr('deleteForMe')}
             </button>
           </>

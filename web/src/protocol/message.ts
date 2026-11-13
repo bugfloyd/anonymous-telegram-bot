@@ -69,6 +69,14 @@ export interface Media {
   p?: string;
 }
 
+/** A sticker from the app's own packs (stickers/catalog.ts): just which one, nothing uploaded. */
+export interface Sticker {
+  /** "pack/name". */
+  id: string;
+  /** The emoji it stands for: shown where the sticker isn't known (a newer pack). */
+  e?: string;
+}
+
 export interface Message {
   v: typeof PROTOCOL_VERSION;
   kind: Kind;
@@ -95,6 +103,8 @@ export interface Message {
   seen?: string[];
   /** An attachment (kind "message"). */
   media?: Media;
+  /** A sticker (kind "message"), on its own: no text or attachment with it. */
+  sticker?: Sticker;
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -198,10 +208,13 @@ export function checkMessage(value: unknown): Message {
     m.seen.forEach((s) => bytes(s, 16, 'seen'));
   }
   if (m.media !== undefined) checkMedia(m.media);
+  if (m.sticker !== undefined) checkSticker(m.sticker);
   switch (m.kind) {
     case 'message':
-      // Text, an attachment, or both (a caption).
-      if (m.media === undefined && (typeof m.text !== 'string' || m.text.trim() === '')) throw new MessageError('empty message');
+      // Text, an attachment, or both (a caption); or a sticker on its own.
+      if (m.sticker !== undefined) {
+        if (m.media !== undefined || m.text !== undefined) throw new MessageError('bad sticker');
+      } else if (m.media === undefined && (typeof m.text !== 'string' || m.text.trim() === '')) throw new MessageError('empty message');
       break;
     case 'seen':
       if (m.seen === undefined || m.text !== undefined) throw new MessageError('bad seen');
@@ -209,6 +222,7 @@ export function checkMessage(value: unknown): Message {
     default:
       if (m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError(`bad ${m.kind}`);
   }
+  if (m.kind !== 'message' && m.sticker !== undefined) throw new MessageError(`bad ${m.kind}`);
   if (m.kind === 'seen' && m.media !== undefined) throw new MessageError('bad seen');
   return m as unknown as Message;
 }
@@ -238,6 +252,13 @@ function checkMedia(value: unknown): void {
     if (bars.length === 0 || bars.length > MAX_WAVEFORM || toBase64Url(bars) !== a.v) throw new MessageError('bad media waveform');
   }
   if (a.p !== undefined && (typeof a.p !== 'string' || a.p.length > MAX_PREVIEW || !/^[A-Za-z0-9_-]+$/.test(a.p))) throw new MessageError('bad media preview');
+}
+
+function checkSticker(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new MessageError('bad sticker');
+  const a = value as Record<string, unknown>;
+  if (typeof a.id !== 'string' || !/^[a-z0-9_]{1,32}\/[a-z0-9_]{1,40}$/.test(a.id)) throw new MessageError('bad sticker');
+  if (a.e !== undefined && (typeof a.e !== 'string' || a.e.length === 0 || a.e.length > 16)) throw new MessageError('bad sticker emoji');
 }
 
 /** How an attachment is shown: its kind, or as a file if this version doesn't know the kind. */
