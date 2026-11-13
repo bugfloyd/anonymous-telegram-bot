@@ -82,8 +82,9 @@ In BotFather, for the environment's bot:
 - a direct-link Mini App `<app>` pointing at `https://<org>.github.io/`,
   with "request write access" on;
 - the main Mini App and the menu button pointing at the same address;
-- the privacy policy ([privacy.md](privacy.md)), which Telegram's bot
-  developer terms require.
+- a privacy policy, which Telegram's bot developer terms require. Whoever
+  runs the environment publishes it, outside this repository;
+  [data.md](data.md) is the technical part it can point to.
 
 ### The app's hosting
 
