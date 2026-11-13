@@ -1,123 +1,105 @@
 # Incognito Chat
 
-Anonymous messaging through personal links, with end-to-end encryption.
+Anonymous messaging through personal links, end-to-end encrypted, inside
+Telegram.
 
-> **Status:** version 2 is being built on `main`, and runs in a dev
-> environment. Version 1, an in-chat Telegram bot, is kept at tag
-> [`v1`](../../tree/v1).
+> **Status:** version 2 is being built on `main` and runs in a dev
+> environment; it isn't released yet. Version 1, an in-chat Telegram bot, is
+> kept at tag [`v1`](../../tree/v1).
 
-Version 2 moves all messaging into a Telegram Mini App, a web app that
-encrypts messages on the device before they leave it. The server only ever
-holds encrypted messages waiting for delivery, and doesn't record who wrote to
-whom. A full description of the security model, including what users still
-have to trust, will be published here before release.
+You share your link; anyone with it can write to you without you knowing who
+they are, and you can reply. Everything happens in a Telegram Mini App that
+encrypts on the device before anything leaves it. The server only holds
+encrypted messages until they're delivered, and never records who wrote to
+whom.
 
-## Layout
+## What it does
+
+- **Personal links.** One link per account, replaceable at any time. While the
+  service is invite-only, owning a link needs an invitation; anyone with
+  Telegram can write to one.
+- **Conversations like Telegram's:** text, replies, photos, videos, GIFs,
+  files, music, voice messages, round video messages and stickers, with
+  "sent" and "seen" ticks.
+- **Anonymous both ways:** a sender is a label like `🦊 K3F9`, the same each
+  time they write through your link, and unlinkable to anything else they do.
+- **Silent blocks:** the blocked person isn't told; their messages just stop
+  arriving.
+- **Notices** from the bot when a message arrives: a generic "New message",
+  never who or what.
+- **English and Persian**, right-to-left included, in Telegram's own theme.
+
+## How it works, briefly
+
+- **The app** (TypeScript, Preact) runs as a Telegram Mini App and does all
+  the encryption with the browser's WebCrypto. It's served from GitHub Pages,
+  built reproducibly and attested, so anyone can check that what's served is
+  this repository's code.
+- **The backend** is four Go functions on AWS Lambda (API, bot, sockets,
+  notices), with DynamoDB and an S3 bucket for encrypted attachments. Nothing
+  runs when idle.
+- **Messages** are encrypted to the other side's current key (HPKE on P-256,
+  AES-256-GCM) and routed by random **mailbox** IDs, never by account. The
+  server knows who a mailbox belongs to, not who writes to it.
+- **Sending needs no login:** each send spends an anonymous, blind-signed
+  token, so the server can rate-limit without learning who sends.
+- **Keys rotate** about weekly; history and keys live only on the user's one
+  device.
+
+More: [how it works](docs/architecture.md), and the
+[protocol](docs/protocol.md) in full.
+
+## Security at a glance
+
+**The operator can't** read messages or attachments, learn from stored data
+who wrote to whom or who an anonymous sender is, forge messages, or swap keys
+unnoticed (links carry their key's fingerprint).
+
+**The operator could, but would be caught,** serving app code that differs
+from this repository: builds are reproducible, hashed and attested, and
+[anyone can check](docs/verifying.md) the live site.
+
+**Users still have to trust the operator** on two points:
+
+1. **A swapped page inside Telegram.** Whoever controls the bot decides which
+   page Telegram opens. A swapped page can't reach the keys on your device, so
+   past messages stay safe, but what you type into it isn't. Setting up again
+   on such a page would end your account loudly, on your old device.
+2. **Live traffic watching.** The operator or AWS could link people by the
+   timing and IP addresses of requests as they happen. Nothing stored shows
+   this.
+
+And, as with any app, users trust their own device and the Telegram app.
+
+What still leaks (timing, IP addresses, which links Telegram sees opened,
+rough attachment sizes) and the other limits are listed in full in the
+[security model](docs/security.md). What is kept, where and for how long is in
+the [privacy policy](docs/privacy.md).
+
+## Documentation
+
+| Document | What |
+|---|---|
+| [Security model](docs/security.md) | Goals, threats, what users still have to trust, what still leaks, limits |
+| [Privacy policy](docs/privacy.md) | What is kept, where, for how long, and who sees what |
+| [How it works](docs/architecture.md) | The parts, accounts, links, conversations, delivery, attachments, stickers |
+| [Protocol](docs/protocol.md) | Exact formats: keys, links, envelopes, messages, rotation, delivery, media, tokens |
+| [Verifying the app](docs/verifying.md) | Reproducible builds, attestations, and checking the live site |
+| [Development](docs/development.md) | Code layout, running every check locally, dependency rules |
+| [Deployment](docs/deployment.md) | Environments, bootstrap, secrets, the bot and the app's hosting |
+| [Hosting](hosting/README.md) | The hosting repository that builds, attests and serves the app |
+
+## Repository
 
 | Path | What |
 |---|---|
-| `backend/` | Go, one module. `cmd/` holds one AWS Lambda entry point per trust boundary: `api` (HTTPS API), `bot` (Telegram webhook), `ws` (WebSocket connections), `notify` (Telegram notices). |
-| `web/` | The client: TypeScript, Vite and Preact. Runs as a Telegram Mini App and in a browser. |
-| `infra/` | App Terraform for one environment: DynamoDB tables (TTL, no point-in-time recovery), SSM parameters written write-only, the four functions with function URLs, the WebSocket API. Applied by CI. |
-| `infra/init/` | Bootstrap Terraform, one AWS account per environment: state bucket, GitHub OIDC provider, deploy role, Lambda permissions boundary. Applied by an account admin with `scripts/bootstrap.sh`; CI can't change its own permissions. |
-| `scripts/` | `bootstrap.sh`, and `build-lambdas.sh` for reproducible Lambda bundles. |
+| [`web/`](web) | The app: TypeScript, Vite, Preact. |
+| [`backend/`](backend) | Go: the `api`, `bot`, `ws` and `notify` Lambda functions. |
+| [`infra/`](infra) | Terraform for one environment; [`infra/init/`](infra/init) bootstraps an AWS account. |
+| [`hosting/`](hosting) | The app's build-and-deploy workflow, run by the hosting repository. |
+| [`scripts/`](scripts) | Bootstrap, reproducible Lambda builds, and live-site verification. |
+| [`docs/`](docs) | The documentation above. |
 
-## Checks
-
-Everything CI runs can be run locally.
-
-Backend (the Go toolchain is pinned in `backend/go.mod`):
-
-```shell
-cd backend
-gofmt -l .
-go vet ./...
-go test -race ./...
-../scripts/build-lambdas.sh   # prints the SHA-256 of each bundle
-```
-
-The DynamoDB store tests skip unless DynamoDB Local is running (CI always runs
-them):
-
-```shell
-podman run --rm -d -p 8000:8000 docker.io/amazon/dynamodb-local:3.3.2
-DYNAMODB_ENDPOINT=http://localhost:8000 go test -race ./...
-```
-
-Web (Node is pinned in `web/.nvmrc`):
-
-```shell
-cd web
-npm ci
-npm audit signatures
-npm run typecheck
-npm test
-npm run build
-```
-
-## Environments
-
-Each environment has its own AWS account and GitHub environment. Pushes to
-`main` deploy to **dev**, and pull requests never get cloud access. An account admin bootstraps an environment once:
-
-```shell
-AWS_PROFILE=<profile> scripts/bootstrap.sh <aws-region> dev
-gh secret set BOT_TOKEN --env dev
-gh variable set CLIENT_ORIGINS --env dev --body '["https://<client-origin>"]'
-```
-
-While invite-only (the default; set the variable `INVITE_ONLY` to `false` to
-open it), only accounts that joined through an invitation, and admins, can
-own links. Admins are listed by Telegram user ID in a secret, so the IDs stay
-out of the public deploy logs; the API keeps only their keyed hashes:
-
-```shell
-gh secret set ADMIN_TELEGRAM_IDS --env dev --body '<id>,<id>'
-```
-
-Sends are paid for with anonymous tokens signed by an issuer key: an RSA-2048
-private key in a secret, whose public key is published in
-`web/issuer-keys.json` (the client only accepts that one):
-
-```shell
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out issuer.pem
-openssl pkey -in issuer.pem -pubout -outform DER | basenc -w0 --base64url  # the "spki" to publish
-gh secret set ISSUER_KEY --env dev < issuer.pem && shred -u issuer.pem
-```
-
-The dev client is published to its own GitHub Pages site, in a separate
-GitHub organization: sites of one owner share an origin, and with it the keys
-stored in the browser, so dev must never share production's. The site's own
-workflow builds, attests and deploys each `main` commit; CI only starts it, with
-a token that can do nothing else. See [hosting/](hosting/README.md), and check
-the live site with:
-
-```shell
-scripts/verify-site.sh https://incognitochat-dev.github.io incognitochat-dev/incognitochat-dev.github.io --rebuild
-```
-
-The client takes its settings at build time (`VITE_API_URL`, `VITE_BOT_USERNAME`,
-`VITE_APP_NAME`, the hosting repository's variables); the API's origin is added to the page's Content Security
-Policy. A build without them works but can't reach a backend.
-
-Secrets (the bot token, the session key, the Telegram ID pepper, the webhook
-secret) are written to SSM through Terraform write-only arguments, so they
-never land in Terraform state or plans. Each function's role can read only the
-parameters it needs; only the `bot` and `notify` functions can read the bot
-token.
-
-## Reproducible builds
-
-The same commit always produces byte-identical Lambda bundles and web files.
-CI builds everything twice and fails if anything differs, so anyone can
-rebuild a release and compare it with what is deployed.
-
-## Supply chain
-
-- GitHub Actions are pinned to commit SHAs; Terraform provider lock files are committed.
-- npm installs exact versions only, runs no install scripts, accepts no git
-  dependencies, and refuses packages published less than 7 days ago
-  (`web/.npmrc`). CI verifies registry signatures.
-- `govulncheck` runs on every build; Dependabot proposes updates with a 7-day cooldown.
-- No environment-specific values (account IDs, bucket names, bot names, tokens)
-  are committed.
+Every check CI runs can be run locally; see [Development](docs/development.md).
+The same commit always builds byte-identical files, and CI fails if it
+doesn't.
