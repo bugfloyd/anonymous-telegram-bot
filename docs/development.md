@@ -11,9 +11,9 @@ dependencies. Deploying is in [deployment.md](deployment.md).
 | `web/` | The app: TypeScript, Vite, Preact with signals. `src/crypto` (WebCrypto only: keys, HPKE, signatures, blind RSA), `src/protocol` (envelopes, messages, links), `src/messaging` (the engine: sending, syncing, rotation, the history store), `src/media` (preparing, recording, saving attachments), `src/stickers`, `src/storage` (IndexedDB), `src/platform` (the Telegram bridge, launch data, theme), `src/net` (API and socket), `src/state` (screens and actions), `src/i18n` (English and Persian), `app.tsx` (the screens). |
 | `web/public/` | Files copied into the build as they are: the sticker images and their license. |
 | `infra/` | App Terraform for one environment: tables, the media bucket, SSM parameters, the four functions with function URLs, the WebSocket API. Applied by CI. |
-| `infra/init/` | Bootstrap Terraform, applied once per AWS account by an admin: state bucket, GitHub OIDC provider, deploy role, Lambda permissions boundary. CI can't change its own permissions. |
+| `infra/init/` | Bootstrap Terraform, applied once per AWS account by an admin: state bucket, GitHub OIDC provider, deploy role, Lambda permissions boundary, code signing. CI can't change its own permissions. |
 | `hosting/` | The reviewed copy of the hosting repository's workflow ([verifying.md](verifying.md)). |
-| `scripts/` | `bootstrap.sh`, `build-lambdas.sh` (reproducible Lambda bundles), `verify-site.sh`. |
+| `scripts/` | `bootstrap.sh`, `build-lambdas.sh` (reproducible Lambda bundles), `check-lambda-deploy.py` (checks a deploy runs the attested bundles), `verify-site.sh`. |
 | `docs/` | This documentation. |
 
 ## Checks

@@ -57,11 +57,44 @@ It needs `curl`, `jq`, `sha256sum` and the GitHub CLI; `--rebuild` also needs
   chosen people. A page on any other address has none of the keys on your
   device: it would have to make you set up again, which ends your account
   loudly on your old device and changes your link.
-- **Doesn't cover the backend.** The Lambda bundles are reproducible too, but
-  only the operator can see what is deployed. The design doesn't rely on it: a
-  malicious backend can drop or delay messages and watch timing, but can't read
-  content or forge messages, because apps check every key themselves.
+- **Covers the backend only through the operator's records** (below). The
+  design doesn't rely on the backend: a malicious one can drop or delay
+  messages and watch timing, but can't read content or forge messages,
+  because apps check every key themselves.
 
 Native apps with reproducible builds, and web standards for pinning a site's
 code (WEBCAT, WAICT), would close the first gap; they're on the
 [list of future improvements](security.md#how-the-remaining-gaps-could-close).
+
+## The backend
+
+Users can't look into the AWS account, so the backend is checked through
+what CI publishes:
+
+- **Reproducible and attested.** The four Lambda bundles are byte-identical
+  for the same commit (`scripts/build-lambdas.sh` prints their SHA-256), and
+  each deploy attests them with Sigstore before deploying them.
+- **Only signed code runs.** Each bundle is signed with the environment's AWS
+  Signer profile, and every function has a code signing config that makes
+  Lambda refuse anything not signed by it. CI is the only place that signs;
+  the deploy role can't change the profile or the config, nor create or keep
+  a function without it.
+- **Each deploy checks itself.** After deploying, CI fetches the code each
+  function runs from Lambda and checks that it is the attested bundle plus
+  AWS's signature, and nothing else (`scripts/check-lambda-deploy.py`). The
+  public log of the "Check the deployed code" step shows both hashes.
+
+To check a deploy, rebuild its commit and compare:
+
+```shell
+git checkout <commit> && cd backend && ../scripts/build-lambdas.sh
+gh attestation verify dist/api.zip --repo <org>/<org>
+```
+
+The hashes printed should match the deploy log, and the attestation proves
+the bundle was built by this repository's workflow.
+
+What this doesn't prove: whoever controls the AWS account can switch code
+signing off and deploy something else, and only the account's own records
+(CloudTrail) would show it. Change alerts held by an independent party are a
+[future improvement](security.md#how-the-remaining-gaps-could-close).

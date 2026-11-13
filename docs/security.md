@@ -146,10 +146,14 @@ it. This is how close it gets.
   weekly and old private keys are deleted after 35 days. A stolen device key
   exposes at most about five weeks of messages a malicious server might have
   kept.
-- **The backend can't be verified by users.** Its builds are reproducible, but
-  only the operator can see what is deployed. The design doesn't depend on
-  it: a malicious backend can drop or delay messages and watch timing, but
-  can't read content or forge messages, because apps check keys themselves.
+- **Users can't verify the backend directly.** Its builds are reproducible
+  and attested, Lambda runs only code CI signed, and each deploy's public log
+  shows that the running code is the attested build
+  ([verifying.md](verifying.md#the-backend)). But users can't look into AWS,
+  and whoever controls the AWS account could switch signing off. The design
+  doesn't depend on it: a malicious backend can drop or delay messages and
+  watch timing, but can't read content or forge messages, because apps check
+  keys themselves.
 
 ## How the remaining gaps could close
 
