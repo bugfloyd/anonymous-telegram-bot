@@ -934,8 +934,10 @@ function Composer({
     if (atEnd) scrollToEnd();
   }, [text.value, recording]);
   const locked = rec.state === 'locked';
-  // The record button keeps its element (and the press on it) from idle to
-  // holding to locked, so the children here are flat and keyed.
+  // As Telegram's bar: one rounded field with the sticker button, the text,
+  // the attach button and the record (or send) button; mirrored for
+  // right-to-left. The record button keeps its element (and the press on
+  // it) from idle to holding to locked, so the children are flat and keyed.
   return (
     <div class="composer-wrap" onKeyDown={(e) => e.key === 'Escape' && recording && rec.cancel()}>
       {reply && (
@@ -947,16 +949,37 @@ function Composer({
         </div>
       )}
       <div class={rec.mode === 'round' && recording ? 'composer recording-round' : 'composer'}>
-        {locked ? (
-          <button key="trash" type="button" class="attach" aria-label={t(language, 'cancelRecording')} onClick={rec.cancel}>
+        {!recording && onSticker ? (
+          <button
+            key="stickers"
+            type="button"
+            class="bar-icon"
+            aria-label={t(language, 'stickers')}
+            aria-expanded={stickers.value}
+            disabled={busy}
+            onClick={() => {
+              const atEnd = isAtEnd();
+              stickers.value = !stickers.value;
+              if (stickers.value) {
+                input.current?.blur();
+                loadStickerArt();
+                if (atEnd) requestAnimationFrame(() => scrollToEnd());
+              } else input.current?.focus();
+            }}
+          >
             <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+              {stickers.value ? (
+                <path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10" />
+              ) : (
+                <path d="M12 21a9 9 0 100-18 9 9 0 000 18zM8.5 14.5a4.5 4.5 0 007 0M9 9.5h.01M15 9.5h.01" />
+              )}
             </svg>
           </button>
-        ) : !recording && onAttach ? (
-          <button key="attach" type="button" class="attach" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M16.5 6.5l-8 8a2.5 2.5 0 003.5 3.5l8.5-8.5a4.5 4.5 0 00-6.4-6.4L5.5 11.7a6.5 6.5 0 009.2 9.2l6.8-6.8" />
+        ) : null}
+        {locked ? (
+          <button key="trash" type="button" class="bar-icon" aria-label={t(language, 'cancelRecording')} onClick={rec.cancel}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
             </svg>
           </button>
         ) : null}
@@ -986,47 +1009,27 @@ function Composer({
             )}
           </div>
         ) : (
-          <div key="text" class={onSticker ? 'text-field with-stickers' : 'text-field'}>
-            <textarea
-              ref={input}
-              // Empty, it follows the page (the placeholder starts at the right in Persian); typed in, the text.
-              dir={text.value ? 'auto' : undefined}
-              rows={1}
-              maxLength={4000}
-              placeholder={t(language, 'messagePlaceholder')}
-              value={text.value}
-              disabled={busy}
-              onInput={(e) => (text.value = e.currentTarget.value)}
-              onFocus={() => (stickers.value = false)}
-            />
-            {onSticker && (
-              <button
-                type="button"
-                class="sticker-toggle"
-                aria-label={t(language, 'stickers')}
-                aria-expanded={stickers.value}
-                disabled={busy}
-                onClick={() => {
-                  const atEnd = isAtEnd();
-                  stickers.value = !stickers.value;
-                  if (stickers.value) {
-                    input.current?.blur();
-                    loadStickerArt();
-                    if (atEnd) requestAnimationFrame(() => scrollToEnd());
-                  } else input.current?.focus();
-                }}
-              >
-                <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
-                  {stickers.value ? (
-                    <path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10" />
-                  ) : (
-                    <path d="M20 12a8 8 0 11-8-8h3l5 5zM15 4v5h5M8.5 14a4 4 0 007 0M9 10h.01M15 10h.01" />
-                  )}
-                </svg>
-              </button>
-            )}
-          </div>
+          <textarea
+            key="text"
+            ref={input}
+            // Empty, it follows the page (the placeholder starts at the right in Persian); typed in, the text.
+            dir={text.value ? 'auto' : undefined}
+            rows={1}
+            maxLength={4000}
+            placeholder={t(language, 'messagePlaceholder')}
+            value={text.value}
+            disabled={busy}
+            onInput={(e) => (text.value = e.currentTarget.value)}
+            onFocus={() => (stickers.value = false)}
+          />
         )}
+        {!recording && onAttach ? (
+          <button key="attach" type="button" class="bar-icon attach-icon" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M16.5 6.5l-8 8a2.5 2.5 0 003.5 3.5l8.5-8.5a4.5 4.5 0 00-6.4-6.4L5.5 11.7a6.5 6.5 0 009.2 9.2l6.8-6.8" />
+            </svg>
+          </button>
+        ) : null}
         {rec.available && (recording || text.value.trim() === '') ? (
           <button
             key="record"
