@@ -1169,6 +1169,8 @@ const HOLD_MS = 250;
 /** How far up a press slides to lock the recording, and toward the start to drop it, in px. */
 const LOCK_LIFT = 72;
 const CANCEL_SLIDE = 110;
+/** A microphone or camera slower than this to start was most likely behind a permission prompt. */
+const PROMPT_MS = 1000;
 
 interface Press {
   x: number;
@@ -1187,7 +1189,9 @@ interface Press {
  * hold the button to record and let go to send; slide toward the start to
  * drop it, or up to lock it (then the bin drops it and the button sends). A
  * tap switches between voice and video. From the keyboard, Enter starts a
- * locked recording. Leaving the conversation drops a recording in progress;
+ * locked recording. A press that a permission prompt (or anything else)
+ * takes away isn't dropped: the recording goes on, locked. Leaving the
+ * conversation drops a recording in progress;
  * at the longest length (15 minutes, a minute for video) it's sent.
  */
 function useRecorder(language: Language, onVoice: ((recording: Recording) => Promise<void>) | undefined, onRound: ((recording: RoundRecording) => Promise<void>) | undefined) {
@@ -1246,8 +1250,17 @@ function useRecorder(language: Language, onVoice: ((recording: Recording) => Pro
     state.value = 'starting';
     elapsed.value = 0;
     levels.value = [];
+    // A permission prompt takes the press away (Telegram on Android asks
+    // every time): it ends without a let-go, or the page loses focus, or it's
+    // just slow. Then the recording isn't dropped but starts locked.
+    const asked = performance.now();
+    let interrupted = false;
+    const interrupt = () => (interrupted = true);
+    window.addEventListener('blur', interrupt);
+    document.addEventListener('visibilitychange', interrupt);
     try {
       const r = m === 'voice' ? await startRecording((level) => (levels.value = [...levels.peek().slice(-31), level])) : await startRound();
+      if (p && !p.cancelled && press.current !== p && (interrupted || performance.now() - asked > PROMPT_MS)) p.locked = true;
       if (!wanted(p)) {
         // Let go (or slid away) before the microphone or camera was ready.
         r.cancel();
@@ -1261,6 +1274,9 @@ function useRecorder(language: Language, onVoice: ((recording: Recording) => Pro
       if (state.peek() === 'starting') reset();
       const texts = m === 'voice' ? MIC_TEXT : CAMERA_TEXT;
       say(t(language, err instanceof RecordingUnavailable ? texts[err.reason] : texts.unsupported));
+    } finally {
+      window.removeEventListener('blur', interrupt);
+      document.removeEventListener('visibilitychange', interrupt);
     }
   };
   const toggle = () => {
@@ -1278,10 +1294,13 @@ function useRecorder(language: Language, onVoice: ((recording: Recording) => Pro
       clearTimeout(p.timer);
       if (!cancelled) toggle();
     } else if (!p.cancelled && !p.locked && state.peek() === 'holding') {
-      if (cancelled) cancel();
+      // Taken away mid-recording (a dialog, a system gesture): kept, locked.
+      if (cancelled) state.value = 'locked';
       else void finish();
     } else if (!p.cancelled && !p.locked) {
-      // Still starting: begin() drops it once it's ready.
+      // Still starting. Taken away (a permission prompt): it starts locked.
+      // Let go: begin() drops it once it's ready, unless that took long.
+      if (cancelled) p.locked = true;
       slide.value = 0;
       lift.value = 0;
     }
@@ -1308,7 +1327,17 @@ function useRecorder(language: Language, onVoice: ((recording: Recording) => Pro
     cancel,
     press: {
       onPointerDown: (e: PointerEvent) => {
-        if (e.button !== 0 || press.current) return;
+        if (e.button !== 0) return;
+        const old = press.current;
+        if (old) {
+          if (old.pointer === e.pointerId || old.timer) return;
+          // That press never ended here (a prompt took it): it's locked now, and this tap sends.
+          press.current = null;
+          if (!old.cancelled && !old.send && !old.locked) {
+            old.locked = true;
+            if (state.peek() === 'holding') state.value = 'locked';
+          }
+        }
         const p: Press = { x: e.clientX, y: e.clientY, pointer: e.pointerId, timer: 0, send: false, locked: false, cancelled: false };
         if (state.peek() === 'locked') {
           press.current = { ...p, send: true };
