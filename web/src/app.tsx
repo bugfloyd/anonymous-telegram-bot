@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
+import type { KeepMedia, MediaSettings } from './messaging/settings';
 import { fromBase64Url } from './crypto/encoding';
 import { showableAs } from './media/prepare';
 import {
@@ -159,6 +160,8 @@ function Screen({ app, language }: { app: AppState; language: Language }) {
       return <ConfirmDelete app={app} language={language} busy={screen.busy} error={screen.error} />;
     case 'blocked':
       return <Blocked app={app} language={language} screen={screen} />;
+    case 'storage':
+      return <Storage app={app} language={language} screen={screen} />;
     case 'home':
       return <Home app={app} language={language} screen={screen} />;
     case 'invitations':
@@ -321,6 +324,9 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
         </div>
       )}
       {busy && <div class="spinner" aria-hidden="true" />}
+      <button type="button" class="link-button muted-link" disabled={busy} onClick={() => void app.storage()}>
+        {tr('storageTitle')}
+      </button>
       <button type="button" class="link-button delete-account" disabled={busy || offline} onClick={app.askDeleteAccount}>
         {tr('deleteAccount')}
       </button>
@@ -684,6 +690,79 @@ function Blocked({ app, language, screen }: { app: AppState; language: Language;
           ))}
         </ul>
       )}
+    </Page>
+  );
+}
+
+const KEEP_TEXT: Record<KeepMedia, Key> = { forever: 'keepForever', month: 'keepMonth', week: 'keepWeek' };
+const AUTO_TEXT: Record<keyof MediaSettings['auto'], Key> = { photos: 'autoPhotos', voice: 'autoVoice', gifs: 'autoGifs' };
+
+/** Data and storage: what stays on this device, and what's fetched by itself. */
+function Storage({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'storage' }> }) {
+  const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
+  const { settings, usage, busy, cleared } = screen;
+  const size = (bytes: number) => formatSize(language, bytes);
+  const clear = async (conv?: string) => {
+    const choice = await app.popup({
+      message: tr('clearMediaConfirm'),
+      buttons: [
+        { id: 'clear', type: 'destructive', text: tr('clearMedia') },
+        { id: 'cancel', type: 'cancel' },
+      ],
+    });
+    if (choice === 'clear') void app.clearMedia(conv);
+  };
+  return (
+    <Page title={tr('storageTitle')} busy={busy}>
+      {cleared !== null && cleared > 0 && (
+        <p class="notice" role="status">
+          {tr('storageCleared', { size: size(cleared) })}
+        </p>
+      )}
+      {usage && <p>{usage.media > 0 ? tr('storageMedia', { size: size(usage.media) }) : tr('noStoredMedia')}</p>}
+      {usage?.app && <p class="muted">{tr('storageApp', { size: size(usage.app.usage) })}</p>}
+      <fieldset class="settings" disabled={busy}>
+        <legend>{tr('keepMedia')}</legend>
+        {(['forever', 'month', 'week'] as const).map((keep) => (
+          <label class="option" key={keep}>
+            <input type="radio" name="keep-media" checked={settings.keep === keep} onChange={() => void app.setKeepMedia(keep)} />
+            {tr(KEEP_TEXT[keep])}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset class="settings" disabled={busy}>
+        <legend>{tr('autoDownload')}</legend>
+        {(['photos', 'voice', 'gifs'] as const).map((kind) => (
+          <label class="option" key={kind}>
+            <input type="checkbox" checked={settings.auto[kind]} onChange={(e) => void app.setAutoDownload(kind, e.currentTarget.checked)} />
+            {tr(AUTO_TEXT[kind])}
+          </label>
+        ))}
+      </fieldset>
+      {usage && usage.chats.length > 0 && (
+        <section class="settings">
+          <h2>{tr('storageChats')}</h2>
+          <ul class="chats">
+            {usage.chats.map((c) => (
+              <li key={c.id} class="storage-row">
+                <span class="storage-chat">
+                  <bdi dir="ltr" class="label">
+                    {c.label}
+                  </bdi>
+                  <span class="muted">{size(c.bytes)}</span>
+                </span>
+                <Button kind="secondary" disabled={busy} onClick={() => void clear(c.id)}>
+                  {tr('clearMedia')}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" class="link-button" disabled={busy} onClick={() => void clear()}>
+            {tr('clearAllMedia')}
+          </button>
+        </section>
+      )}
+      <p class="muted">{tr('storageNote')}</p>
     </Page>
   );
 }
@@ -1635,6 +1714,9 @@ function useMediaUrl(app: AppState, m: MessageView) {
   return url;
 }
 
+/** Whether an attachment waits for a tap to download: one received, or one cleared from this device. */
+const fetchable = (m: MessageView) => (m.file === 'remote' && !m.out) || m.file === 'cleared';
+
 /** The tiny preview carried in the message, as an image URL. */
 function tinyPreview(p: string | undefined): string | null {
   return p ? `data:image/jpeg;base64,${p.replace(/-/g, '+').replace(/_/g, '/')}` : null;
@@ -1649,7 +1731,7 @@ function MediaState({ app, message: m, language, progress }: { app: AppState; me
           <Ring fraction={progress} />
         </span>
       )}
-      {m.file === 'remote' && progress === undefined && !m.out && (
+      {fetchable(m) && progress === undefined && (
         <button type="button" class="media-progress" aria-label={t(language, 'download')} onClick={() => void app.fetchMedia(m.id)}>
           ↓
         </button>
@@ -1691,7 +1773,7 @@ function VideoView({ app, message: m, language, progress }: { app: AppState; mes
   const { w = 16, h = 9, p, l, s } = m.media!;
   const tiny = tinyPreview(p);
   const length = l !== undefined ? formatLength(language, l) : null;
-  const size = m.file === 'remote' ? formatSize(language, s) : null;
+  const size = fetchable(m) ? formatSize(language, s) : null;
   return (
     <div class="photo" style={{ aspectRatio: `${w} / ${h}` }}>
       {tiny && <img class="tiny" src={tiny} alt="" />}
@@ -1804,7 +1886,7 @@ function PlayButton({ app, message: m, language, progress, playing, onPlay }: { 
       </span>
     );
   }
-  if (m.file === 'remote' && !m.out) {
+  if (fetchable(m)) {
     return (
       <button type="button" class="play" aria-label={t(language, 'download')} onClick={() => void app.fetchMedia(m.id)}>
         ↓
@@ -2071,12 +2153,12 @@ function FileView({ app, message: m, language, progress }: { app: AppState; mess
   const busy = progress !== undefined;
   const onClick = () => {
     if (busy) return;
-    if (m.file === 'remote' && !m.out) void app.fetchMedia(m.id);
+    if (fetchable(m)) void app.fetchMedia(m.id);
     else if (m.file === 'local') void save(app, m, language);
   };
   return (
     <button type="button" class="file" onClick={onClick} disabled={m.file === 'gone'}>
-      <span class="file-icon">{busy ? <Ring fraction={progress} /> : m.file === 'remote' && !m.out ? '↓' : extension(media.n) || '📄'}</span>
+      <span class="file-icon">{busy ? <Ring fraction={progress} /> : fetchable(m) ? '↓' : extension(media.n) || '📄'}</span>
       <span class="file-info">
         <span class="file-name" dir="auto">
           {media.n ?? t(language, 'file')}

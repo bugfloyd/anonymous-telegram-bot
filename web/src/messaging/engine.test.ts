@@ -12,7 +12,7 @@ import { countTokens, LOW_WATER } from '../account/wallet';
 import { getMeta, getSealed, openDatabase, putKey, putMeta, type Database } from '../storage/db';
 import { POOL_LOW, poolSize } from './pool';
 import { createMessaging } from './engine';
-import { getConversation, getMedia, listConversations, listMessages } from './store';
+import { clearMedia, getConversation, getMedia, listConversations, listMessages, mediaUsage } from './store';
 import type { Transfer } from '../net/transfer';
 import { KEY_RETENTION_MS, scheduleKeyDeletion, type KeyEntry } from './keys';
 
@@ -653,6 +653,44 @@ describe('attachments', () => {
     // ...or the conversation is deleted here.
     await owner.messaging.remove(conv);
     expect(backend.uploads.size).toBe(0);
+  });
+
+  it('clears attachments from this device, keeps their messages, and fetches them again on request', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    const photo = crypto.getRandomValues(new Uint8Array(3000));
+    const notes = crypto.getRandomValues(new Uint8Array(5000));
+    await sender.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 10, h: 10, m: 'image/jpeg' } });
+    await sender.messaging.sendMedia(conv, { file: notes, media: { t: 'file', s: notes.length, n: 'notes.pdf' } });
+    await owner.messaging.sync();
+    const [first, second] = (await listMessages(owner.db, conv)).filter((m) => m.media);
+    await owner.messaging.fetchMedia(first!.id);
+    await owner.messaging.fetchMedia(second!.id);
+    expect(await mediaUsage(owner.db)).toEqual({ total: 8000, byConversation: { [conv]: 8000 } });
+
+    // Only what's older than the cutoff goes.
+    expect(await clearMedia(owner.db, { before: first!.at })).toBe(0);
+    // A conversation's attachments go; their messages stay, marked cleared.
+    expect(await clearMedia(owner.db, { conv: 'another' })).toBe(0);
+    expect(await clearMedia(owner.db, { conv })).toBe(8000);
+    expect(await mediaUsage(owner.db)).toEqual({ total: 0, byConversation: {} });
+    expect(await getMedia(owner.db, first!.id)).toBeUndefined();
+    expect((await listMessages(owner.db, conv)).filter((m) => m.media).map((m) => m.file)).toEqual(['cleared', 'cleared']);
+
+    // A tap fetches one again while the server keeps it.
+    expect(await owner.messaging.fetchMedia(first!.id)).toBe('local');
+    expect(await getMedia(owner.db, first!.id)).toEqual(photo);
+    // Ours too: the sender clears both and fetches one back.
+    expect(await clearMedia(sender.db)).toBe(8000);
+    const [mine] = (await listMessages(sender.db, conv)).filter((m) => m.media);
+    expect(await sender.messaging.fetchMedia(mine!.id)).toBe('local');
+    expect(await getMedia(sender.db, mine!.id)).toEqual(photo);
+    // Once the upload is gone, a cleared one is gone for good.
+    backend.uploads.clear();
+    expect(await owner.messaging.fetchMedia(second!.id)).toBe('gone');
   });
 
   it('marks an attachment gone when the upload has expired', async () => {

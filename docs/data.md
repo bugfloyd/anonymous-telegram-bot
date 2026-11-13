@@ -25,7 +25,8 @@ Keys, conversations, their history, attachments received or sent, labels, and
 blocks. History and attachments are encrypted under a key that can't leave the
 device. None of it leaves the device in readable form. It's deleted when the
 user deletes a conversation, deletes the account or sets up again, or when
-Telegram or the phone clears the app's storage.
+Telegram or the phone clears the app's storage. Attachments can also be
+cleared on their own (Data and storage), and their messages stay.
 
 ## On the server
 
@@ -94,6 +95,10 @@ or a "seen". This is explained in [security.md](security.md#what-still-leaks).
 - **Block** someone. They're not told; their messages are no longer delivered.
 - **Replace their link.** The old one stops working at once.
 - **Turn notices off** by blocking the bot in Telegram.
+- **Choose what stays on the device** (Data and storage, on the Link tab): keep
+  attachments forever, for a month or for a week; clear a chat's or all of
+  them; and choose which kinds download by themselves. A cleared attachment
+  can be fetched again only while the server still holds it.
 - **Delete their account** in the app (on the Link tab). Everything the server
   holds for it is deleted at once (the link, mailboxes, waiting messages and
   attachments, invitation codes, keys, and the hash of the Telegram ID), and

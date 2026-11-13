@@ -4,7 +4,9 @@ import { readAccount } from '../account/account';
 import { ApiError, NetworkError, type Api } from '../net/api';
 import { parseLaunch, type Launch } from '../platform/launch';
 import type { Bridge, OutgoingEvents } from '../platform/telegram';
-import { getMeta, openDatabase } from '../storage/db';
+import { getMeta, openDatabase, putMeta } from '../storage/db';
+import { addMessage, getMedia, listMessages, putMedia } from '../messaging/store';
+import { DEFAULT_MEDIA_SETTINGS, getMediaSettings } from '../messaging/settings';
 import type { SyncEvent } from '../sync/locks';
 import { confirmationMatches, createApp, type Deps, type Screen } from './app';
 
@@ -168,9 +170,9 @@ async function registered(api: Api, extra: Partial<Deps> = {}) {
   const reg = await setup({ api, bridge: fakeBridge().bridge, launch: launchWith(code), db });
   await reg.app.start();
   // Then a normal launch (or one opened from a link).
-  const { app } = await setup({ api, bridge: fakeBridge().bridge, launch: launchWith(''), db, ...extra });
+  const { app, broadcasts } = await setup({ api, bridge: fakeBridge().bridge, launch: launchWith(''), db, ...extra });
   await app.start();
-  return { app, db, code };
+  return { app, db, code, broadcasts };
 }
 
 function home(screen: Screen) {
@@ -443,6 +445,62 @@ describe('deleting the account', () => {
     const owner = await registered(fakeServer().api);
     owner.app.askDeleteAccount();
     await owner.app.cancelDeleteAccount();
+    expect(home(owner.app.screen.value).tab).toBe('links');
+  });
+});
+
+describe('data and storage', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  /** A received photo already on the device, as if fetched days ago. */
+  async function photoOnDevice(db: Awaited<ReturnType<typeof openDatabase>>, id: string, daysAgo: number) {
+    await addMessage(
+      db,
+      { id, conv: 'c1', at: Date.now() - daysAgo * DAY, out: false, status: 'read', file: 'local' },
+      { text: '', media: { t: 'photo', s: 1000, w: 10, h: 10, id: `upload-${id}`, k: 'a2V5', d: 'c2VjcmV0' } },
+    );
+    await putMedia(db, id, new Uint8Array(1000));
+  }
+
+  it('shows what is on the device, and saves the settings', async () => {
+    const owner = await registered(fakeServer().api);
+    await owner.app.storage();
+    expect(owner.app.screen.value).toMatchObject({ kind: 'storage', settings: DEFAULT_MEDIA_SETTINGS, usage: { media: 0, chats: [] }, busy: false, cleared: null });
+    await owner.app.setAutoDownload('gifs', false);
+    expect(owner.app.screen.value).toMatchObject({ kind: 'storage', settings: { keep: 'forever', auto: { photos: true, voice: true, gifs: false } } });
+    expect(await getMediaSettings(owner.db)).toEqual({ keep: 'forever', auto: { photos: true, voice: true, gifs: false } });
+  });
+
+  it('clears media older than "keep media" when it changes, and at every start', async () => {
+    const server = fakeServer();
+    const owner = await registered(server.api);
+    await photoOnDevice(owner.db, 'old', 10);
+    await photoOnDevice(owner.db, 'new', 1);
+    await owner.app.storage();
+    expect(owner.app.screen.value).toMatchObject({ usage: { media: 2000, chats: [{ id: 'c1', bytes: 2000 }] } });
+    await owner.app.setKeepMedia('week');
+    expect(owner.app.screen.value).toMatchObject({ kind: 'storage', settings: { keep: 'week' }, usage: { media: 1000 }, cleared: 1000 });
+    expect((await listMessages(owner.db, 'c1')).map((m) => [m.id, m.file])).toEqual([['old', 'cleared'], ['new', 'local']]);
+    expect(await getMedia(owner.db, 'old')).toBeUndefined();
+
+    // Later, at the next start, the one that has grown old goes too.
+    await photoOnDevice(owner.db, 'older', 8);
+    const again = await setup({ api: server.api, bridge: fakeBridge().bridge, launch: launchWith(''), db: owner.db });
+    await again.app.start();
+    expect(await getMedia(owner.db, 'older')).toBeUndefined();
+    expect(await getMedia(owner.db, 'new')).toBeDefined();
+  });
+
+  it('clears all media on request, and goes back to the link tab', async () => {
+    const owner = await registered(fakeServer().api);
+    await putMeta(owner.db, 'media-settings', { keep: 'forever' });
+    await photoOnDevice(owner.db, 'a', 40);
+    await photoOnDevice(owner.db, 'b', 0);
+    await owner.app.showTab('links');
+    await owner.app.storage();
+    await owner.app.clearMedia();
+    expect(owner.app.screen.value).toMatchObject({ kind: 'storage', usage: { media: 0, chats: [] }, cleared: 2000 });
+    expect(owner.broadcasts).toContainEqual({ type: 'data-changed' });
+    await owner.app.home();
     expect(home(owner.app.screen.value).tab).toBe('links');
   });
 });
