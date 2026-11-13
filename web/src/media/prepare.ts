@@ -3,8 +3,10 @@
 // smaller, and without the file's metadata (location, camera). "As video"
 // keeps the recording (no compression; at most 25 MB) minus its location
 // and time metadata (media/mp4.ts), with a frame as preview, its size and
-// length. "As GIF" sends the GIF as it is, animated. "As file" keeps the
-// original bytes untouched.
+// length. "As GIF" sends the GIF as it is, animated. "As music" sends an
+// audio file as it is, with its length, for the in-chat player. "As file"
+// keeps the original bytes untouched. Voice messages are recorded instead
+// (media/record.ts).
 
 import { toBase64Url } from '../crypto/encoding';
 import type { Outgoing } from '../messaging/engine';
@@ -59,7 +61,7 @@ export async function preparePhoto(file: Blob): Promise<Outgoing> {
 }
 
 /** A tiny blurred-preview JPEG, base64url, if it's small enough to carry. */
-async function preview(image: ImageBitmap | HTMLCanvasElement | HTMLVideoElement): Promise<{ p?: string }> {
+export async function preview(image: ImageBitmap | HTMLCanvasElement | HTMLVideoElement): Promise<{ p?: string }> {
   const tiny = toBase64Url((await drawJpeg(image, PREVIEW_SIDE, 0.5)).bytes);
   return tiny.length <= MAX_PREVIEW ? { p: tiny } : {};
 }
@@ -128,6 +130,34 @@ async function probeVideo(file: Blob): Promise<{ w: number; h: number; l?: numbe
   }
 }
 
+/**
+ * A song or other audio file, as it is, with its length. If this browser
+ * can't read it, it goes as a file.
+ */
+export async function prepareAudio(file: File): Promise<Outgoing> {
+  if (file.size > MAX_FILE_BYTES) throw new TooBig();
+  const length = await probeAudio(file);
+  const out = await prepareFile(file);
+  if (length === null) return out;
+  return { file: out.file, media: { ...out.media, t: 'audio', ...(length !== undefined ? { l: length } : {}) } };
+}
+
+/** An audio file's length in whole seconds (undefined if unknown); null if this browser can't open it. */
+async function probeAudio(file: Blob): Promise<number | undefined | null> {
+  const url = URL.createObjectURL(file);
+  const audio = document.createElement('audio');
+  audio.preload = 'metadata';
+  try {
+    audio.src = url;
+    if (!(await happens(audio, 'loadedmetadata', 10_000))) return null;
+    return Number.isFinite(audio.duration) ? Math.round(audio.duration) : undefined;
+  } finally {
+    audio.removeAttribute('src');
+    audio.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
 /** Waits for an element's event: true if it happened, false on an error or after `ms`. */
 function happens(target: HTMLMediaElement, event: string, ms: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -154,10 +184,11 @@ export async function prepareFile(file: File): Promise<Outgoing> {
   return { file: bytes, media: { t: 'file', s: bytes.length, n: (file.name || 'file').slice(0, 255), ...(type ? { m: type } : {}) } };
 }
 
-/** What a picked file can be sent as, besides a file: a photo, a video or a GIF. */
-export function showableAs(file: File): 'photo' | 'video' | 'gif' | null {
+/** What a picked file can be sent as, besides a file: a photo, a video, a GIF or music. */
+export function showableAs(file: File): 'photo' | 'video' | 'gif' | 'audio' | null {
   if (/^image\/(jpeg|png|webp|heic|heif|avif|bmp)$/.test(file.type)) return 'photo';
   if (file.type === 'image/gif') return 'gif';
   if (/^video\/(mp4|quicktime|webm|x-m4v|3gpp)$/.test(file.type)) return 'video';
+  if (/^audio\/(mpeg|mp3|mp4|x-m4a|aac|x-aac|ogg|opus|flac|x-flac|wav|x-wav|wave|webm)$/.test(file.type)) return 'audio';
   return null;
 }

@@ -255,6 +255,89 @@ func (s *Store) Replace(ctx context.Context, old Account, n NewAccount, now time
 	return s.batchWrite(ctx, requests)
 }
 
+// Delete removes an account and everything it owns, keeping nothing (unlike
+// Replace): its links (whose bundles then answer "not found"), mailboxes
+// (sends to them then go nowhere), invitation codes, device list, devices,
+// the account item, and the Telegram item, so the same Telegram user can set
+// up again later. It returns ErrNotFound if the account is already gone or
+// replaced.
+//
+// The order lets a failed delete be retried by the same device: everything
+// but the account and its devices goes first, then the account and the
+// Telegram item together, then the devices (orphaned devices can't log in).
+func (s *Store) Delete(ctx context.Context, accountID, telegramHash string) error {
+	sks, err := s.sortKeys(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	var owned, devices []types.WriteRequest
+	del := func(pk, sk string) types.WriteRequest {
+		return types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(pk, sk)}}
+	}
+	for _, sk := range sks {
+		switch {
+		case sk == skAccount:
+		case strings.HasPrefix(sk, devicePrefix):
+			devices = append(devices, del(accountPK(accountID), sk))
+		case strings.HasPrefix(sk, mailboxPrefix):
+			owned = append(owned, del(mailboxPK(strings.TrimPrefix(sk, mailboxPrefix)), skMailbox), del(accountPK(accountID), sk))
+		case strings.HasPrefix(sk, codePrefix):
+			owned = append(owned, del(codePK(strings.TrimPrefix(sk, codePrefix)), skCode), del(accountPK(accountID), sk))
+		case strings.HasPrefix(sk, linkPrefix):
+			owned = append(owned, del(linkPK(strings.TrimPrefix(sk, linkPrefix)), skLink), del(accountPK(accountID), sk))
+		default:
+			owned = append(owned, del(accountPK(accountID), sk))
+		}
+	}
+	if err := s.batchWrite(ctx, owned); err != nil {
+		return err
+	}
+	writes := []types.TransactWriteItem{{Delete: &types.Delete{
+		TableName:           &s.Table,
+		Key:                 key(accountPK(accountID), skAccount),
+		ConditionExpression: aws.String("attribute_exists(pk) AND attribute_not_exists(g)"),
+	}}}
+	if telegramHash != "" {
+		writes = append(writes, types.TransactWriteItem{Delete: &types.Delete{
+			TableName:                 &s.Table,
+			Key:                       key("T#"+telegramHash, skTelegram),
+			ConditionExpression:       aws.String("a = :id"),
+			ExpressionAttributeValues: attrs{":id": sv(accountID)},
+		}})
+	}
+	if err := s.transact(ctx, writes); err != nil {
+		if errors.Is(err, ErrConflict) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return s.batchWrite(ctx, devices)
+}
+
+// sortKeys lists every item in an account's partition.
+func (s *Store) sortKeys(ctx context.Context, accountID string) ([]string, error) {
+	pages := dynamodb.NewQueryPaginator(s.DB, &dynamodb.QueryInput{
+		TableName:                 &s.Table,
+		KeyConditionExpression:    aws.String("pk = :pk"),
+		ExpressionAttributeValues: attrs{":pk": sv(accountPK(accountID))},
+		ProjectionExpression:      aws.String("sk"),
+		ConsistentRead:            aws.Bool(true),
+	})
+	var sks []string
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range page.Items {
+			if sk, ok := str(it, "sk"); ok {
+				sks = append(sks, sk)
+			}
+		}
+	}
+	return sks, nil
+}
+
 // Device returns a device's signing key, and whether its account was
 // replaced. It returns ErrNotFound if the device or its account is gone.
 func (s *Store) Device(ctx context.Context, accountID, deviceID string, now time.Time) (Device, error) {

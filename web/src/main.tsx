@@ -5,7 +5,7 @@ import { applyLanguage, pickLanguage } from './i18n';
 import { createApi } from './net/api';
 import { isTelegramLaunch, parseLaunch } from './platform/launch';
 import { connectTelegram } from './platform/telegram';
-import { applyTheme } from './platform/theme';
+import { applyInsets, applyTheme } from './platform/theme';
 import { readTicket, SAVE_PREFIX } from './media/save';
 import { SavePage } from './save';
 import { createApp } from './state/app';
@@ -28,9 +28,13 @@ applyTheme(launch.themeParams);
 
 if (telegram) {
   telegram.on('theme_changed', (d) => applyTheme(d.theme_params));
+  telegram.on('safe_area_changed', (d) => applyInsets({ safe: d }));
+  telegram.on('content_safe_area_changed', (d) => applyInsets({ content: d }));
   telegram.post('web_app_ready');
   telegram.post('web_app_expand');
   telegram.post('web_app_request_theme');
+  telegram.post('web_app_request_safe_area');
+  telegram.post('web_app_request_content_safe_area');
 }
 
 async function main(): Promise<void> {

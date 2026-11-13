@@ -25,12 +25,14 @@ export type Kind = 'message' | 'seen' | 'key_update' | 'end';
 const KINDS: readonly Kind[] = ['message', 'seen', 'key_update', 'end'];
 
 /**
- * What an attachment is shown as. Voice, music, round videos and stickers
- * come later. Kinds this version doesn't know are accepted and shown as
- * files, so a newer sender's attachments still arrive (see shownAs).
+ * What an attachment is shown as: music is `audio`, a round video message
+ * `round`. Kinds this version doesn't know are accepted and shown as files,
+ * so a newer sender's attachments still arrive (see shownAs).
  */
-export type MediaKind = 'photo' | 'video' | 'gif' | 'file';
-const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'file'];
+export type MediaKind = 'photo' | 'video' | 'gif' | 'voice' | 'audio' | 'round' | 'file';
+const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'voice', 'audio', 'round', 'file'];
+/** Most waveform bars a voice message carries. */
+export const MAX_WAVEFORM = 100;
 /** Longest video, voice or music length, in seconds. */
 const MAX_LENGTH = 24 * 60 * 60;
 /** Largest file that can be attached. */
@@ -56,13 +58,23 @@ export interface Media {
   n?: string;
   /** MIME type. */
   m?: string;
-  /** Pixel width and height (photos, videos, GIFs). */
+  /** Pixel width and height (photos, videos, GIFs, video messages). */
   w?: number;
   h?: number;
-  /** Length in whole seconds (videos). */
+  /** Length in whole seconds (videos, voice, music, video messages). */
   l?: number;
+  /** Voice: the waveform, one byte (0–255) per bar, base64url. */
+  v?: string;
   /** A tiny JPEG preview, base64url, shown until the file is here. */
   p?: string;
+}
+
+/** A sticker from the app's own packs (stickers/catalog.ts): just which one, nothing uploaded. */
+export interface Sticker {
+  /** "pack/name". */
+  id: string;
+  /** The emoji it stands for: shown where the sticker isn't known (a newer pack). */
+  e?: string;
 }
 
 export interface Message {
@@ -91,6 +103,8 @@ export interface Message {
   seen?: string[];
   /** An attachment (kind "message"). */
   media?: Media;
+  /** A sticker (kind "message"), on its own: no text or attachment with it. */
+  sticker?: Sticker;
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -194,10 +208,13 @@ export function checkMessage(value: unknown): Message {
     m.seen.forEach((s) => bytes(s, 16, 'seen'));
   }
   if (m.media !== undefined) checkMedia(m.media);
+  if (m.sticker !== undefined) checkSticker(m.sticker);
   switch (m.kind) {
     case 'message':
-      // Text, an attachment, or both (a caption).
-      if (m.media === undefined && (typeof m.text !== 'string' || m.text.trim() === '')) throw new MessageError('empty message');
+      // Text, an attachment, or both (a caption); or a sticker on its own.
+      if (m.sticker !== undefined) {
+        if (m.media !== undefined || m.text !== undefined) throw new MessageError('bad sticker');
+      } else if (m.media === undefined && (typeof m.text !== 'string' || m.text.trim() === '')) throw new MessageError('empty message');
       break;
     case 'seen':
       if (m.seen === undefined || m.text !== undefined) throw new MessageError('bad seen');
@@ -205,6 +222,7 @@ export function checkMessage(value: unknown): Message {
     default:
       if (m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError(`bad ${m.kind}`);
   }
+  if (m.kind !== 'message' && m.sticker !== undefined) throw new MessageError(`bad ${m.kind}`);
   if (m.kind === 'seen' && m.media !== undefined) throw new MessageError('bad seen');
   return m as unknown as Message;
 }
@@ -223,7 +241,24 @@ function checkMedia(value: unknown): void {
     if (a[dim] !== undefined && (!Number.isSafeInteger(a[dim]) || (a[dim] as number) < 1 || (a[dim] as number) > 20_000)) throw new MessageError('bad media size');
   }
   if (a.l !== undefined && (!Number.isSafeInteger(a.l) || (a.l as number) < 0 || (a.l as number) > MAX_LENGTH)) throw new MessageError('bad media length');
+  if (a.v !== undefined) {
+    let bars: Uint8Array;
+    try {
+      if (typeof a.v !== 'string' || !/^[A-Za-z0-9_-]+$/.test(a.v)) throw new Error();
+      bars = fromBase64Url(a.v);
+    } catch {
+      throw new MessageError('bad media waveform');
+    }
+    if (bars.length === 0 || bars.length > MAX_WAVEFORM || toBase64Url(bars) !== a.v) throw new MessageError('bad media waveform');
+  }
   if (a.p !== undefined && (typeof a.p !== 'string' || a.p.length > MAX_PREVIEW || !/^[A-Za-z0-9_-]+$/.test(a.p))) throw new MessageError('bad media preview');
+}
+
+function checkSticker(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new MessageError('bad sticker');
+  const a = value as Record<string, unknown>;
+  if (typeof a.id !== 'string' || !/^[a-z0-9_]{1,32}\/[a-z0-9_]{1,40}$/.test(a.id)) throw new MessageError('bad sticker');
+  if (a.e !== undefined && (typeof a.e !== 'string' || a.e.length === 0 || a.e.length > 16)) throw new MessageError('bad sticker emoji');
 }
 
 /** How an attachment is shown: its kind, or as a file if this version doesn't know the kind. */
@@ -237,12 +272,16 @@ const EXTENSIONS: Record<string, string> = {
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
+  'audio/mpeg': 'mp3',
 };
 
 /** The name to save an attachment under: its own, or one made from its kind and type ("video.mp4"). */
 export function fileName(media: { t: string; n?: string; m?: string }): string {
   if (media.n) return media.n;
-  const base = { photo: 'photo', video: 'video', gif: 'animation', file: 'file' }[shownAs(media)];
+  const base = { photo: 'photo', video: 'video', gif: 'animation', voice: 'voice', audio: 'audio', round: 'video', file: 'file' }[shownAs(media)];
   const ext = media.m ? EXTENSIONS[media.m] : undefined;
   return ext ? `${base}.${ext}` : base;
 }
