@@ -11,8 +11,9 @@ the hosting repository's variables. Below, `<env>`, `<bot>`, `<app>` and
 
 ## How a deploy runs
 
-- A push to `main` runs CI, which deploys to **dev**. Pull requests never get
-  cloud access.
+- A push to `main` runs CI, which deploys to **dev**. A published release
+  deploys to **production**, once a required reviewer approves it
+  ([releases](#releases)). Pull requests never get cloud access.
 - CI assumes the environment's deploy role through GitHub's OIDC provider (no
   stored AWS keys), builds the Lambda bundles reproducibly and attests them,
   and applies `infra/` with Terraform, which uploads each bundle, has AWS
@@ -24,8 +25,40 @@ the hosting repository's variables. Below, `<env>`, `<bot>`, `<app>` and
   button and commands, so the bot token never passes through CI), and runs
   smoke tests: the API, the webhook and the socket refuse what they should.
 - Last, it asks the hosting repository to build and deploy the app from the
-  same commit, and waits until the site serves it ([verifying.md](verifying.md),
-  [hosting/](../hosting/README.md)).
+  same commit (production: the release tag), and waits until the site serves
+  it ([verifying.md](verifying.md), [hosting/](../hosting/README.md)).
+
+Both environments run the same steps
+([`deploy-environment.yml`](../.github/workflows/deploy-environment.yml)).
+
+## Releases
+
+Versions follow semantic versioning, with tags `vX.Y.Z`, and nothing about
+them is done by hand:
+
+1. Pull request titles follow Conventional Commits, and each squash merge to
+   `main` keeps the title. [release-please](https://github.com/googleapis/release-please)
+   reads them and keeps one release pull request open with the next version
+   (`fix` → patch, `feat` → minor, `!` → major), `CHANGELOG.md` and
+   `version.txt`.
+2. Merging that pull request is the decision to release. release-please then
+   tags the merge commit and publishes a GitHub Release with the changelog.
+3. The published release runs CI on the tag: everything is built and tested
+   again from the tag, and the production deploy waits for a required
+   reviewer's approval in GitHub. The hosting repository builds the same
+   tag.
+
+release-please acts through a GitHub App, because pull requests opened with
+the workflow's own token get no CI, and releases it publishes start no
+workflows. One-time setup:
+
+- A GitHub App owned by the organization, with no webhook, installed on this
+  repository only, with repository permissions Contents, Pull requests and
+  Issues (for labels): read and write.
+- A GitHub environment `release` that accepts `main` only, holding the app's
+  client ID (variable `RELEASE_APP_CLIENT_ID`) and private key (secret
+  `RELEASE_APP_PRIVATE_KEY`).
+- A tag ruleset that stops `v*.*.*` tags from being moved or deleted.
 
 ## Setting up an environment
 
@@ -33,13 +66,15 @@ An account admin bootstraps an AWS account once (and reruns it to apply
 changes to the bootstrap stack):
 
 ```shell
-AWS_PROFILE=<profile> scripts/bootstrap.sh <aws-region> <env>
+AWS_PROFILE=<profile> scripts/bootstrap.sh <aws-region> dev
+AWS_PROFILE=<profile> DEPLOY_TAGS='v*.*.*' REVIEWERS=<login> scripts/bootstrap.sh <aws-region> production
 ```
 
 It creates the Terraform state bucket, the GitHub OIDC provider, the deploy
 role, the Lambda permissions boundary and code signing (`infra/init`), and
-the GitHub environment `<env>`, which accepts deploys from `main` only, with
-the secrets and variables it computed (`AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`,
+the GitHub environment `<env>`, which accepts deploys from `main` only (dev)
+or from release tags only, with required reviewers (production), with the
+secrets and variables it computed (`AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`,
 `TF_STATE_BUCKET`, `LAMBDA_BUILDS_BUCKET`, `LAMBDA_SIGNING_PROFILE`,
 `LAMBDA_CODE_SIGNING_CONFIG`, `AWS_REGION`).
 
@@ -69,7 +104,7 @@ gh variable set CLIENT_ORIGINS --env <env> --body '["https://<org>.github.io"]'
 | `DELETION_PROTECTION` | variable | Protects the tables from deletion. Keep it on in production. |
 | `SECRETS_VERSION` | variable | Raise it to replace the generated secrets (session key, Telegram-ID pepper, webhook secret). Replacing the pepper starts every account over. |
 | `PAGES_REPO`, `PAGES_URL` | variables | The hosting repository and the site's address, for starting its deploy and waiting for it. |
-| `DEV_PAGES_DISPATCH_TOKEN` | secret | A token that can only start the hosting repository's workflow (dev). |
+| `PAGES_DISPATCH_TOKEN` | secret | A token that can only start the hosting repository's workflow. |
 
 ### The send-token issuer key
 

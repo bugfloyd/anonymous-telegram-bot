@@ -29,7 +29,7 @@ theirs.
 4. A fine-grained personal access token, owned by the hosting organization,
    for that one repository, with **Actions: read and write** only. It can start
    the workflow but not change the repository. Store it in this repository's
-   environment as `DEV_PAGES_DISPATCH_TOKEN` (dev).
+   environment as `PAGES_DISPATCH_TOKEN`.
 5. In the organization's settings: require two-factor authentication, disallow
    Pages for members and deploy keys, and keep the free plan.
 

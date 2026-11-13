@@ -1,7 +1,11 @@
 {
-  "_comment": "Public keys of the send-token issuers (design \u00a711). Clients only accept tokens for the key their build names (VITE_ISSUER_KEY), so the server can't give different users different keys to tell them apart. keyId = SHA-256 of the SubjectPublicKeyInfo (DER).",
+  "_comment": "Public keys of the send-token issuers (design §11). Clients only accept tokens for the key their build names (VITE_ISSUER_KEY), so the server can't give different users different keys to tell them apart. keyId = SHA-256 of the SubjectPublicKeyInfo (DER).",
   "dev-2026-11": {
     "spki": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAysL8yTeo1d6y-vDDWI0hR9p0tqqarujbfvrPlGKL2K6zX2yh-itrOKDE4CuqE3ZFXV04WXzAOfwHqxyd1rV24AA5D3_V5h78gElqkMvxdWDQjvmMzHkMNrdcko-ccfxzds6R6NwvX_Xgk8jLMBMXHofquu1v7F03O1LSVmJ1ZxaeUdmA7WMjKsEK2MjrsyeSqzeJCQHTjx2V8dIYUWkSzYixkXIaZEHPByQtkFcRKkv1uK80vpTUi1kPS34u7KD5tqnQTzwqXjdXD2mqqUt9msgqI8jBTdhPPgrjg6ObsgsueWxFwoOnnQTSrVmfVBhMfwMNLWeI-gQ9USOKXFbEZwIDAQAB",
     "keyId": "8b286ff9bfa0424e9aa3de0b4ba36e659c2f491b727f35e3784a513ef45a0426"
+  },
+  "production-2026-11": {
+    "spki": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAytBtOfLYwvaD2lCQEEL7VuesdA9jWyfoUY4nJSBCQME2miQjaYuqgAzDgcOvOxyvFCaLzglI7WH5otHwnjCn-SltxpkBJfsfvIgLwo9Zbp1SxdhTloBuMLjVMrQgGdxiRcOdo1iRXV2Dy3U4G6rQ6Ecbk0MeacbhM_KWOTSy3XPKKC0Hq8EVyqQYXx0r1ppTohtJDFIftpxsDZKvPp8LSgRO88tJlK0wEbjvgh_O2ur8n0VJpyVfnO5w0CXoCWe3f1kgnySfb0PJ3Gqn8JV40Yz-lK_8UmShc-EDgkttXgAFCPAfRoOPkJ_7_yoil-Kd464xRwaPwFX3jQ3QFnSUPQIDAQAB",
+    "keyId": "a5d4c73d916f08e61bb495b2141ea2134dcdcb3302158adf74b2458edf9f1d49"
   }
 }
