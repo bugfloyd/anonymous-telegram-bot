@@ -38,7 +38,7 @@ import { deleteMessage, getMedia, listConversations, listMessages, type LocalMed
 import { prepareAudio, prepareFile, prepareGif, preparePhoto, prepareVideo, TooBig } from '../media/prepare';
 import type { Recording, RoundRecording } from '../media/record';
 import { saveUrl } from '../media/save';
-import { fileName, type Media } from '../protocol/message';
+import { fileName, type Media, type Sticker } from '../protocol/message';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
@@ -84,7 +84,7 @@ export interface ConversationView {
   lastAt: number;
   status: 'active' | 'ended' | 'blocked';
   /** The latest message, if any. */
-  last: { text: string; out: boolean; status: MessageView['status']; media?: { t: string; n?: string } } | null;
+  last: { text: string; out: boolean; status: MessageView['status']; media?: { t: string; n?: string }; sticker?: Sticker } | null;
 }
 
 /** What a picked file is sent as (music is "audio"). */
@@ -398,7 +398,13 @@ export function createApp(deps: Deps) {
           lastAt: c.lastAt,
           status: c.status,
           last: last
-            ? { text: last.text, out: last.out, status: last.status, ...(last.media ? { media: { t: last.media.t, ...(last.media.n ? { n: last.media.n } : {}) } } : {}) }
+            ? {
+                text: last.text,
+                out: last.out,
+                status: last.status,
+                ...(last.media ? { media: { t: last.media.t, ...(last.media.n ? { n: last.media.n } : {}) } } : {}),
+                ...(last.sticker ? { sticker: last.sticker } : {}),
+              }
             : null,
         };
       }),
@@ -696,10 +702,11 @@ export function createApp(deps: Deps) {
     return 'generic';
   }
 
-  /** Sends a message in the open conversation. */
-  async function sendMessage(text: string, replyTo?: string): Promise<void> {
+  /** Sends a message, or a sticker, in the open conversation. */
+  async function sendMessage(content: string | { sticker: Sticker }, replyTo?: string): Promise<void> {
     const current = screen.value;
-    if (current.kind !== 'conversation' || current.busy || !messaging || text.trim() === '') return;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    if (typeof content === 'string' && content.trim() === '') return;
     screen.value = { ...current, error: null };
     let error: SendError | null = null;
     // Shown at once as "sending", updated when delivered.
@@ -710,7 +717,7 @@ export function createApp(deps: Deps) {
       }
     };
     try {
-      await messaging.send(current.id, text.trim(), replyTo, show);
+      await messaging.send(current.id, typeof content === 'string' ? content.trim() : content, replyTo, show);
     } catch (err) {
       if (handleGone(err)) return;
       error = sendError(err);

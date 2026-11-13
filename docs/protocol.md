@@ -163,9 +163,11 @@ JSON fields:
 | `replyTo` | ID of the message this answers |
 | `seen` | IDs read (`seen` only, 1–100) |
 | `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, v?, p?}`, see Media |
+| `sticker` | a sticker (`message` only, with no text or attachment): `{id, e?}`, see Stickers |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
-text; `seen` needs `seen` and no text; `key_update` and `end` carry neither.
+text, an attachment or a sticker; `seen` needs `seen` and no text;
+`key_update` and `end` carry neither.
 
 **Who writes with which key.** A first message through a link comes from a
 fresh conversation key of the sender and is written for the link's current
@@ -293,6 +295,21 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   upload is deleted it opens nothing.
 - Uploads that aren't fetched expire after 31 days. The bucket keeps no
   versions and no access logs.
+
+## Stickers
+
+Stickers come from the app's own packs, built into the app (web/src/stickers:
+Microsoft's Fluent Emoji, MIT licensed). Sending one uploads nothing: the
+message names it, `sticker: {id, e?}`, where `id` is `pack/name` (lowercase
+letters, digits and `_`; pack at most 32 characters, name at most 40) and `e`
+the emoji it stands for (at most 16 UTF-16 units). A sticker the recipient's
+version doesn't have, from a newer pack, shows as that emoji. There are no
+Telegram sticker packs: a Mini App can't reach them, and fetching them
+through the bot would tell the server who uses which.
+
+The images are separate files of the app's build. The app fetches all of
+them at once when a conversation opens, not when a sticker is shown or sent,
+so the host serving the app learns nothing about stickers from it.
 
 ## Notices
 
