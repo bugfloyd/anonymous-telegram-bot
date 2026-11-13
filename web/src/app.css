@@ -210,7 +210,7 @@ button.quote { cursor: pointer; margin-block-end: 0.25rem; }
 .bubble.bare .quote { padding: 0.25rem 0.5rem; border-radius: 0.5rem; background: var(--app-surface); border-inline-start-color: var(--app-accent); }
 .bubble.bare .quote-name { color: var(--app-accent); }
 .round { position: relative; inline-size: min(15rem, 62vw); aspect-ratio: 1; border-radius: 50%; overflow: hidden; background: var(--app-surface); }
-.round img.tiny, .round video { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: cover; }
+.round img.tiny, .round img.still, .round video { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: cover; }
 .round img.tiny { filter: blur(12px); transform: scale(1.1); }
 .round .round-ring circle { stroke: var(--app-accent); stroke-width: 3; }
 .round-tap { position: absolute; inset: 0; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }

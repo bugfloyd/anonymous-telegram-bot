@@ -467,9 +467,9 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
         .filter((p) => p.conv === screen.id)
         .map((p) => (
           <li key={p.key} class={p.as === 'round' ? 'bubble out bare' : 'bubble out'} aria-busy="true">
-            {p.as === 'round' && p.url ? (
+            {p.as === 'round' ? (
               <div class="round">
-                <video src={p.url} muted playsInline autoPlay loop />
+                {p.url ? <video src={p.url} muted playsInline autoPlay loop /> : p.still && <img class="still" src={p.still} alt="" />}
                 <span class="media-progress">
                   <Ring fraction={undefined} />
                 </span>
@@ -581,10 +581,10 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
                       replying.value = null;
                       await app.sendVoice(recording, to);
                     },
-                    onRound: async (recording: RoundRecording) => {
+                    onRound: async (recording: Promise<RoundRecording | null>, still: string | null) => {
                       const to = replying.value?.id;
                       replying.value = null;
-                      await app.sendRound(recording, to);
+                      await app.sendRound(recording, still, to);
                     },
                   }
                 : {})}
@@ -885,8 +885,8 @@ function Composer({
   onAttach?: (file: File, as: SendAs, caption: string) => Promise<void>;
   /** Sends a recorded voice message (absent when attachments are off). */
   onVoice?: (recording: Recording) => Promise<void>;
-  /** Sends a recorded video message (absent when attachments are off). */
-  onRound?: (recording: RoundRecording) => Promise<void>;
+  /** Sends a recorded video message, as it's finished off, with its last frame (absent when attachments are off). */
+  onRound?: (recording: Promise<RoundRecording | null>, still: string | null) => Promise<void>;
   /** Sends a sticker. */
   onSticker?: (sticker: Sticker) => Promise<void>;
 }) {
@@ -1194,7 +1194,11 @@ interface Press {
  * conversation drops a recording in progress;
  * at the longest length (15 minutes, a minute for video) it's sent.
  */
-function useRecorder(language: Language, onVoice: ((recording: Recording) => Promise<void>) | undefined, onRound: ((recording: RoundRecording) => Promise<void>) | undefined) {
+function useRecorder(
+  language: Language,
+  onVoice: ((recording: Recording) => Promise<void>) | undefined,
+  onRound: ((recording: Promise<RoundRecording | null>, still: string | null) => Promise<void>) | undefined,
+) {
   const state = useSignal<'idle' | 'starting' | 'holding' | 'locked'>('idle');
   const mode = useSignal<RecordMode>('voice');
   const voice = useRef<Recorder | null>(null);
@@ -1235,8 +1239,9 @@ function useRecorder(language: Language, onVoice: ((recording: Recording) => Pro
         const result = await v.stop();
         if (result) await onVoice(result);
       } else if (r && onRound) {
-        const result = await r.stop();
-        if (result) await onRound(result);
+        // Shown in the chat at once: finishing the recording can take seconds.
+        const still = r.snapshot();
+        await onRound(r.stop(), still);
       }
     } catch {
       say(t(language, v ? 'micUnavailable' : 'cameraUnavailable'));

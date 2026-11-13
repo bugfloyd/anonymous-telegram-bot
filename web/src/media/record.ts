@@ -21,6 +21,7 @@ export const MIN_VOICE_MS = 500;
 /** A video message's width and height, in pixels (Telegram's size). */
 export const ROUND_SIDE = 384;
 const LEVEL_EVERY_MS = 50;
+const SNAPSHOT_SIDE = 192;
 
 /** Voice formats, best first. */
 const VOICE_TYPES = ['audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm'];
@@ -101,6 +102,8 @@ export interface RoundRecorder extends Recorder<RoundRecording> {
   mirrored(): boolean;
   /** Switches between the front and back cameras, if there are both (canvas only). */
   flip: (() => Promise<void>) | null;
+  /** The picture right now, as a small JPEG data URL (null if there's none): shown while the recording is finished off. */
+  snapshot(): string | null;
 }
 
 /** Asks for the microphone (and camera); refusals become RecordingUnavailable. */
@@ -375,6 +378,24 @@ export async function startRound(): Promise<RoundRecorder> {
     canvas: canvas && context ? canvas : null,
     mirrored: () => facing === 'user',
     flip,
+    snapshot: () => {
+      try {
+        const shot = document.createElement('canvas');
+        shot.width = shot.height = SNAPSHOT_SIDE;
+        const ctx = shot.getContext('2d');
+        if (!ctx) return null;
+        if (canvas && context) ctx.drawImage(canvas, 0, 0, SNAPSHOT_SIDE, SNAPSHOT_SIDE);
+        else {
+          const { x, y, side } = centreSquare(video.videoWidth, video.videoHeight);
+          if (!side) return null;
+          if (facing === 'user') ctx.setTransform(-1, 0, 0, 1, SNAPSHOT_SIDE, 0);
+          ctx.drawImage(video, x, y, side, side, 0, 0, SNAPSHOT_SIDE, SNAPSHOT_SIDE);
+        }
+        return shot.toDataURL('image/jpeg', 0.7);
+      } catch {
+        return null;
+      }
+    },
     elapsed: recorded.elapsed,
     stop: async () => {
       const shot = still ?? (canvas && context ? canvas : video.readyState >= 2 ? video : null);
