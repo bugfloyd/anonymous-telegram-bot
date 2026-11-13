@@ -70,14 +70,14 @@ And, as with any app, users trust their own device and the Telegram app.
 What still leaks (timing, IP addresses, which links Telegram sees opened,
 rough attachment sizes) and the other limits are listed in full in the
 [security model](docs/security.md). What is kept, where and for how long is in
-the [privacy policy](docs/privacy.md).
+[what the software stores](docs/data.md).
 
 ## Documentation
 
 | Document | What |
 |---|---|
 | [Security model](docs/security.md) | Goals, threats, what users still have to trust, what still leaks, limits |
-| [Privacy policy](docs/privacy.md) | What is kept, where, for how long, and who sees what |
+| [What the software stores](docs/data.md) | What is kept, where, for how long, and who sees what |
 | [How it works](docs/architecture.md) | The parts, accounts, links, conversations, delivery, attachments, stickers |
 | [Protocol](docs/protocol.md) | Exact formats: keys, links, envelopes, messages, rotation, delivery, media, tokens |
 | [Verifying the app](docs/verifying.md) | Reproducible builds, attestations, and checking the live site |
