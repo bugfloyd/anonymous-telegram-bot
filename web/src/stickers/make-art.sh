@@ -1,8 +1,9 @@
 #!/bin/bash
-# Remakes the sticker images from Microsoft's Fluent Emoji (MIT, see NOTICE.md):
-# the 3D PNGs (256 px) at a pinned commit, as WebP with transparency.
-# Needs curl and ffmpeg with libwebp. Run from this directory.
+# Remakes the sticker images in web/public/stickers from Microsoft's Fluent
+# Emoji (MIT, see NOTICE.md there): the 3D PNGs (256 px) at a pinned commit,
+# as WebP with transparency. Needs curl and ffmpeg with libwebp.
 set -euo pipefail
+cd "$(dirname "$0")/../../public/stickers"
 SOURCE=https://raw.githubusercontent.com/microsoft/fluentui-emoji/1ffb34c752ecf5d402f04cfb4b392c77f57c54bc/assets
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

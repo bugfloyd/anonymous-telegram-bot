@@ -1,7 +1,8 @@
 # Sticker art
 
 The sticker images are Microsoft's [Fluent Emoji](https://github.com/microsoft/fluentui-emoji) (3D style),
-taken at commit `1ffb34c752ecf5d402f04cfb4b392c77f57c54bc` and converted to WebP by `make-art.sh`.
+taken at commit `1ffb34c752ecf5d402f04cfb4b392c77f57c54bc` and converted to WebP by
+`web/src/stickers/make-art.sh`.
 They're used under the MIT License:
 
 ```

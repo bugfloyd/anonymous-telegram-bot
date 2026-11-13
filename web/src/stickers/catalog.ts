@@ -1,12 +1,14 @@
-// The app's own sticker packs (phase 5.6). The art is part of the build, so
-// it's as verifiable as the code, and sending one is just its name: nothing
-// is uploaded, and nothing outside the app is asked for it (no Telegram
-// packs: a Mini App can't reach them, and fetching them through the bot
-// would show who uses which). The images are Microsoft's Fluent Emoji (3D),
-// MIT licensed (art/NOTICE.md, ART_LICENSE); art/make-art.sh remakes them
-// from the source.
+// The app's own sticker packs (phase 5.6). The images are part of the build
+// (public/stickers, copied as they are, so they're as verifiable as the
+// code), and sending one is just its name: nothing is uploaded, and nothing
+// outside the app is asked for it (no Telegram packs: a Mini App can't reach
+// them, and fetching them through the bot would show who uses which). The
+// images are Microsoft's Fluent Emoji (3D), MIT licensed
+// (public/stickers/NOTICE.md, ART_LICENSE); make-art.sh remakes them from the
+// source.
 //
-// Sticker IDs ("pack/name") travel in messages: never rename or remove one.
+// Sticker IDs ("pack/name") travel in messages, and name the image files:
+// never rename or remove one.
 
 /** A sticker: its ID and the emoji it stands for. */
 export interface StickerInfo {
@@ -138,24 +140,20 @@ let loading: Promise<Readonly<Record<string, string>>> | null = null;
 /**
  * The sticker images, as object URLs by ID: all of them, fetched once, when
  * a conversation opens rather than when a sticker shows, so the fetches say
- * nothing about stickers being sent or received. If any can't be fetched
- * (a deploy replaced them since this page loaded), stickers show as their
- * emoji until the next try.
+ * nothing about stickers being sent or received. If any can't be fetched,
+ * stickers show as their emoji until the next try.
  */
 export function loadArt(): Promise<Readonly<Record<string, string>>> {
-  loading ??= import('./art')
-    .then(({ ART }) =>
-      Promise.all(
-        Object.entries(ART).map(async ([id, url]) => {
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(`sticker ${response.status}`);
-          return [id, URL.createObjectURL(await response.blob())] as const;
-        }),
-      ),
-    )
-    .then(Object.fromEntries<string>, (err: unknown) => {
-      loading = null;
-      throw err;
-    });
+  loading ??= Promise.all(
+    PACKS.flatMap((p) => p.stickers).map(async ({ id }) => {
+      // Relative to the page, wherever the app is hosted.
+      const response = await fetch(`stickers/${id}.webp`);
+      if (!response.ok) throw new Error(`sticker ${response.status}`);
+      return [id, URL.createObjectURL(await response.blob())] as const;
+    }),
+  ).then(Object.fromEntries<string>, (err: unknown) => {
+    loading = null;
+    throw err;
+  });
   return loading;
 }

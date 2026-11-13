@@ -5,7 +5,7 @@ import { findSticker, PACKS } from './catalog';
 
 describe('sticker catalog', () => {
   it('has an image for every sticker, and a sticker for every image', () => {
-    const art = Object.keys(import.meta.glob('./art/*/*.webp')).map((path) => path.slice('./art/'.length, -'.webp'.length));
+    const art = Object.keys(import.meta.glob('/public/stickers/*/*.webp')).map((path) => path.slice('/public/stickers/'.length, -'.webp'.length));
     const ids = PACKS.flatMap((p) => p.stickers.map((s) => s.id));
     expect(new Set(ids).size).toBe(ids.length);
     expect([...art].sort()).toEqual([...ids].sort());

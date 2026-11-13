@@ -298,7 +298,7 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
 
 ## Stickers
 
-Stickers come from the app's own packs, built into the app (web/src/stickers:
+Stickers come from the app's own packs, built into the app (web/public/stickers:
 Microsoft's Fluent Emoji, MIT licensed). Sending one uploads nothing: the
 message names it, `sticker: {id, e?}`, where `id` is `pack/name` (lowercase
 letters, digits and `_`; pack at most 32 characters, name at most 40) and `e`
@@ -307,9 +307,10 @@ version doesn't have, from a newer pack, shows as that emoji. There are no
 Telegram sticker packs: a Mini App can't reach them, and fetching them
 through the bot would tell the server who uses which.
 
-The images are separate files of the app's build. The app fetches all of
-them at once when a conversation opens, not when a sticker is shown or sent,
-so the host serving the app learns nothing about stickers from it.
+The images are files of the app's build (`stickers/<pack>/<name>.webp`).
+The app fetches all of them at once when a conversation opens, not when a
+sticker is shown or sent, so the host serving the app learns nothing about
+stickers from it.
 
 ## Notices
 
