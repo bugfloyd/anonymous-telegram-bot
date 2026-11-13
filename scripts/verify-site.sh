@@ -4,7 +4,7 @@
 # bytes (design §16).
 #
 #   scripts/verify-site.sh <site URL> <hosting repository> [--rebuild]
-#   scripts/verify-site.sh https://incognitochat.github.io incognitochat/incognitochat.github.io --rebuild
+#   scripts/verify-site.sh https://<org>.github.io <org>/<org>.github.io --rebuild
 #
 # Needs curl, jq, sha256sum, and the GitHub CLI (gh attestation verify works
 # without logging in for public repositories). --rebuild also needs git and

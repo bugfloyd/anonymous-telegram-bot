@@ -113,18 +113,18 @@ func TestSetup(t *testing.T) {
 	defer telegram.Close()
 
 	s := Setup{Token: "123:TOKEN", Secret: secret, AppURL: "https://example.github.io/", API: telegram.URL}
-	if err := s.Run(context.Background(), "https://abc123.lambda-url.eu-west-1.on.aws/"); err != nil {
+	if err := s.Run(context.Background(), "https://abc123.lambda-url.us-east-1.on.aws/"); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"/bot123:TOKEN/setWebhook", "/bot123:TOKEN/setChatMenuButton", "/bot123:TOKEN/setMyCommands", "/bot123:TOKEN/setMyCommands"}
 	if strings.Join(calls, " ") != strings.Join(want, " ") {
 		t.Fatalf("calls = %v", calls)
 	}
-	if bodies[0]["secret_token"] != secret || bodies[0]["url"] != "https://abc123.lambda-url.eu-west-1.on.aws/" {
+	if bodies[0]["secret_token"] != secret || bodies[0]["url"] != "https://abc123.lambda-url.us-east-1.on.aws/" {
 		t.Fatalf("setWebhook = %v", bodies[0])
 	}
 
-	for _, bad := range []string{"http://abc.lambda-url.eu-west-1.on.aws/", "https://evil.example/", "https://abc.lambda-url.eu-west-1.on.aws/x", "https://u@abc.lambda-url.eu-west-1.on.aws/"} {
+	for _, bad := range []string{"http://abc.lambda-url.us-east-1.on.aws/", "https://evil.example/", "https://abc.lambda-url.us-east-1.on.aws/x", "https://u@abc.lambda-url.us-east-1.on.aws/"} {
 		if err := s.Run(context.Background(), bad); err != ErrWebhookURL {
 			t.Errorf("%s: err = %v", bad, err)
 		}
@@ -138,7 +138,7 @@ func TestSetupErrorsHideTheToken(t *testing.T) {
 	}))
 	defer failing.Close()
 	for _, api := range []string{failing.URL, "http://127.0.0.1:1"} {
-		err := Setup{Token: "123:SECRET-TOKEN", Secret: secret, AppURL: "x", API: api}.Run(context.Background(), "https://abc.lambda-url.eu-west-1.on.aws/")
+		err := Setup{Token: "123:SECRET-TOKEN", Secret: secret, AppURL: "x", API: api}.Run(context.Background(), "https://abc.lambda-url.us-east-1.on.aws/")
 		if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") {
 			t.Fatalf("err = %v", err)
 		}

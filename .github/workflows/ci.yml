@@ -260,7 +260,7 @@ jobs:
       - name: Mask endpoints
         working-directory: infra
         run: |
-          for name in api_url ws_url webhook_url; do
+          for name in api_url ws_url webhook_url media_origin; do
             value=$(terraform output -raw "$name" 2>/dev/null || true)
             if [ -n "$value" ]; then
               echo "::add-mask::${value}"
@@ -284,7 +284,11 @@ jobs:
           TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
           # A secret only so that it is masked in these public logs.
           TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
-        run: terraform plan -out=tfplan
+        # Refreshed resources are printed with their IDs (such as the media
+        # bucket's name): hidden, as in apply.
+        run: |
+          set -o pipefail
+          terraform plan -no-color -out=tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
 
       - name: Terraform apply
         working-directory: infra
@@ -293,12 +297,15 @@ jobs:
           TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
           TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
         # Resource IDs (such as the WebSocket API's) are printed on creation.
-        run: terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
+        # pipefail: without it, a failed apply would pass through sed as a success.
+        run: |
+          set -o pipefail
+          terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
 
       - name: Read endpoints
         working-directory: infra
         run: |
-          for name in api_url ws_url webhook_url; do
+          for name in api_url ws_url webhook_url media_origin; do
             value=$(terraform output -raw "$name")
             echo "::add-mask::${value}"
             host=${value#*://}

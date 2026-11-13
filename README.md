@@ -3,10 +3,6 @@
 Anonymous messaging through personal links, end-to-end encrypted, inside
 Telegram.
 
-> **Status:** version 2 is being built on `main` and runs in a dev
-> environment; it isn't released yet. Version 1, an in-chat Telegram bot, is
-> kept at tag [`v1`](../../tree/v1).
-
 You share your link; anyone with it can write to you without you knowing who
 they are, and you can reply. Everything happens in a Telegram Mini App that
 encrypts on the device before anything leaves it. The server only holds
@@ -103,3 +99,6 @@ the [privacy policy](docs/privacy.md).
 Every check CI runs can be run locally; see [Development](docs/development.md).
 The same commit always builds byte-identical files, and CI fails if it
 doesn't.
+
+Version 1, an in-chat Telegram bot that this version replaces, is kept at tag
+[`v1`](../../tree/v1).
