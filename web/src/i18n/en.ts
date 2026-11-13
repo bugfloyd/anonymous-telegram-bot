@@ -193,6 +193,14 @@ export const en = {
   replacePhrase: 'start over',
   replaceConfirm: 'End it and set up here',
   cancel: 'Cancel',
+  deleteAccount: 'Delete account',
+  deleteTitle: 'Delete your account?',
+  deleteBody:
+    "This deletes your account from the server at once: your link, your mailboxes and anything waiting for you. Your chats on this device go too. People who write to your old link or in your old chats get no answer, and aren't told why.",
+  deleteWarning: "This can't be undone. You can set up a new account later, with a new link.",
+  deletePhrase: 'delete my account',
+  deleteAccountConfirm: 'Delete my account',
+  accountDeleted: 'Your account was deleted, from the server and from this device.',
 
   replacedTitle: 'Your account was replaced',
   replacedBody:
