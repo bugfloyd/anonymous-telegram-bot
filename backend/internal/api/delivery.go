@@ -38,6 +38,7 @@ type Inbox interface {
 	Deliver(ctx context.Context, accountID string, devices []string, mailbox string, envelope []byte, now time.Time) error
 	List(ctx context.Context, accountID, deviceID string, limit int, now time.Time) ([]inbox.Item, bool, error)
 	Ack(ctx context.Context, accountID, deviceID string, itemIDs []string) error
+	Clear(ctx context.Context, accountID, deviceID string) error
 }
 
 type sendRequest struct {

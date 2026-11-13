@@ -32,15 +32,20 @@ import { checkAccountInfo, createLink, listLinks, replaceLink, revokeLink, type 
 import type { Config } from '../config';
 import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
-import { createMessaging, NoTokens, type Messaging } from '../messaging/engine';
-import { listConversations, listMessages, type MessageView } from '../messaging/store';
+import { toBase64Url } from '../crypto/encoding';
+import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
+import { deleteMessage, getMedia, listConversations, listMessages, type LocalMedia, type MessageView } from '../messaging/store';
+import { prepareAudio, prepareFile, prepareGif, preparePhoto, prepareVideo, TooBig } from '../media/prepare';
+import type { Recording, RoundRecording } from '../media/record';
+import { saveUrl } from '../media/save';
+import { fileName, type Media, type Sticker } from '../protocol/message';
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import { createSession, type Session } from '../net/session';
 import { createPushSocket } from '../net/socket';
 import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
 import { openPopup, type Bridge, type PopupButton } from '../platform/telegram';
-import { deleteMeta, getMeta, putMeta, type Database } from '../storage/db';
+import { deleteMeta, getMeta, putMeta, wipe, type Database } from '../storage/db';
 import type { SyncEvent } from '../sync/locks';
 
 export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 'generic';
@@ -68,7 +73,7 @@ export type InvitationsNotice = 'created' | 'none-left' | 'network' | 'generic';
 export type AdminNotice = 'saved' | 'granted' | 'not-member' | 'not-found' | 'bad-link' | 'network' | 'generic';
 
 /** Why a message couldn't be sent. */
-export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'generic';
+export type SendError = 'no-tokens' | 'rate-limited' | 'network' | 'too-big' | 'unreadable' | 'generic';
 
 /** A conversation in the list. */
 export interface ConversationView {
@@ -79,7 +84,24 @@ export interface ConversationView {
   lastAt: number;
   status: 'active' | 'ended' | 'blocked';
   /** The latest message, if any. */
-  last: { text: string; out: boolean; status: MessageView['status'] } | null;
+  last: { text: string; out: boolean; status: MessageView['status']; media?: { t: string; n?: string }; sticker?: Sticker } | null;
+}
+
+/** What a picked file is sent as (music is "audio"). */
+export type SendAs = 'photo' | 'video' | 'gif' | 'audio' | 'file';
+
+/** An attachment being prepared to send, shown before its message is stored. */
+export interface Preparing {
+  key: string;
+  conv: string;
+  as: SendAs | 'voice' | 'round';
+  /** The picked photo, video or GIF (or the recorded video message), for showing it meanwhile. */
+  url: string | null;
+  /** A video message's last frame (a data URL), shown until its recording is finished off. */
+  still?: string | null;
+  name: string;
+  size: number;
+  caption: string;
 }
 
 /** An invitation code with its shareable URL. */
@@ -94,10 +116,12 @@ export type Screen =
   | { kind: 'loading' }
   | { kind: 'unconfigured' }
   | { kind: 'outside-telegram' }
-  | { kind: 'welcome'; mismatch: boolean }
+  | { kind: 'welcome'; mismatch: boolean; deleted?: boolean }
   | { kind: 'reopening' }
   | { kind: 'registering' }
   | { kind: 'confirm-replace'; busy: boolean }
+  /** Deleting the account, after a typed confirmation. */
+  | { kind: 'confirm-delete'; busy: boolean; error: ErrorKind | null }
   /** This Telegram account is set up on another device (one device per account). */
   | { kind: 'elsewhere' }
   | {
@@ -169,6 +193,8 @@ export interface LinkView extends LinkRecord {
 
 /** How long the old copy waits before closing, so Telegram handles the link first (tested in phase 0). */
 const CLOSE_DELAY_MS = 400;
+/** GIFs up to this size are fetched without a tap, like photos. */
+const AUTO_GIF_BYTES = 10 * 1024 * 1024;
 
 export function createApp(deps: Deps) {
   const screen = signal<Screen>({ kind: 'loading' });
@@ -183,6 +209,8 @@ export function createApp(deps: Deps) {
   let messaging: Messaging | null = null;
   let tab: 'chats' | 'links' = 'chats';
   let backgroundStarted = false;
+  // Stops the inbox poll and the push socket (the account was deleted).
+  let stopBackground = (): void => {};
   // The link last checked and found genuine, to write to.
   let openedLink: { ref: LinkRef; bundle: Bundle } | null = null;
 
@@ -319,11 +347,17 @@ export function createApp(deps: Deps) {
     socket?.start();
     // With a socket open, polling is only a safety net.
     let ticks = 0;
-    setInterval(() => {
+    const poll = setInterval(() => {
       ticks++;
       if (shown() && (!socket?.connected || ticks % SOCKET_POLL_EVERY === 0)) void sync();
     }, POLL_MS);
     document.addEventListener('visibilitychange', visibility);
+    stopBackground = () => {
+      clearInterval(poll);
+      socket?.stop();
+      document.removeEventListener('visibilitychange', visibility);
+      backgroundStarted = false;
+    };
     deps.bridge?.on('visibility_changed', ({ is_visible }) => {
       telegramVisible = is_visible;
       visibility();
@@ -357,6 +391,7 @@ export function createApp(deps: Deps) {
     } else if (current.kind === 'conversation' && !current.busy) {
       // Not marked seen here: only once they're in view (markSeen, from the screen).
       screen.value = { ...current, messages: await listMessages(deps.db, current.id) };
+      autoFetch(current.id);
     }
   }
 
@@ -374,7 +409,15 @@ export function createApp(deps: Deps) {
           unread: c.unread,
           lastAt: c.lastAt,
           status: c.status,
-          last: last ? { text: last.text, out: last.out, status: last.status } : null,
+          last: last
+            ? {
+                text: last.text,
+                out: last.out,
+                status: last.status,
+                ...(last.media ? { media: { t: last.media.t, ...(last.media.n ? { n: last.media.n } : {}) } } : {}),
+                ...(last.sticker ? { sticker: last.sticker } : {}),
+              }
+            : null,
         };
       }),
     );
@@ -448,6 +491,207 @@ export function createApp(deps: Deps) {
       error: null,
     };
     seen(id);
+    autoFetch(id);
+  }
+
+  // Upload and download progress of attachments, by message ID (0 to 1).
+  const transfers = signal<Record<string, number>>({});
+  const setProgress = (id: string, fraction: number | null) => {
+    const next = { ...transfers.value };
+    if (fraction === null) delete next[id];
+    else next[id] = fraction;
+    transfers.value = next;
+  };
+
+  // Attachments being prepared (a photo being shrunk), shown at once with
+  // the picked file until their message is stored.
+  const preparing = signal<Preparing[]>([]);
+  const unprepare = (key: string) => {
+    const item = preparing.value.find((p) => p.key === key);
+    if (item?.url) URL.revokeObjectURL(item.url);
+    preparing.value = preparing.value.filter((p) => p.key !== key);
+  };
+
+  /**
+   * Sends a picked file in the open conversation: as a photo (redrawn,
+   * smaller), a video, GIF or music (as it is, shown inline), or a file
+   * (untouched).
+   */
+  async function sendMedia(file: File, as: SendAs, caption: string, replyTo?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    const key = crypto.randomUUID();
+    const shown = as === 'photo' || as === 'video' || as === 'gif';
+    preparing.value = [
+      ...preparing.value,
+      { key, conv: current.id, as, url: shown ? URL.createObjectURL(file) : null, name: file.name, size: file.size, caption: caption.trim() },
+    ];
+    let out: Outgoing;
+    try {
+      out = await { photo: preparePhoto, video: prepareVideo, gif: prepareGif, audio: prepareAudio, file: prepareFile }[as](file);
+    } catch (err) {
+      unprepare(key);
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error: err instanceof TooBig ? 'too-big' : 'unreadable' };
+      return;
+    }
+    await sendPrepared(current.id, key, out, caption.trim(), replyTo);
+  }
+
+  /** Sends a recorded voice message in the open conversation. */
+  async function sendVoice(recording: Recording, replyTo?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    const key = crypto.randomUUID();
+    const media = { t: 'voice', s: recording.file.length, m: recording.type, l: recording.length, v: toBase64Url(recording.waveform) };
+    preparing.value = [...preparing.value, { key, conv: current.id, as: 'voice', url: null, name: fileName(media), size: media.s, caption: '' }];
+    await sendPrepared(current.id, key, { file: recording.file, media }, '', replyTo);
+  }
+
+  /**
+   * Sends a video message in the open conversation. It shows at once, with
+   * its last frame, while the recording is finished off (seconds, on some
+   * phones); null from the recording means it was too short.
+   */
+  async function sendRound(pending: Promise<RoundRecording | null>, still: string | null, replyTo?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return void pending.catch(() => {});
+    const key = crypto.randomUUID();
+    preparing.value = [...preparing.value, { key, conv: current.id, as: 'round', url: null, still, name: '', size: 0, caption: '' }];
+    let recording: RoundRecording | null;
+    try {
+      recording = await pending;
+    } catch (err) {
+      unprepare(key);
+      throw err;
+    }
+    if (!recording) return unprepare(key);
+    const { file, type, length, side } = recording;
+    const media = { t: 'round', s: file.length, m: type, l: length, w: side, h: side, ...(recording.preview ? { p: recording.preview } : {}) };
+    const url = URL.createObjectURL(new Blob([file], { type }));
+    preparing.value = preparing.value.map((p) => (p.key === key ? { ...p, url, name: fileName(media), size: media.s } : p));
+    await sendPrepared(current.id, key, { file, media }, '', replyTo);
+  }
+
+  /** Stores, uploads and sends a prepared attachment; its "preparing" stand-in goes once it's stored. */
+  async function sendPrepared(conv: string, key: string, out: Outgoing, caption: string, replyTo?: string): Promise<void> {
+    if (!messaging) return unprepare(key);
+    const before = currentScreen();
+    if (before.kind === 'conversation' && before.id === conv) screen.value = { ...before, error: null };
+    let error: SendError | null = null;
+    let sent: string | null = null;
+    const show = async () => {
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === conv) {
+        screen.value = { ...now, error, messages: await listMessages(deps.db, conv) };
+      }
+    };
+    try {
+      await messaging.sendMedia(
+        conv,
+        out,
+        caption,
+        replyTo,
+        async (id) => {
+          sent = id;
+          setProgress(id, 0);
+          await show();
+          unprepare(key);
+        },
+        (f) => sent && setProgress(sent, f),
+      );
+    } catch (err) {
+      unprepare(key);
+      if (handleGone(err)) return;
+      error = sendError(err);
+    }
+    if (sent) setProgress(sent, null);
+    deps.broadcast({ type: 'data-changed' });
+    await show();
+  }
+
+  /** Fetches a received attachment (a tap, or automatically for photos, GIFs, voice and video messages). */
+  async function fetchMedia(id: string): Promise<void> {
+    if (!messaging || transfers.value[id] !== undefined) return;
+    setProgress(id, 0);
+    try {
+      await messaging.fetchMedia(id, (f) => setProgress(id, f));
+    } catch {
+      // Tried again on the next tap or opening.
+    } finally {
+      setProgress(id, null);
+    }
+    const now = currentScreen();
+    if (now.kind === 'conversation') screen.value = { ...now, messages: await listMessages(deps.db, now.id) };
+  }
+
+  /**
+   * Saves an attachment to the device. Where the Mini App has a share sheet
+   * (some phones), through that. Otherwise, a received one opens the save
+   * page in the device's own browser (media/save.ts). Must run straight from
+   * a tap: Telegram only opens links then.
+   */
+  async function saveMedia(m: MessageView): Promise<'shared' | 'opened' | 'unavailable'> {
+    const media = m.media;
+    if (!media) return 'unavailable';
+    if (typeof navigator.canShare === 'function') {
+      const file = await getMedia(deps.db, m.id);
+      const shareable = file && new File([file], fileName(media), media.m ? { type: media.m } : {});
+      if (shareable && navigator.canShare({ files: [shareable] })) {
+        try {
+          await navigator.share({ files: [shareable] });
+          return 'shared';
+        } catch {
+          // Cancelled: nothing more to do.
+          return 'shared';
+        }
+      }
+    }
+    if (!m.out && media.id && media.k && media.d && deps.bridge) {
+      const base = location.origin + location.pathname;
+      deps.bridge.post('web_app_open_link', { url: saveUrl(base, media as Media) });
+      return 'opened';
+    }
+    return 'unavailable';
+  }
+
+  /**
+   * Photos, voice and video messages and GIFs (up to 10 MB) are fetched as
+   * soon as their conversation is open, as in Telegram; videos, music and
+   * files wait for a tap.
+   */
+  function autoFetch(conv: string): void {
+    const now = currentScreen();
+    if (now.kind !== 'conversation' || now.id !== conv) return;
+    const automatic = (media: LocalMedia) => media.t === 'photo' || media.t === 'voice' || media.t === 'round' || (media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
+    void (async () => {
+      for (const m of now.messages) {
+        if (m.file === 'remote' && m.media && automatic(m.media) && !m.out) await fetchMedia(m.id);
+      }
+    })();
+  }
+
+  // Object URLs of attachments on this device, for showing them; dropped when another conversation opens.
+  let urls = new Map<string, string>();
+  let urlsFor: string | null = null;
+  /** A URL for a message's attachment, if it's on this device. */
+  async function mediaUrl(id: string, type?: string): Promise<string | null> {
+    const now = currentScreen();
+    const conv = now.kind === 'conversation' ? now.id : null;
+    if (conv !== urlsFor) {
+      for (const u of urls.values()) URL.revokeObjectURL(u);
+      urls = new Map();
+      urlsFor = conv;
+    }
+    const cached = urls.get(id);
+    if (cached) return cached;
+    const file = await getMedia(deps.db, id);
+    if (!file) return null;
+    // QuickTime videos and .m4a songs play as MP4 (the same container) where a browser doesn't know their type.
+    const shown = type === 'video/quicktime' ? 'video/mp4' : type === 'audio/x-m4a' ? 'audio/mp4' : type;
+    const url = URL.createObjectURL(new Blob([file], shown ? { type: shown } : {}));
+    urls.set(id, url);
+    return url;
   }
 
   /** The Blocked list. */
@@ -483,10 +727,11 @@ export function createApp(deps: Deps) {
     return 'generic';
   }
 
-  /** Sends a message in the open conversation. */
-  async function sendMessage(text: string): Promise<void> {
+  /** Sends a message, or a sticker, in the open conversation. */
+  async function sendMessage(content: string | { sticker: Sticker }, replyTo?: string): Promise<void> {
     const current = screen.value;
-    if (current.kind !== 'conversation' || current.busy || !messaging || text.trim() === '') return;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    if (typeof content === 'string' && content.trim() === '') return;
     screen.value = { ...current, error: null };
     let error: SendError | null = null;
     // Shown at once as "sending", updated when delivered.
@@ -497,7 +742,7 @@ export function createApp(deps: Deps) {
       }
     };
     try {
-      await messaging.send(current.id, text.trim(), undefined, show);
+      await messaging.send(current.id, typeof content === 'string' ? content.trim() : content, replyTo, show);
     } catch (err) {
       if (handleGone(err)) return;
       error = sendError(err);
@@ -541,6 +786,44 @@ export function createApp(deps: Deps) {
     const code = parseInvitationPayload(param);
     if (code && !offline) return redeem(code);
     return showHome({ offline });
+  }
+
+  /**
+   * Deletes the account: first the attachments still waiting for this device
+   * on the server (best effort), then everything the server holds for the
+   * account (DELETE /account, signed), then everything on this device. The
+   * other side of each conversation isn't told: their messages go nowhere,
+   * like to any unknown mailbox.
+   */
+  async function deleteAccount(): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'confirm-delete' || current.busy || !session) return;
+    screen.value = { ...current, busy: true, error: null };
+    try {
+      if (messaging) {
+        for (const c of await listConversations(deps.db)) {
+          try {
+            await messaging.discardUploads(await listMessages(deps.db, c.id));
+          } catch {
+            // They expire on their own within 31 days.
+          }
+        }
+      }
+      await session.call('DELETE', '/account', undefined, checkObject, { sign: true });
+    } catch (err) {
+      // Already gone on the server (an earlier try got through): finish here.
+      if (!(err instanceof ApiError && err.code === 'not_found')) {
+        if (handleGone(err)) return;
+        screen.value = { kind: 'confirm-delete', busy: false, error: err instanceof NetworkError ? 'network' : 'generic' };
+        return;
+      }
+    }
+    stopBackground();
+    messaging = null;
+    await wipe(deps.db);
+    deps.broadcast({ type: 'account-changed' });
+    backButton(false);
+    screen.value = { kind: 'welcome', mismatch: false, deleted: true };
   }
 
   /** Shows a replaced account loudly. Returns whether err was that. */
@@ -798,6 +1081,13 @@ export function createApp(deps: Deps) {
       screen.value = { kind: 'elsewhere' };
     },
     startOver,
+    /** Asks to delete the account (a typed confirmation follows). */
+    askDeleteAccount: () => {
+      backButton(true);
+      screen.value = { kind: 'confirm-delete', busy: false, error: null };
+    },
+    deleteAccount,
+    cancelDeleteAccount: () => showHome({ tab: 'links' }),
     close: () => deps.bridge?.post('web_app_close'),
     retry: () => retry(),
     home: () => showHome(),
@@ -809,6 +1099,34 @@ export function createApp(deps: Deps) {
     /** Asks Telegram to let the bot write; notices are set up once it may. */
     allowNotices: () => deps.bridge?.post('web_app_request_write_access'),
     deleteConversation,
+    /** Whether this build can send and receive attachments. */
+    media: !!deps.config?.media,
+    /** A received or sent attachment as a file, for saving or sharing. */
+    mediaFile: async (id: string, name: string, type?: string) => {
+      const bytes = await getMedia(deps.db, id);
+      return bytes ? new File([bytes], name, type ? { type } : {}) : null;
+    },
+    sendMedia,
+    sendVoice,
+    sendRound,
+    fetchMedia,
+    saveMedia,
+    mediaUrl,
+    transfers,
+    preparing,
+    /** The Telegram app's platform, e.g. "ios", "android", "tdesktop". */
+    platform: deps.launch.platform,
+    /** Deletes one message from this device (the other side keeps theirs). */
+    deleteMessage: async (id: string) => {
+      const current = screen.value;
+      if (current.kind !== 'conversation') return;
+      const message = current.messages.find((m) => m.id === id);
+      if (message) await messaging?.discardUploads([message]);
+      await deleteMessage(deps.db, id);
+      deps.broadcast({ type: 'data-changed' });
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, messages: await listMessages(deps.db, current.id) };
+    },
     blocked: () => showBlocked(),
     unblock,
     /** Shows a native popup; resolves with the button pressed, or null. */

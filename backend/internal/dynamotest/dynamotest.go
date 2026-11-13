@@ -31,7 +31,7 @@ func Client(t *testing.T) *dynamodb.Client {
 		t.Skip("set DYNAMODB_ENDPOINT to run against DynamoDB Local")
 	}
 	return dynamodb.New(dynamodb.Options{
-		Region:       "eu-west-1",
+		Region:       "us-east-1",
 		BaseEndpoint: aws.String(endpoint),
 		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
 			return aws.Credentials{AccessKeyID: "local", SecretAccessKey: "local"}, nil

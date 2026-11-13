@@ -72,6 +72,16 @@ its Telegram user has one, to say "your account is on another device" instead
 of offering setup. Like notices, it accepts only a plain or registration
 launch, never one that names a link or an invitation, and stores nothing.
 
+**Deleting an account:** `DELETE /account`, signed. The server deletes the
+account's waiting envelopes, links (their bundles then answer "not found"),
+mailboxes (sends to them get the usual answer and are dropped), invitation
+codes, device list, devices and the account itself, and the item that keeps
+one account per Telegram user, so the same user can set up again. Unlike a
+replacement, it keeps no marker; only rate-limit counters and socket records
+remain until they expire (within a day). Before asking, the app deletes the uploads
+still waiting for it (`POST /media/{id}/delete`); afterwards it deletes
+everything on the device. The other side of each conversation isn't told.
+
 **Device list** (`incognitochat/v2/device-list`), parts in order: suite
 (1 byte), sequence number (8), SHA-256 of the previous list (32; zeros for the
 first), issued (8), expires (8, at most 30 days later), then per device: ID
@@ -162,9 +172,12 @@ JSON fields:
 | `text` | the text (`message` only; at most 12,000 UTF-8 bytes) |
 | `replyTo` | ID of the message this answers |
 | `seen` | IDs read (`seen` only, 1–100) |
+| `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, v?, p?}`, see Media |
+| `sticker` | a sticker (`message` only, with no text or attachment): `{id, e?}`, see Stickers |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
-text; `seen` needs `seen` and no text; `key_update` and `end` carry neither.
+text, an attachment or a sticker; `seen` needs `seen` and no text;
+`key_update` and `end` carry neither.
 
 **Who writes with which key.** A first message through a link comes from a
 fresh conversation key of the sender and is written for the link's current
@@ -234,6 +247,80 @@ each mailbox's owner, to deliver, but not who writes to it.
   them a quiet `key_update` from a new mailbox (and a new key if ours is
   gone), so their app writes there from then on. What they sent meanwhile is
   lost. Only `message` sends trigger a Telegram notice.
+
+## Media
+
+Attachments travel outside the envelope, encrypted, through an S3 bucket.
+
+- The app encrypts the file with a fresh key, pads it, and asks
+  `POST /media {size, deleteHash, tokens}` for an upload URL. No login: it
+  pays with send tokens, one per started 5 MiB (at most 26 MiB). `deleteHash`
+  is the SHA-256 of a random delete secret. The answer is `{id, url}`, and the
+  app PUTs exactly `size` bytes of ciphertext, typed
+  `application/octet-stream`, to `url` (valid 15 minutes; the length and type
+  are part of its signature).
+- The message carries the attachment in `media`, inside the encrypted
+  envelope: kind `t` (`photo`, `video`, `gif`, `voice`, `audio` (music),
+  `round` (a video message) or `file`), upload ID `id` (16 bytes),
+  AES-256-GCM key `k` (32 bytes), delete secret `d` (16 bytes), the file's
+  size `s` (at most 25 MiB), and optionally its name `n`, MIME type `m`,
+  pixel size `w`/`h`, length in seconds `l`, a voice message's waveform `v`
+  (base64url of 1–100 bytes, one bar each, 0–255) and a tiny JPEG preview `p`
+  (base64url, at most 3000 characters). The server never sees a key, name or type. A kind the
+  recipient's version doesn't know (lowercase letters and `_`, at most 16)
+  is accepted and shown as a file.
+- What each kind is: a photo is redrawn on the sender's device (at most
+  1280 px, JPEG), which drops its metadata. A video is sent as recorded (no
+  compression), with its location, device and time metadata removed: the
+  MP4/QuickTime `udta` and `meta` boxes are renamed `free` and the header
+  times zeroed, so nothing else in the file moves. A GIF is sent as it is.
+  A voice message is recorded in the app (AAC in MP4 where the browser can,
+  else Opus in WebM or Ogg; at most 15 minutes), with a waveform taken from
+  the microphone level while recording (or from the recording, where the
+  level couldn't be read); it carries no device or place metadata. A video
+  message is recorded in the app too: the camera's picture cropped to a
+  384 × 384 square (mirrored for the front camera, as the sender saw it),
+  with sound, as H.264 in MP4 where the browser can, else WebM; at most a
+  minute, with a preview frame and no device or place metadata. Music is the
+  audio file as it is, with its length. A file is the original bytes,
+  untouched (location included, if it has any). Photos, voice and video
+  messages, and GIFs up to 10 MiB are fetched when their conversation opens;
+  videos, music and files on a tap.
+- The upload is `nonce (12) ‖ AES-GCM(k, nonce, file ‖ zeros, aad =
+  "incognitochat/v2/media")`, padded to the next power of two from 16 KiB up
+  to 1 MiB, then to the next whole MiB.
+- The recipient gets a download URL with `GET /media/{id}` (no login; the ID
+  is the permission; at most 10 a day), fetches and decrypts the file and
+  keeps it on the device. The upload stays until it's saved outside the app,
+  the message or conversation is deleted on the recipient's device, or it
+  expires; then it's deleted with `POST /media/{id}/delete {secret}`.
+- **Saving outside Telegram.** A Mini App can't hand a file to the device
+  (Telegram's download needs a public HTTPS URL, which would mean a decrypted
+  copy on a server). Where the app has a share sheet, it uses that.
+  Otherwise it opens `<site>/#save=<base64url(JSON {id, k, d, s, n?, m?})>`
+  in the device's own browser: the part after `#` is never sent to any
+  server, and the page removes it from the address at once. That page
+  fetches and decrypts the upload, offers it as a normal download, and then
+  deletes the upload. The link may stay in the browser's history; once the
+  upload is deleted it opens nothing.
+- Uploads that aren't fetched expire after 31 days. The bucket keeps no
+  versions and no access logs.
+
+## Stickers
+
+Stickers come from the app's own packs, built into the app (web/public/stickers:
+Microsoft's Fluent Emoji, MIT licensed). Sending one uploads nothing: the
+message names it, `sticker: {id, e?}`, where `id` is `pack/name` (lowercase
+letters, digits and `_`; pack at most 32 characters, name at most 40) and `e`
+the emoji it stands for (at most 16 UTF-16 units). A sticker the recipient's
+version doesn't have, from a newer pack, shows as that emoji. There are no
+Telegram sticker packs: a Mini App can't reach them, and fetching them
+through the bot would tell the server who uses which.
+
+The images are files of the app's build (`stickers/<pack>/<name>.webp`).
+The app fetches all of them at once when a conversation opens, not when a
+sticker is shown or sent, so the host serving the app learns nothing about
+stickers from it.
 
 ## Notices
 

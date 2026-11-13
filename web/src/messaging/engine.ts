@@ -16,7 +16,7 @@ import { countTokens, LOW_WATER, refillTokens, returnToken, takeToken, type Stor
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
-import { newId, openMessage, sealMessage, type Draft, type Message } from '../protocol/message';
+import { newId, openMessage, sealMessage, type Draft, type Media, type Message, type Sticker } from '../protocol/message';
 import { getMeta, getSealed, putMeta, type ConversationRecord, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
 import {
@@ -33,7 +33,9 @@ import {
 } from './keys';
 import { dropFromPool, pooled, POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessages, getConversation, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, setMessageStatus } from './store';
+import { addMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, type LocalMedia } from './store';
+import { decryptFile, encryptFile, newFileKey, uploadSize } from '../crypto/media';
+import { xhrTransfer, type Transfer } from '../net/transfer';
 
 const DAY = 24 * 3600 * 1000;
 /** Messages sent longer ago than this, or later than now plus a day, are dropped (design §10). */
@@ -63,6 +65,29 @@ export interface MessagingDeps {
   issuer: TokenIssuer;
   /** Unix milliseconds. */
   now?: () => number;
+  /** Uploads and downloads attachments (tests use a fake). */
+  transfer?: Transfer;
+}
+
+/** An attachment to send: the file, and what it is. */
+export interface Outgoing {
+  file: Uint8Array<ArrayBuffer>;
+  media: Omit<Media, 'id' | 'k' | 'd'>;
+}
+
+/** One send token pays for this much of an upload (as the server counts). */
+const TOKEN_BYTES = 5 * 1024 * 1024;
+
+function checkUpload(value: unknown): { id: string; url: string } {
+  const { id, url } = checkObject(value);
+  if (typeof id !== 'string' || typeof url !== 'string' || !url.startsWith('https://')) throw new Error('bad upload');
+  return { id, url };
+}
+
+function checkUrl(value: unknown): string {
+  const { url } = checkObject(value);
+  if (typeof url !== 'string' || !url.startsWith('https://')) throw new Error('bad download');
+  return url;
 }
 
 interface InboxItem {
@@ -88,6 +113,7 @@ export function createMessaging(deps: MessagingDeps) {
   const { db, api, session, issuer } = deps;
   const now = deps.now ?? Date.now;
   const findKey = keyFinder(db);
+  const transfer = deps.transfer ?? xhrTransfer;
   const nextRotation = () => now() + ROTATE_MIN + Math.floor(Math.random() * ROTATE_SPREAD);
 
   /** Writes the first message to someone's link, starting a conversation. Returns its ID. */
@@ -124,34 +150,138 @@ export function createMessaging(deps: MessagingDeps) {
       linkCheckedAt: now(),
     };
     await putConversation(db, conversation);
-    await write(conversation, text, undefined, () => onStored?.(id));
+    await write(conversation, { text }, undefined, () => onStored?.(id));
     return id;
   }
 
   /**
-   * Writes a message in a conversation. onStored runs as soon as the message
-   * is stored (shown as sending), before delivery.
+   * Writes a message (or sends a sticker) in a conversation. onStored runs as
+   * soon as the message is stored (shown as sending), before delivery.
    */
-  async function send(conv: string, text: string, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
+  async function send(conv: string, content: string | { sticker: Sticker }, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
     const conversation = await getConversation(db, conv);
     if (!conversation) throw new Error('unknown conversation');
-    await write(conversation, text, replyTo, onStored);
+    await write(conversation, typeof content === 'string' ? { text: content } : content, replyTo, onStored);
   }
 
-  async function write(conversation: ConversationRecord, text: string, replyTo?: string, onStored?: () => void | Promise<void>): Promise<void> {
+  async function write(
+    conversation: ConversationRecord,
+    content: { text: string } | { sticker: Sticker },
+    replyTo?: string,
+    onStored?: () => void | Promise<void>,
+  ): Promise<void> {
     // Stored and shown first; everything slow happens after.
     const id = newId();
     const at = now();
-    await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text, ...(replyTo ? { replyTo } : {}) });
+    const answer = replyTo ? { replyTo } : {};
+    await addMessage(db, { id, conv: conversation.id, at, out: true, status: 'sending' }, { text: '', ...content, ...answer });
     await putConversation(db, { ...conversation, lastAt: at, hidden: false });
     await onStored?.();
     try {
-      await transmit(conversation.id, { kind: 'message', id, at, text, ...(replyTo ? { replyTo } : {}) });
+      await transmit(conversation.id, { kind: 'message', id, at, ...content, ...answer });
       // Unless their receipt came in first.
       await setMessageStatus(db, id, 'sent', 'sending');
     } catch (err) {
       await setMessageStatus(db, id, 'failed');
       throw err;
+    }
+  }
+
+  /**
+   * Sends an attachment, with an optional caption. Like a message, it's
+   * stored and shown first (as sending); then the file is encrypted and
+   * uploaded, paid with send tokens, and the message carries its key.
+   */
+  async function sendMedia(
+    conv: string,
+    out: Outgoing,
+    caption = '',
+    replyTo?: string,
+    onStored?: (id: string) => void | Promise<void>,
+    onProgress?: (fraction: number) => void,
+  ): Promise<void> {
+    const conversation = await getConversation(db, conv);
+    if (!conversation) throw new Error('unknown conversation');
+    const id = newId();
+    const at = now();
+    const body = (media: LocalMedia) => ({ text: caption, ...(replyTo ? { replyTo } : {}), media });
+    await putMedia(db, id, out.file);
+    await addMessage(db, { id, conv, at, out: true, status: 'sending', file: 'local' }, body(out.media));
+    await putConversation(db, { ...conversation, lastAt: at, hidden: false });
+    await onStored?.(id);
+    try {
+      const media = await upload(out, onProgress);
+      await addMessage(db, { id, conv, at, out: true, status: 'sending', file: 'local' }, body(media));
+      await transmit(conv, { kind: 'message', id, at, ...(caption ? { text: caption } : {}), ...(replyTo ? { replyTo } : {}), media });
+      await setMessageStatus(db, id, 'sent', 'sending');
+    } catch (err) {
+      await setMessageStatus(db, id, 'failed');
+      throw err;
+    }
+  }
+
+  /** Encrypts and uploads a file; returns the attachment with its upload ID, key and delete secret. */
+  async function upload(out: Outgoing, onProgress?: (fraction: number) => void): Promise<Media> {
+    const key = newFileKey();
+    const secret = crypto.getRandomValues(new Uint8Array(16));
+    const size = uploadSize(out.file.length);
+    const tokens: StoredToken[] = [];
+    try {
+      for (let i = 0; i < Math.ceil(size / TOKEN_BYTES); i++) tokens.push(await nextToken());
+    } catch (err) {
+      for (const t of tokens) await returnToken(db, t.token, t.epoch);
+      throw err;
+    }
+    const deleteHash = new Uint8Array(await crypto.subtle.digest('SHA-256', secret));
+    let created: { id: string; url: string };
+    try {
+      created = await api.post('/media', { size, deleteHash: toBase64Url(deleteHash), tokens: tokens.map((t) => t.token) }, checkUpload);
+    } catch (err) {
+      // Unspent if it never arrived; otherwise the server refuses them later and they're dropped.
+      if (err instanceof NetworkError) for (const t of tokens) await returnToken(db, t.token, t.epoch);
+      throw err;
+    }
+    await transfer.put(created.url, await encryptFile(out.file, key), onProgress);
+    return { ...out.media, id: created.id, k: toBase64Url(key), d: toBase64Url(secret) };
+  }
+
+  /**
+   * Fetches a received attachment: downloads, decrypts and keeps it on this
+   * device. The upload stays until it's saved outside the app (the save page
+   * deletes it), the message or conversation is deleted, or it expires.
+   * Returns where the file is now.
+   */
+  function fetchMedia(id: string, onProgress?: (fraction: number) => void): Promise<'local' | 'gone'> {
+    return withLock(`media:${id}`, async () => {
+      const message = await getMessage(db, id);
+      if (!message?.media || message.file !== 'remote') return message?.file === 'local' ? 'local' : 'gone';
+      const m = message.media as Media;
+      let url: string;
+      try {
+        url = await api.request('GET', `/media/${m.id}`, {}, checkUrl);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'not_found') {
+          await setFile(db, id, 'gone');
+          return 'gone';
+        }
+        throw err;
+      }
+      const file = await decryptFile(await transfer.get(url, onProgress), fromBase64Url(m.k), m.s);
+      await putMedia(db, id, file);
+      await setFile(db, id, 'local');
+      return 'local';
+    });
+  }
+
+  /** Deletes the uploads of received attachments: their messages are being deleted here. */
+  async function discardUploads(messages: { out: boolean; media?: LocalMedia }[]): Promise<void> {
+    for (const m of messages) {
+      if (m.out || !m.media?.id || !m.media.d) continue;
+      try {
+        await api.post(`/media/${m.media.id}/delete`, { secret: m.media.d }, checkObject);
+      } catch {
+        // It expires anyway.
+      }
     }
   }
 
@@ -278,6 +408,7 @@ export function createMessaging(deps: MessagingDeps) {
     await withLock(`send:${conv}`, async () => {
       const c = await getConversation(db, conv);
       if (!c) return;
+      await discardUploads(await listMessages(db, conv));
       await deleteMessages(db, conv);
       await putConversation(db, { ...c, unread: 0, hidden: true });
     });
@@ -420,11 +551,16 @@ export function createMessaging(deps: MessagingDeps) {
     // Shown no later than it arrived, so a fast clock can't push a message above newer ones.
     const at = Math.min(message.at, t);
     let changed = false;
-    if (message.kind === 'message' && message.text) {
+    if (message.kind === 'message' && (message.text || message.media || message.sticker)) {
       await addMessage(
         db,
-        { id: message.id, conv: conv.id, at, out: false, status: 'received' },
-        { text: message.text, ...(message.replyTo ? { replyTo: message.replyTo } : {}) },
+        { id: message.id, conv: conv.id, at, out: false, status: 'received', ...(message.media ? { file: 'remote' as const } : {}) },
+        {
+          text: message.text ?? '',
+          ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+          ...(message.media ? { media: message.media } : {}),
+          ...(message.sticker ? { sticker: message.sticker } : {}),
+        },
       );
       conv.unread += 1;
       conv.lastAt = Math.max(conv.lastAt, at);
@@ -516,7 +652,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sync, markRead, markSeen, block, unblock, remove, maintain };
+  return { startConversation, send, sendMedia, fetchMedia, discardUploads, sync, markRead, markSeen, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

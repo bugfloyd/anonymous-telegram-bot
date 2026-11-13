@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyTheme } from './theme';
+import { applyInsets, applyTheme } from './theme';
 
 function fakeRoot() {
   const props: Record<string, string> = {};
@@ -20,5 +20,20 @@ describe('applyTheme', () => {
     applyTheme({ bg_color: 'red; background: url(x)', text_color: 'expression(1)' }, root);
     expect(props).toEqual({});
     expect(dataset.theme).toBeUndefined();
+  });
+});
+
+describe('applyInsets', () => {
+  it('adds the safe area and the content safe area at the bottom, within reason', () => {
+    const props: Record<string, string> = {};
+    const root = { style: { setProperty: (k: string, v: string) => (props[k] = v) } } as unknown as HTMLElement;
+    applyInsets({ safe: { top: 47, bottom: 34, left: 0, right: 0 } }, root);
+    expect(props['--app-safe-bottom']).toBe('34px');
+    applyInsets({ content: { top: 46, bottom: 10, left: 0, right: 0 } }, root);
+    expect(props['--app-safe-bottom']).toBe('44px');
+    applyInsets({ safe: { bottom: 'calc(9999px)' } }, root);
+    expect(props['--app-safe-bottom']).toBe('44px');
+    applyInsets({ safe: { top: 0, bottom: 5000, left: 0, right: 0 } }, root);
+    expect(props['--app-safe-bottom']).toBe('200px');
   });
 });

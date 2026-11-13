@@ -14,6 +14,7 @@
 #   RELEASE_BRANCH   the branch commits must be on, e.g. main
 #   API_URL, BOT_USERNAME, APP_NAME, ISSUER_KEY  the client's build settings
 #   WS_URL  the push socket (optional; without it the app polls)
+#   MEDIA_ORIGIN  the media bucket's origin (optional; without it attachments are off)
 #   (ISSUER_KEY names a key published in the code repository's web/issuer-keys.json)
 name: Deploy
 
@@ -88,6 +89,7 @@ jobs:
           VITE_APP_NAME: ${{ vars.APP_NAME }}
           VITE_ISSUER_KEY: ${{ vars.ISSUER_KEY }}
           VITE_WS_URL: ${{ vars.WS_URL }}
+          VITE_MEDIA_ORIGIN: ${{ vars.MEDIA_ORIGIN }}
         run: npm run build
 
       - name: Write the manifest
@@ -100,6 +102,7 @@ jobs:
           APP_NAME: ${{ vars.APP_NAME }}
           ISSUER_KEY: ${{ vars.ISSUER_KEY }}
           WS_URL: ${{ vars.WS_URL }}
+          MEDIA_ORIGIN: ${{ vars.MEDIA_ORIGIN }}
         run: |
           find . -type f | sed 's|^\./||' | sort | while read -r f; do
             printf '%s\t%s\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"
@@ -108,11 +111,12 @@ jobs:
             --arg repository "$CODE_REPOSITORY" --arg ref "$REF" --arg commit "$(git rev-parse HEAD)" \
             --arg node "$(node --version)" \
             --arg apiUrl "$API_URL" --arg botUsername "$BOT_USERNAME" --arg appName "$APP_NAME" --arg issuerKey "$ISSUER_KEY" \
-            --arg wsUrl "$WS_URL" \
+            --arg wsUrl "$WS_URL" --arg mediaOrigin "$MEDIA_ORIGIN" \
             --rawfile files "$RUNNER_TEMP/files.tsv" \
             '{repository: $repository, ref: $ref, commit: $commit, node: $node,
               build: ({VITE_API_URL: $apiUrl, VITE_BOT_USERNAME: $botUsername, VITE_APP_NAME: $appName, VITE_ISSUER_KEY: $issuerKey}
-                + (if $wsUrl == "" then {} else {VITE_WS_URL: $wsUrl} end)),
+                + (if $wsUrl == "" then {} else {VITE_WS_URL: $wsUrl} end)
+                + (if $mediaOrigin == "" then {} else {VITE_MEDIA_ORIGIN: $mediaOrigin} end)),
               files: ($files | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: .[1]}) | from_entries)}' \
             > manifest.json
           cat manifest.json

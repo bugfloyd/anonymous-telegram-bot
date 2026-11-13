@@ -67,6 +67,7 @@ type Directory interface {
 	DiscardMailbox(ctx context.Context, accountID, id string) error
 	Devices(ctx context.Context, accountID string, now time.Time) ([]string, error)
 	Mailboxes(ctx context.Context, accountID string) ([]string, error)
+	Delete(ctx context.Context, accountID, telegramHash string) error
 }
 
 // Limiter counts uses of a key in fixed windows.
@@ -106,6 +107,10 @@ type Server struct {
 	// Push, if set, tells open apps that something arrived; a Telegram
 	// notice goes out only if none took it.
 	Push Pusher
+
+	// Media and Uploads, if set, hold encrypted attachments.
+	Media   Media
+	Uploads Uploads
 }
 
 // Pusher reaches an account's open apps (push.Pusher).
@@ -120,6 +125,7 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/register", s.register)
 	r.Handle(http.MethodPost, "/session", s.session)
 	r.Handle(http.MethodGet, "/account", s.withDevice("GET /account", s.account))
+	r.Handle(http.MethodDelete, "/account", s.withSignature("DELETE /account", s.deleteAccount))
 	r.Handle(http.MethodPost, "/links", s.withSignature("POST /links", s.createLink))
 	r.Handle(http.MethodPut, "/links/{id}/keys", s.withSignature("PUT /links/{id}/keys", s.setLinkKeys))
 	r.Handle(http.MethodDelete, "/links/{id}", s.withSignature("DELETE /links/{id}", s.revokeLink))
@@ -139,6 +145,9 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/ack", s.withDevice("POST /ack", s.ack))
 	r.Handle(http.MethodPost, "/notices", s.withDevice("POST /notices", s.setNotices))
 	r.Handle(http.MethodPost, "/accounts/lookup", s.lookupAccount)
+	r.Handle(http.MethodPost, "/media", s.upload)
+	r.Handle(http.MethodGet, "/media/{id}", s.download)
+	r.Handle(http.MethodPost, "/media/{id}/delete", s.deleteUpload)
 }
 
 // tokenResponse is what a successful registration or login returns.

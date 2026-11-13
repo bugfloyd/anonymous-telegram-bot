@@ -19,6 +19,8 @@ export interface Config {
   issuer: { name: string; spki: Uint8Array<ArrayBuffer>; keyId: Uint8Array<ArrayBuffer> };
   /** The WebSocket that pushes "something arrived"; without it the app polls. */
   wsUrl?: string;
+  /** Whether attachments are on (the build names the media bucket, for its security policy). */
+  media?: boolean;
 }
 
 const env = import.meta.env;
@@ -41,5 +43,6 @@ export const config: Config | null =
         appName: env.VITE_APP_NAME,
         issuer: issuerKey,
         ...(env.VITE_WS_URL ? { wsUrl: env.VITE_WS_URL } : {}),
+        ...(env.VITE_MEDIA_ORIGIN ? { media: true } : {}),
       }
     : null;

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { concat, toBase64Url, utf8 } from '../crypto/encoding';
 import { exportPublicKey, generateCopyableAgreementKey } from '../crypto/keys';
 import { keyId, sealEnvelope } from './envelope';
-import { checkMessage, MAX_TEXT_BYTES, MessageError, newId, openMessage, sealMessage, type ConversationKey, type Draft } from './message';
+import { checkMessage, fileName, MAX_TEXT_BYTES, MessageError, newId, openMessage, sealMessage, shownAs, type ConversationKey, type Draft } from './message';
 
 async function conversationKey(): Promise<ConversationKey & { id: Uint8Array }> {
   const pair = await generateCopyableAgreementKey();
@@ -80,6 +80,18 @@ describe('checkMessage', () => {
     text: 'hi',
   };
 
+  const media = {
+    t: 'photo',
+    id: 'AAAAAAAAAAAAAAAAAAAAAA',
+    k: toBase64Url(new Uint8Array(32)),
+    d: 'AAAAAAAAAAAAAAAAAAAAAA',
+    s: 1234,
+    m: 'image/jpeg',
+    w: 800,
+    h: 600,
+    p: 'abcd',
+  };
+
   it('accepts a well-formed message and ignores unknown fields', () => {
     expect(checkMessage({ ...valid, future: true }).text).toBe('hi');
   });
@@ -96,7 +108,63 @@ describe('checkMessage', () => {
     ['seen without ids', { kind: 'seen', text: undefined }],
     ['text on end', { kind: 'end' }],
     ['bad reply', { reply: 'x' }],
+    ['media kind', { media: { ...media, t: 'Hologram!' } }],
+    ['media length', { media: { ...media, t: 'video', l: 1.5 } }],
+    ['media waveform', { media: { ...media, t: 'voice', v: toBase64Url(new Uint8Array(101)) } }],
+    ['empty waveform', { media: { ...media, t: 'voice', v: '' } }],
+    ['media key', { media: { ...media, k: 'AAAA' } }],
+    ['media size', { media: { ...media, s: 26 * 1024 * 1024 } }],
+    ['media type', { media: { ...media, m: 'not a type' } }],
+    ['media preview', { media: { ...media, p: 'x'.repeat(3001) } }],
+    ['media on seen', { kind: 'seen', text: undefined, seen: ['AAAAAAAAAAAAAAAAAAAAAA'], media }],
+    ['media on end', { kind: 'end', text: undefined, media }],
   ])('rejects bad %s', (_, change) => {
     expect(() => checkMessage({ ...valid, ...change })).toThrow(MessageError);
+  });
+
+  it('accepts an attachment, with or without a caption', () => {
+    expect(checkMessage({ ...valid, media }).media).toEqual(media);
+    expect(checkMessage({ ...valid, text: undefined, media }).media?.t).toBe('photo');
+    const video = { ...media, t: 'video', m: 'video/mp4', l: 42 };
+    expect(checkMessage({ ...valid, media: video }).media).toEqual(video);
+    const voice = { t: 'voice', id: media.id, k: media.k, d: media.d, s: 900, m: 'audio/mp4', l: 7, v: toBase64Url(new Uint8Array([0, 128, 255])) };
+    expect(checkMessage({ ...valid, text: undefined, media: voice }).media).toEqual(voice);
+    const round = { t: 'round', id: media.id, k: media.k, d: media.d, s: 4_000_000, m: 'video/mp4', w: 384, h: 384, l: 12 };
+    expect(shownAs(checkMessage({ ...valid, text: undefined, media: round }).media!)).toBe('round');
+  });
+
+  it('accepts a sticker on its own', () => {
+    const sticker = { id: 'faces/winking_face', e: '😉' };
+    expect(checkMessage({ ...valid, text: undefined, sticker }).sticker).toEqual(sticker);
+    expect(checkMessage({ ...valid, text: undefined, sticker: { id: 'new_pack/cat' } }).sticker?.id).toBe('new_pack/cat');
+    for (const bad of [
+      { ...valid, sticker },
+      { ...valid, text: undefined, media, sticker },
+      { ...valid, text: undefined, sticker: { id: 'Faces/Wink' } },
+      { ...valid, text: undefined, sticker: { id: 'faces' } },
+      { ...valid, text: undefined, sticker: { id: '../x/y' } },
+      { ...valid, text: undefined, sticker: { id: 'faces/x', e: '' } },
+      { ...valid, text: undefined, sticker: 'faces/x' },
+      { ...valid, kind: 'end', text: undefined, sticker },
+    ]) {
+      expect(() => checkMessage(bad)).toThrow(MessageError);
+    }
+  });
+
+  it('accepts kinds from newer versions and shows them as files', () => {
+    const voice = checkMessage({ ...valid, media: { ...media, t: 'voice_note' } }).media!;
+    expect(shownAs(voice)).toBe('file');
+    expect(shownAs({ t: 'gif' })).toBe('gif');
+  });
+
+  it('names attachments for saving', () => {
+    expect(fileName({ t: 'file', n: 'report.pdf' })).toBe('report.pdf');
+    expect(fileName({ t: 'photo', m: 'image/jpeg' })).toBe('photo.jpg');
+    expect(fileName({ t: 'video', m: 'video/quicktime' })).toBe('video.mov');
+    expect(fileName({ t: 'gif', m: 'image/gif' })).toBe('animation.gif');
+    expect(fileName({ t: 'voice_note' })).toBe('file');
+    expect(fileName({ t: 'voice', m: 'audio/mp4' })).toBe('voice.m4a');
+    expect(fileName({ t: 'round', m: 'video/mp4' })).toBe('video.mp4');
+    expect(fileName({ t: 'audio', n: 'song.mp3', m: 'audio/mpeg' })).toBe('song.mp3');
   });
 });

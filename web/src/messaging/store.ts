@@ -3,15 +3,23 @@
 // non-extractable AES-GCM key, and bound to the message ID.
 
 import { concat, randomBytes, utf8 } from '../crypto/encoding';
+import type { Media, Sticker } from '../protocol/message';
 import { getKey, putKey, type ConversationRecord, type Database, type MessageRecord } from '../storage/db';
 import { withLock } from '../sync/locks';
 
 const STORAGE_KEY = 'storage-key';
 const IV = 12;
 
+/** An attachment as kept with its message: no upload fields until it's uploaded (ours) or always (theirs). */
+export type LocalMedia = Omit<Media, 'id' | 'k' | 'd'> & Partial<Pick<Media, 'id' | 'k' | 'd'>>;
+
 export interface MessageBody {
   text: string;
   replyTo?: string;
+  /** An attachment: what it is and how to fetch it (the file itself is in the media store). */
+  media?: LocalMedia;
+  /** A sticker (then the text is empty). */
+  sticker?: Sticker;
 }
 
 /** A message with its text, for showing. */
@@ -69,12 +77,47 @@ export async function setMessageStatus(db: Database, id: string, status: Message
   if (record && (from === undefined || record.status === from)) await db.put('messages', { ...record, status });
 }
 
+/** Deletes one message from this device, and its attachment. */
+export async function deleteMessage(db: Database, id: string): Promise<void> {
+  await db.delete('messages', id);
+  await db.delete('media', id);
+}
+
+/** Keeps a message's attachment on this device, sealed under the storage key. */
+export async function putMedia(db: Database, id: string, file: Uint8Array<ArrayBuffer>): Promise<void> {
+  const iv = randomBytes(IV);
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: utf8(`media:${id}`) }, await storageKey(db), file);
+  await db.put('media', concat(iv, new Uint8Array(ct)), id);
+}
+
+/** A message's attachment, if it's on this device. */
+export async function getMedia(db: Database, id: string): Promise<Uint8Array<ArrayBuffer> | undefined> {
+  const sealed = await db.get('media', id);
+  if (!sealed) return undefined;
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: sealed.slice(0, IV), additionalData: utf8(`media:${id}`) }, await storageKey(db), sealed.slice(IV));
+  return new Uint8Array(pt);
+}
+
+/** Sets where a message's attachment is. */
+export async function setFile(db: Database, id: string, file: NonNullable<MessageRecord['file']>): Promise<void> {
+  const record = await db.get('messages', id);
+  if (record) await db.put('messages', { ...record, file });
+}
+
 /** Marks one of our messages in a conversation as seen, if it was sent; returns whether it did. */
 export async function markOwnSeen(db: Database, conv: string, id: string): Promise<boolean> {
   const record = await db.get('messages', id);
   if (!record || record.conv !== conv || !record.out || (record.status !== 'sent' && record.status !== 'sending')) return false;
   await db.put('messages', { ...record, status: 'seen' });
   return true;
+}
+
+/** One message with its text, if it's on this device. */
+export async function getMessage(db: Database, id: string): Promise<MessageView | undefined> {
+  const record = await db.get('messages', id);
+  if (!record) return undefined;
+  const { sealed, ...rest } = record;
+  return { ...rest, ...(await openBody(db, id, sealed)) };
 }
 
 /** A conversation's messages, oldest first, with their text. */
@@ -87,8 +130,12 @@ export async function listMessages(db: Database, conv: string): Promise<MessageV
 
 /** Deletes a conversation's messages from this device. */
 export async function deleteMessages(db: Database, conv: string): Promise<void> {
-  const tx = db.transaction('messages', 'readwrite');
+  const tx = db.transaction(['messages', 'media'], 'readwrite');
+  const messages = tx.objectStore('messages');
   const range = IDBKeyRange.bound([conv, 0], [conv, Number.MAX_SAFE_INTEGER]);
-  for (const id of await tx.store.index('byConversation').getAllKeys(range)) await tx.store.delete(id);
+  for (const id of await messages.index('byConversation').getAllKeys(range)) {
+    await messages.delete(id);
+    await tx.objectStore('media').delete(id);
+  }
   await tx.done;
 }

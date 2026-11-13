@@ -24,7 +24,7 @@ type Outcome = 'ok' | ApiError | NetworkError;
  * stores link bundles exactly as clients send them, like the real one, and
  * keeps invitations for its one account.
  */
-function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; createLink?: Outcome[]; elsewhere?: boolean } = {}) {
+function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; createLink?: Outcome[]; deleteAccount?: Outcome[]; elsewhere?: boolean } = {}) {
   const calls: string[] = [];
   const bundles = new Map<string, { signingKey: string; keys: unknown[]; mailbox: string }>();
   const unsigned: string[] = [];
@@ -35,6 +35,7 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
     codes: new Map<string, { uses: number; left: number }>(),
     levels: new Map<number, number>(),
     granted: [] as { link: string; invitations: number }[],
+    deleted: false,
   };
   let nextCode = 0;
   const take = (queue: Outcome[] | undefined) => {
@@ -58,6 +59,13 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
       if (path === '/session') {
         take(outcomes.session);
         return check({ account: 'BBBBBBBBBBBBBBBBBBBBBB', token: 'v1.p.m', expires: Math.floor(Date.now() / 1000) + 900 });
+      }
+      if (method === 'DELETE' && path === '/account') {
+        needsSignature();
+        take(outcomes.deleteAccount);
+        state.deleted = true;
+        bundles.clear();
+        return check({});
       }
       const canCreateLinks = !state.inviteOnly || state.member || state.admin;
       if (path === '/account') return check({ canCreateLinks, admin: state.admin, links: bundles.size, maxLinks: 5 });
@@ -401,6 +409,41 @@ describe('links', () => {
     await second.app.start();
     expect(second.app.screen.value).toMatchObject({ kind: 'link', status: 'verified' });
     expect(await getMeta(db, 'pending-link')).toBeUndefined();
+  });
+});
+
+describe('deleting the account', () => {
+  it('deletes it on the server with a signed request, then everything on the device', async () => {
+    const server = fakeServer();
+    const owner = await registered(server.api);
+    await owner.app.createLink();
+    owner.app.askDeleteAccount();
+    expect(owner.app.screen.value).toEqual({ kind: 'confirm-delete', busy: false, error: null });
+    await owner.app.deleteAccount();
+    expect(server.state.deleted).toBe(true);
+    expect(server.unsigned).toEqual([]);
+    expect(owner.app.screen.value).toEqual({ kind: 'welcome', mismatch: false, deleted: true });
+    expect(await readAccount(owner.db)).toBeUndefined();
+    expect(await getMeta(owner.db, 'links')).toBeUndefined();
+  });
+
+  it('keeps everything, and says so, when the server can\'t be reached', async () => {
+    const server = fakeServer({ deleteAccount: [new NetworkError('offline')] });
+    const owner = await registered(server.api);
+    owner.app.askDeleteAccount();
+    await owner.app.deleteAccount();
+    expect(owner.app.screen.value).toEqual({ kind: 'confirm-delete', busy: false, error: 'network' });
+    expect(await readAccount(owner.db)).toMatchObject({ state: 'registered' });
+    // Trying again works.
+    await owner.app.deleteAccount();
+    expect(owner.app.screen.value).toMatchObject({ kind: 'welcome', deleted: true });
+  });
+
+  it('cancels back to the link tab', async () => {
+    const owner = await registered(fakeServer().api);
+    owner.app.askDeleteAccount();
+    await owner.app.cancelDeleteAccount();
+    expect(home(owner.app.screen.value).tab).toBe('links');
   });
 });
 

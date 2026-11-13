@@ -4,7 +4,7 @@
 # bytes (design §16).
 #
 #   scripts/verify-site.sh <site URL> <hosting repository> [--rebuild]
-#   scripts/verify-site.sh https://incognitochat.github.io incognitochat/incognitochat.github.io --rebuild
+#   scripts/verify-site.sh https://<org>.github.io <org>/<org>.github.io --rebuild
 #
 # Needs curl, jq, sha256sum, and the GitHub CLI (gh attestation verify works
 # without logging in for public repositories). --rebuild also needs git and
@@ -64,6 +64,7 @@ if [ "$rebuild" = --rebuild ]; then
     VITE_APP_NAME=$(jq -r .build.VITE_APP_NAME "$work/manifest.json") \
     VITE_ISSUER_KEY=$(jq -r '.build.VITE_ISSUER_KEY // empty' "$work/manifest.json") \
     VITE_WS_URL=$(jq -r '.build.VITE_WS_URL // empty' "$work/manifest.json") \
+    VITE_MEDIA_ORIGIN=$(jq -r '.build.VITE_MEDIA_ORIGIN // empty' "$work/manifest.json") \
       npm run build --silent >/dev/null
   )
   while IFS=$'\t' read -r path sha; do

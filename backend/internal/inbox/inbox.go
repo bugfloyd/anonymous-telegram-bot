@@ -110,6 +110,34 @@ func (s *Store) Ack(ctx context.Context, accountID, deviceID string, itemIDs []s
 	return s.write(ctx, requests)
 }
 
+// Clear deletes all of a device's undelivered items (its account is being
+// deleted).
+func (s *Store) Clear(ctx context.Context, accountID, deviceID string) error {
+	pages := dynamodb.NewQueryPaginator(s.DB, &dynamodb.QueryInput{
+		TableName:              &s.Table,
+		KeyConditionExpression: aws.String("pk = :pk"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk": &types.AttributeValueMemberS{Value: devicePK(accountID, deviceID)},
+		},
+		ProjectionExpression: aws.String("pk, sk"),
+		ConsistentRead:       aws.Bool(true),
+	})
+	var requests []types.WriteRequest
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return err
+		}
+		for _, it := range page.Items {
+			requests = append(requests, types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: map[string]types.AttributeValue{
+				"pk": it["pk"],
+				"sk": it["sk"],
+			}}})
+		}
+	}
+	return s.write(ctx, requests)
+}
+
 func (s *Store) write(ctx context.Context, requests []types.WriteRequest) error {
 	for len(requests) > 0 {
 		n := min(batchSize, len(requests))
