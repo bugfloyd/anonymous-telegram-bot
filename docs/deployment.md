@@ -39,8 +39,8 @@ them is done by hand:
 1. Pull request titles follow Conventional Commits, and each squash merge to
    `main` keeps the title. [release-please](https://github.com/googleapis/release-please)
    reads them and keeps one release pull request open with the next version
-   (`fix` → patch, `feat` → minor, `!` → major), `CHANGELOG.md` and
-   `version.txt`.
+   (`fix` → patch, `feat` → minor, `!` → major) and `CHANGELOG.md`. The
+   current version is kept in `.release-please-manifest.json` and the tags.
 2. Merging that pull request is the decision to release. release-please then
    tags the merge commit and publishes a GitHub Release with the changelog.
 3. The published release runs CI on the tag: everything is built and tested
