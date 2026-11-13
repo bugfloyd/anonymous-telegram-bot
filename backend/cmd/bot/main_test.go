@@ -15,8 +15,8 @@ func TestHandleRoutesEvents(t *testing.T) {
 	var setupURL string
 	setup := func(_ context.Context, url string) error { setupURL = url; return nil }
 
-	out, err := handle(context.Background(), json.RawMessage(`{"setup":{"webhookUrl":"https://x.lambda-url.eu-west-1.on.aws/"}}`), b, setup)
-	if err != nil || setupURL != "https://x.lambda-url.eu-west-1.on.aws/" {
+	out, err := handle(context.Background(), json.RawMessage(`{"setup":{"webhookUrl":"https://x.lambda-url.us-east-1.on.aws/"}}`), b, setup)
+	if err != nil || setupURL != "https://x.lambda-url.us-east-1.on.aws/" {
 		t.Fatalf("setup: %v, %v, %q", out, err, setupURL)
 	}
 

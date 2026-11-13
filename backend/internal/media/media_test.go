@@ -14,7 +14,7 @@ import (
 // newBucket uses the real presigner (signing needs no network).
 func newBucket() *Bucket {
 	client := s3.New(s3.Options{
-		Region:      "eu-west-1",
+		Region:      "us-east-1",
 		Credentials: credentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", "token"),
 		// The SDK would otherwise add a checksum of an empty body to the
 		// signature, and the browser's upload would be refused.
@@ -32,7 +32,7 @@ func TestUploadURLSignsTheExactLengthAndType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Scheme != "https" || !strings.HasPrefix(u.Host, "incognitochat-test-media-abc.s3.eu-west-1.") || u.Path != "/m/IDIDIDIDIDIDIDIDIDIDID" {
+	if u.Scheme != "https" || !strings.HasPrefix(u.Host, "incognitochat-test-media-abc.s3.us-east-1.") || u.Path != "/m/IDIDIDIDIDIDIDIDIDIDID" {
 		t.Fatalf("url = %s", raw)
 	}
 	q := u.Query()

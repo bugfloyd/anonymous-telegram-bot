@@ -6,23 +6,37 @@ An overview of the parts and how a message travels. The exact formats are in
 
 ## Parts
 
-```
-                      ┌──────────────────────────────┐
-  Telegram ──webhook─▶│ bot     (function URL)       │ /start, the open-app button
-                      └──────────────────────────────┘
-                      ┌──────────────────────────────┐
-  App ──────HTTPS────▶│ api     (function URL)       │ register, sessions, links, invitations,
-  (Telegram Mini App) │                              │ mailboxes, send, inbox, tokens, media
-                      └──────┬────────────────┬──────┘
-                             │ push           │ invoke, without waiting
-                      ┌──────▼───────┐ ┌──────▼───────┐
-  App ◀────socket─────│ ws (API GW   │ │ notify       │──▶ Telegram: a generic "New message"
-                      │  WebSocket)  │ └──────────────┘
-                      └──────────────┘
-  App ──presigned PUT/GET──▶ S3 bucket: encrypted attachments only
+```mermaid
+flowchart LR
+  subgraph device["The user's device"]
+    app["App<br/>(Telegram Mini App)"]
+  end
+  subgraph github["GitHub"]
+    pages["Pages: the app's files,<br/>built and attested<br/>from this repository"]
+  end
+  subgraph telegram["Telegram"]
+    tg["Telegram's servers"]
+  end
+  subgraph aws["AWS"]
+    bot["bot<br/>/start, the open-app button"]
+    api["api<br/>register, sessions, links,<br/>invitations, mailboxes, send,<br/>inbox, tokens, media"]
+    ws["ws<br/>WebSocket"]
+    notify["notify"]
+    s3[("S3<br/>encrypted attachments")]
+    db[("DynamoDB<br/>directory, messages,<br/>ephemeral")]
+    ssm[("SSM<br/>secrets")]
+  end
 
-  DynamoDB: directory · messages · ephemeral          SSM: one parameter per secret
-  The app's files: GitHub Pages, built and attested from this repository
+  pages -- "app files" --> app
+  app -- "HTTPS" --> api
+  ws -- "sync hint" --> app
+  app -- "upload, download" --> s3
+  api -- "push" --> ws
+  api -- "invoke" --> notify
+  api --- db
+  api --- ssm
+  tg -- "webhook" --> bot
+  notify -- "New message" --> tg
 ```
 
 - **The app** is one static web app (TypeScript, Preact, Vite) that runs as a
