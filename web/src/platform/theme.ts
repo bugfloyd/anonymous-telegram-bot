@@ -26,3 +26,20 @@ export function applyTheme(params: Record<string, string>, root: HTMLElement = d
   }
   if (applied) root.dataset.theme = 'telegram';
 }
+
+type Insets = { top: number; bottom: number; left: number; right: number };
+const insets: { safe?: Insets; content?: Insets } = {};
+
+/**
+ * Keeps --app-safe-bottom at the space Telegram says is taken at the bottom
+ * of the screen (the iPhone home bar; in full screen, Telegram's own
+ * controls too), so the message bar can sit low without going under it.
+ */
+export function applyInsets(update: { safe?: unknown; content?: unknown }, root: HTMLElement = document.documentElement): void {
+  for (const key of ['safe', 'content'] as const) {
+    const value = update[key] as Partial<Insets> | undefined;
+    if (value && typeof value.bottom === 'number' && Number.isFinite(value.bottom)) insets[key] = value as Insets;
+  }
+  const bottom = (insets.safe?.bottom ?? 0) + (insets.content?.bottom ?? 0);
+  root.style.setProperty('--app-safe-bottom', `${Math.round(Math.min(200, Math.max(0, bottom)))}px`);
+}
