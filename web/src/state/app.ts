@@ -97,6 +97,8 @@ export interface Preparing {
   as: SendAs | 'voice' | 'round';
   /** The picked photo, video or GIF (or the recorded video message), for showing it meanwhile. */
   url: string | null;
+  /** A video message's last frame (a data URL), shown until its recording is finished off. */
+  still?: string | null;
   name: string;
   size: number;
   caption: string;
@@ -536,15 +538,28 @@ export function createApp(deps: Deps) {
     await sendPrepared(current.id, key, { file: recording.file, media }, '', replyTo);
   }
 
-  /** Sends a recorded video message in the open conversation. */
-  async function sendRound(recording: RoundRecording, replyTo?: string): Promise<void> {
+  /**
+   * Sends a video message in the open conversation. It shows at once, with
+   * its last frame, while the recording is finished off (seconds, on some
+   * phones); null from the recording means it was too short.
+   */
+  async function sendRound(pending: Promise<RoundRecording | null>, still: string | null, replyTo?: string): Promise<void> {
     const current = screen.value;
-    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return void pending.catch(() => {});
     const key = crypto.randomUUID();
+    preparing.value = [...preparing.value, { key, conv: current.id, as: 'round', url: null, still, name: '', size: 0, caption: '' }];
+    let recording: RoundRecording | null;
+    try {
+      recording = await pending;
+    } catch (err) {
+      unprepare(key);
+      throw err;
+    }
+    if (!recording) return unprepare(key);
     const { file, type, length, side } = recording;
     const media = { t: 'round', s: file.length, m: type, l: length, w: side, h: side, ...(recording.preview ? { p: recording.preview } : {}) };
     const url = URL.createObjectURL(new Blob([file], { type }));
-    preparing.value = [...preparing.value, { key, conv: current.id, as: 'round', url, name: fileName(media), size: media.s, caption: '' }];
+    preparing.value = preparing.value.map((p) => (p.key === key ? { ...p, url, name: fileName(media), size: media.s } : p));
     await sendPrepared(current.id, key, { file, media }, '', replyTo);
   }
 
