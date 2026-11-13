@@ -124,6 +124,11 @@ function Screen({ app, language }: { app: AppState; language: Language }) {
     case 'welcome':
       return (
         <Page title={tr('welcomeTitle')} body={tr('welcomeBody')}>
+          {screen.deleted && (
+            <p class="notice" role="status">
+              {tr('accountDeleted')}
+            </p>
+          )}
           {screen.mismatch && <p class="notice">{tr('setupMismatch')}</p>}
           <Button onClick={app.setUp}>{tr('setUp')}</Button>
         </Page>
@@ -150,6 +155,8 @@ function Screen({ app, language }: { app: AppState; language: Language }) {
       );
     case 'confirm-replace':
       return <ConfirmReplace app={app} language={language} busy={screen.busy} />;
+    case 'confirm-delete':
+      return <ConfirmDelete app={app} language={language} busy={screen.busy} error={screen.error} />;
     case 'blocked':
       return <Blocked app={app} language={language} screen={screen} />;
     case 'home':
@@ -314,6 +321,9 @@ function Home({ app, language, screen }: { app: AppState; language: Language; sc
         </div>
       )}
       {busy && <div class="spinner" aria-hidden="true" />}
+      <button type="button" class="link-button delete-account" disabled={busy || offline} onClick={app.askDeleteAccount}>
+        {tr('deleteAccount')}
+      </button>
     </Page>
   );
 }
@@ -2524,6 +2534,42 @@ function ConfirmReplace({ app, language, busy }: { app: AppState; language: Lang
         {t(language, 'replaceConfirm')}
       </Button>
       <Button kind="secondary" disabled={busy} onClick={app.cancelReplace}>
+        {t(language, 'cancel')}
+      </Button>
+    </Page>
+  );
+}
+
+/** Deleting the account: what goes, and a typed phrase so it can't happen by accident. */
+function ConfirmDelete({ app, language, busy, error }: { app: AppState; language: Language; busy: boolean; error: ErrorKind | null }) {
+  const typed = useSignal('');
+  const phrase = t(language, 'deletePhrase');
+  const ok = confirmationMatches(typed.value, phrase);
+  return (
+    <Page title={t(language, 'deleteTitle')} body={t(language, 'deleteBody')} busy={busy}>
+      <p class="warning">{t(language, 'deleteWarning')}</p>
+      {error && (
+        <p class="notice" role="alert">
+          {t(language, ERROR_TEXT[error])}
+        </p>
+      )}
+      <label class="field">
+        <span>{t(language, 'replaceType', { phrase: '⁨' + phrase + '⁩' })}</span>
+        <input
+          type="text"
+          dir="auto"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck={false}
+          value={typed.value}
+          disabled={busy}
+          onInput={(e) => (typed.value = e.currentTarget.value)}
+        />
+      </label>
+      <Button kind="danger" disabled={!ok || busy} onClick={app.deleteAccount}>
+        {t(language, 'deleteAccountConfirm')}
+      </Button>
+      <Button kind="secondary" disabled={busy} onClick={app.cancelDeleteAccount}>
         {t(language, 'cancel')}
       </Button>
     </Page>

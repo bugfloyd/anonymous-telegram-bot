@@ -72,6 +72,16 @@ its Telegram user has one, to say "your account is on another device" instead
 of offering setup. Like notices, it accepts only a plain or registration
 launch, never one that names a link or an invitation, and stores nothing.
 
+**Deleting an account:** `DELETE /account`, signed. The server deletes the
+account's waiting envelopes, links (their bundles then answer "not found"),
+mailboxes (sends to them get the usual answer and are dropped), invitation
+codes, device list, devices and the account itself, and the item that keeps
+one account per Telegram user, so the same user can set up again. Unlike a
+replacement, it keeps no marker; only rate-limit counters and socket records
+remain until they expire (within a day). Before asking, the app deletes the uploads
+still waiting for it (`POST /media/{id}/delete`); afterwards it deletes
+everything on the device. The other side of each conversation isn't told.
+
 **Device list** (`incognitochat/v2/device-list`), parts in order: suite
 (1 byte), sequence number (8), SHA-256 of the previous list (32; zeros for the
 first), issued (8), expires (8, at most 30 days later), then per device: ID

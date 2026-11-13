@@ -52,3 +52,30 @@ func TestDeliverListAck(t *testing.T) {
 		t.Fatalf("%d expired items listed", len(late))
 	}
 }
+
+func TestClear(t *testing.T) {
+	client := dynamotest.Client(t)
+	s := &Store{DB: client, Table: dynamotest.Table(t, client)}
+	ctx := context.Background()
+	account, phone, other, mailbox := ids.New(), ids.New(), ids.New(), ids.New()
+
+	// More than one batch of items.
+	for i := range 30 {
+		if err := s.Deliver(ctx, account, []string{phone}, mailbox, []byte{2, byte(i)}, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Deliver(ctx, other, []string{phone}, mailbox, []byte{3}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Clear(ctx, account, phone); err != nil {
+		t.Fatal(err)
+	}
+	if left, _, _ := s.List(ctx, account, phone, 50, now); len(left) != 0 {
+		t.Fatalf("%d items left", len(left))
+	}
+	// Another account's device of the same ID keeps its items.
+	if kept, _, _ := s.List(ctx, other, phone, 50, now); len(kept) != 1 {
+		t.Fatalf("other account has %d items", len(kept))
+	}
+}

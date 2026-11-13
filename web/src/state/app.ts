@@ -45,7 +45,7 @@ import { createPushSocket } from '../net/socket';
 import { BundleMismatch, checkBundle, linkUrl, parsePayload, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
 import type { Launch } from '../platform/launch';
 import { openPopup, type Bridge, type PopupButton } from '../platform/telegram';
-import { deleteMeta, getMeta, putMeta, type Database } from '../storage/db';
+import { deleteMeta, getMeta, putMeta, wipe, type Database } from '../storage/db';
 import type { SyncEvent } from '../sync/locks';
 
 export type ErrorKind = 'network' | 'expired' | 'rate-limited' | 'logged-out' | 'generic';
@@ -116,10 +116,12 @@ export type Screen =
   | { kind: 'loading' }
   | { kind: 'unconfigured' }
   | { kind: 'outside-telegram' }
-  | { kind: 'welcome'; mismatch: boolean }
+  | { kind: 'welcome'; mismatch: boolean; deleted?: boolean }
   | { kind: 'reopening' }
   | { kind: 'registering' }
   | { kind: 'confirm-replace'; busy: boolean }
+  /** Deleting the account, after a typed confirmation. */
+  | { kind: 'confirm-delete'; busy: boolean; error: ErrorKind | null }
   /** This Telegram account is set up on another device (one device per account). */
   | { kind: 'elsewhere' }
   | {
@@ -207,6 +209,8 @@ export function createApp(deps: Deps) {
   let messaging: Messaging | null = null;
   let tab: 'chats' | 'links' = 'chats';
   let backgroundStarted = false;
+  // Stops the inbox poll and the push socket (the account was deleted).
+  let stopBackground = (): void => {};
   // The link last checked and found genuine, to write to.
   let openedLink: { ref: LinkRef; bundle: Bundle } | null = null;
 
@@ -343,11 +347,17 @@ export function createApp(deps: Deps) {
     socket?.start();
     // With a socket open, polling is only a safety net.
     let ticks = 0;
-    setInterval(() => {
+    const poll = setInterval(() => {
       ticks++;
       if (shown() && (!socket?.connected || ticks % SOCKET_POLL_EVERY === 0)) void sync();
     }, POLL_MS);
     document.addEventListener('visibilitychange', visibility);
+    stopBackground = () => {
+      clearInterval(poll);
+      socket?.stop();
+      document.removeEventListener('visibilitychange', visibility);
+      backgroundStarted = false;
+    };
     deps.bridge?.on('visibility_changed', ({ is_visible }) => {
       telegramVisible = is_visible;
       visibility();
@@ -778,6 +788,44 @@ export function createApp(deps: Deps) {
     return showHome({ offline });
   }
 
+  /**
+   * Deletes the account: first the attachments still waiting for this device
+   * on the server (best effort), then everything the server holds for the
+   * account (DELETE /account, signed), then everything on this device. The
+   * other side of each conversation isn't told: their messages go nowhere,
+   * like to any unknown mailbox.
+   */
+  async function deleteAccount(): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'confirm-delete' || current.busy || !session) return;
+    screen.value = { ...current, busy: true, error: null };
+    try {
+      if (messaging) {
+        for (const c of await listConversations(deps.db)) {
+          try {
+            await messaging.discardUploads(await listMessages(deps.db, c.id));
+          } catch {
+            // They expire on their own within 31 days.
+          }
+        }
+      }
+      await session.call('DELETE', '/account', undefined, checkObject, { sign: true });
+    } catch (err) {
+      // Already gone on the server (an earlier try got through): finish here.
+      if (!(err instanceof ApiError && err.code === 'not_found')) {
+        if (handleGone(err)) return;
+        screen.value = { kind: 'confirm-delete', busy: false, error: err instanceof NetworkError ? 'network' : 'generic' };
+        return;
+      }
+    }
+    stopBackground();
+    messaging = null;
+    await wipe(deps.db);
+    deps.broadcast({ type: 'account-changed' });
+    backButton(false);
+    screen.value = { kind: 'welcome', mismatch: false, deleted: true };
+  }
+
   /** Shows a replaced account loudly. Returns whether err was that. */
   function handleGone(err: unknown): boolean {
     if (!(err instanceof ApiError && err.code === 'account_replaced')) return false;
@@ -1033,6 +1081,13 @@ export function createApp(deps: Deps) {
       screen.value = { kind: 'elsewhere' };
     },
     startOver,
+    /** Asks to delete the account (a typed confirmation follows). */
+    askDeleteAccount: () => {
+      backButton(true);
+      screen.value = { kind: 'confirm-delete', busy: false, error: null };
+    },
+    deleteAccount,
+    cancelDeleteAccount: () => showHome({ tab: 'links' }),
     close: () => deps.bridge?.post('web_app_close'),
     retry: () => retry(),
     home: () => showHome(),

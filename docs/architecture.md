@@ -69,6 +69,10 @@ flowchart LR
   account's links and mailboxes end at once, and the old device says so, and
   that it may mean tampering. A second device that finds an account elsewhere
   says "your account is on another device" instead of offering setup.
+- **Deleting an account** (in the app, after a typed confirmation) removes
+  everything the server holds for it at once, keeping no marker, and then
+  everything on the device. Nobody is told; messages to its old link and
+  mailboxes go nowhere.
 - **Several Telegram accounts in one Telegram app** share one storage area, so
   each gets its own local profile on the device, named after a hash of its
   Telegram user ID.

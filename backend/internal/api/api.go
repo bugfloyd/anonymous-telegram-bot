@@ -67,6 +67,7 @@ type Directory interface {
 	DiscardMailbox(ctx context.Context, accountID, id string) error
 	Devices(ctx context.Context, accountID string, now time.Time) ([]string, error)
 	Mailboxes(ctx context.Context, accountID string) ([]string, error)
+	Delete(ctx context.Context, accountID, telegramHash string) error
 }
 
 // Limiter counts uses of a key in fixed windows.
@@ -124,6 +125,7 @@ func (s *Server) Routes(r *httpapi.Router) {
 	r.Handle(http.MethodPost, "/register", s.register)
 	r.Handle(http.MethodPost, "/session", s.session)
 	r.Handle(http.MethodGet, "/account", s.withDevice("GET /account", s.account))
+	r.Handle(http.MethodDelete, "/account", s.withSignature("DELETE /account", s.deleteAccount))
 	r.Handle(http.MethodPost, "/links", s.withSignature("POST /links", s.createLink))
 	r.Handle(http.MethodPut, "/links/{id}/keys", s.withSignature("PUT /links/{id}/keys", s.setLinkKeys))
 	r.Handle(http.MethodDelete, "/links/{id}", s.withSignature("DELETE /links/{id}", s.revokeLink))

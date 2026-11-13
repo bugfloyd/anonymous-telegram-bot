@@ -181,6 +181,13 @@ func (m *memInbox) List(_ context.Context, account, device string, limit int, _ 
 	return append([]inbox.Item(nil), items...), false, nil
 }
 
+func (m *memInbox) Clear(_ context.Context, account, device string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.items, account+"#"+device)
+	return nil
+}
+
 func (m *memInbox) Ack(_ context.Context, account, device string, ackIDs []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -361,6 +368,35 @@ func (m *memDirectory) ByTelegram(_ context.Context, th string) (directory.Accou
 		devices[k] = v
 	}
 	return directory.Account{ID: id, Key: a.key, Devices: devices}, nil
+}
+
+func (m *memDirectory) Delete(_ context.Context, account, th string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[account]
+	if !ok || a.replaced {
+		return directory.ErrNotFound
+	}
+	for id, l := range m.links {
+		if l.owner == account {
+			delete(m.links, id)
+		}
+	}
+	for id, b := range m.boxes {
+		if b.Owner == account {
+			delete(m.boxes, id)
+		}
+	}
+	for code, c := range m.codes {
+		if c.owner == account {
+			delete(m.codes, code)
+		}
+	}
+	if th != "" && m.telegram[th] == account {
+		delete(m.telegram, th)
+	}
+	delete(m.accounts, account)
+	return nil
 }
 
 func (m *memDirectory) put(n directory.NewAccount) {

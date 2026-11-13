@@ -43,9 +43,12 @@ Telegram or your phone clears the app's storage.
 | Short-lived counters, login nonces, spent send tokens, open-socket records | Rate limits, replay protection, live updates | Minutes, up to two weeks |
 | Error logs, without IDs, IP addresses or content | Fixing problems | 7 days |
 
-After you set up again (which ends your old account), a marker and the old
-device's public key are kept for 90 days, so the old device can tell you it
-was replaced.
+When you delete your account, all of the above goes at once. Only
+short-lived rate-limit counters and open-socket records are left, and they
+expire on their own within a day. When you set up again instead (which replaces your old account), a
+marker and the old device's public key are kept for 90 days, so the old
+device can tell you it was replaced; everything else of the old account goes
+at once.
 
 **What we never store:** the content of any message or attachment in readable
 form, who sent a message, which conversations belong together, your name,
@@ -92,9 +95,12 @@ or a "seen". This is explained in [security.md](security.md#what-still-leaks).
   to you.
 - **Replace your link.** The old one stops working at once.
 - **Turn notices off** by blocking the bot in Telegram.
-- **End your account** by setting up again. Its links and mailboxes are
-  deleted at once. A button to delete an account outright is planned; until
-  then, ask us at `<contact>`, and we'll delete the account's records.
+- **Delete your account** in the app (on the Link tab). Everything the server
+  holds for it is deleted at once (your link, mailboxes, waiting messages and
+  attachments, invitation codes, keys, and the hash of your Telegram ID),
+  and then everything on your device. You can set up a new account later.
+- **If you can't use your device any more**, setting up again on another one
+  replaces your old account; its links and mailboxes are deleted at once.
 
 Data requests: since we keep no content and no record of who talks to whom,
 there's nothing of that kind we could hand over. What we do keep is listed
