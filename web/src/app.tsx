@@ -908,13 +908,31 @@ function Composer({
   useEffect(() => {
     if (reply) input.current?.focus();
   }, [reply?.text]);
-  const send = async () => {
+  const send = async (e: MouseEvent) => {
     const value = text.value;
     if (value.trim() === '') return;
+    // The button goes (the microphone takes its place): from the keyboard, back to the box.
+    if (document.activeElement === e.currentTarget) input.current?.focus();
     text.value = '';
     await onSend(value);
   };
   const recording = rec.state !== 'idle';
+  // One row to start, as in Telegram; it grows with the text up to MAX_ROWS, then scrolls.
+  useLayoutEffect(() => {
+    const box = input.current;
+    if (!box) return;
+    const atEnd = isAtEnd();
+    const style = getComputedStyle(box);
+    const px = (v: string) => parseFloat(v) || 0;
+    const borders = px(style.borderTopWidth) + px(style.borderBottomWidth);
+    const max = (px(style.lineHeight) || 24) * MAX_ROWS + px(style.paddingTop) + px(style.paddingBottom) + borders;
+    box.style.height = 'auto';
+    const wanted = box.scrollHeight + borders;
+    box.style.height = `${Math.min(wanted, max)}px`;
+    box.style.overflowY = wanted > max ? 'auto' : 'hidden';
+    // Growing pushes the end of the chat under the composer: keep it in view.
+    if (atEnd) scrollToEnd();
+  }, [text.value, recording]);
   const locked = rec.state === 'locked';
   // The record button keeps its element (and the press on it) from idle to
   // holding to locked, so the children here are flat and keyed.
@@ -971,8 +989,9 @@ function Composer({
           <div key="text" class={onSticker ? 'text-field with-stickers' : 'text-field'}>
             <textarea
               ref={input}
-              dir="auto"
-              rows={2}
+              // Empty, it follows the page (the placeholder starts at the right in Persian); typed in, the text.
+              dir={text.value ? 'auto' : undefined}
+              rows={1}
               maxLength={4000}
               placeholder={t(language, 'messagePlaceholder')}
               value={text.value}
@@ -1027,7 +1046,7 @@ function Composer({
                 </svg>
               </span>
             )}
-            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+            <svg class={locked ? 'icon-stroke send-icon' : 'icon-stroke'} viewBox="0 0 24 24" aria-hidden="true">
               <path
                 d={
                   locked
@@ -1040,9 +1059,20 @@ function Composer({
             </svg>
           </button>
         ) : (
-          <Button key="send" disabled={busy || text.value.trim() === ''} onClick={send}>
-            {t(language, 'send')}
-          </Button>
+          <button
+            key="send"
+            type="button"
+            class="round-button"
+            aria-label={t(language, 'send')}
+            disabled={busy || text.value.trim() === ''}
+            // Keeps the focus (and the keyboard) in the message box, as in Telegram.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => void send(e)}
+          >
+            <svg class="icon-stroke send-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 11.5L21 3l-8.5 18-2-7.5z" />
+            </svg>
+          </button>
         )}
       </div>
       {stickers.value && onSticker && !recording && <StickerPanel language={language} busy={busy} onPick={(s) => void onSticker({ id: s.id, e: s.e })} />}
@@ -1164,6 +1194,8 @@ const CAMERA_TEXT: Record<RecordingUnavailable['reason'], Key> = { denied: 'came
 type RecordMode = 'voice' | 'round';
 /** What the record button records, voice or video messages: a tap switches it. Remembered while the app is open. */
 const recordMode = signal<RecordMode>('voice');
+/** The most rows the message box grows to; past that, it scrolls. */
+const MAX_ROWS = 6;
 /** A press longer than this records; a shorter one is a tap. */
 const HOLD_MS = 250;
 /** How far up a press slides to lock the recording, and toward the start to drop it, in px. */
