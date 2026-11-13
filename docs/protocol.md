@@ -248,8 +248,8 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   `application/octet-stream`, to `url` (valid 15 minutes; the length and type
   are part of its signature).
 - The message carries the attachment in `media`, inside the encrypted
-  envelope: kind `t` (`photo`, `video`, `gif`, `voice`, `audio` (music) or
-  `file`; round video and stickers come later), upload ID `id` (16 bytes),
+  envelope: kind `t` (`photo`, `video`, `gif`, `voice`, `audio` (music),
+  `round` (a video message) or `file`), upload ID `id` (16 bytes),
   AES-256-GCM key `k` (32 bytes), delete secret `d` (16 bytes), the file's
   size `s` (at most 25 MiB), and optionally its name `n`, MIME type `m`,
   pixel size `w`/`h`, length in seconds `l`, a voice message's waveform `v`
@@ -264,11 +264,16 @@ Attachments travel outside the envelope, encrypted, through an S3 bucket.
   times zeroed, so nothing else in the file moves. A GIF is sent as it is.
   A voice message is recorded in the app (AAC in MP4 where the browser can,
   else Opus in WebM or Ogg; at most 15 minutes), with a waveform taken from
-  the microphone level while recording; it carries no device or place
-  metadata. Music is the audio file as it is, with its length. A file is the
-  original bytes, untouched (location included, if it has any). Photos,
-  voice messages and GIFs up to 10 MiB are fetched when their conversation
-  opens; videos, music and files on a tap.
+  the microphone level while recording (or from the recording, where the
+  level couldn't be read); it carries no device or place metadata. A video
+  message is recorded in the app too: the camera's picture cropped to a
+  384 × 384 square (mirrored for the front camera, as the sender saw it),
+  with sound, as H.264 in MP4 where the browser can, else WebM; at most a
+  minute, with a preview frame and no device or place metadata. Music is the
+  audio file as it is, with its length. A file is the original bytes,
+  untouched (location included, if it has any). Photos, voice and video
+  messages, and GIFs up to 10 MiB are fetched when their conversation opens;
+  videos, music and files on a tap.
 - The upload is `nonce (12) ‖ AES-GCM(k, nonce, file ‖ zeros, aad =
   "incognitochat/v2/media")`, padded to the next power of two from 16 KiB up
   to 1 MiB, then to the next whole MiB.

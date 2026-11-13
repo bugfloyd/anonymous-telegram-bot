@@ -25,12 +25,12 @@ export type Kind = 'message' | 'seen' | 'key_update' | 'end';
 const KINDS: readonly Kind[] = ['message', 'seen', 'key_update', 'end'];
 
 /**
- * What an attachment is shown as: music is `audio`. Round videos and
- * stickers come later. Kinds this version doesn't know are accepted and
- * shown as files, so a newer sender's attachments still arrive (see shownAs).
+ * What an attachment is shown as: music is `audio`, a round video message
+ * `round`. Kinds this version doesn't know are accepted and shown as files,
+ * so a newer sender's attachments still arrive (see shownAs).
  */
-export type MediaKind = 'photo' | 'video' | 'gif' | 'voice' | 'audio' | 'file';
-const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'voice', 'audio', 'file'];
+export type MediaKind = 'photo' | 'video' | 'gif' | 'voice' | 'audio' | 'round' | 'file';
+const MEDIA_KINDS: readonly MediaKind[] = ['photo', 'video', 'gif', 'voice', 'audio', 'round', 'file'];
 /** Most waveform bars a voice message carries. */
 export const MAX_WAVEFORM = 100;
 /** Longest video, voice or music length, in seconds. */
@@ -58,10 +58,10 @@ export interface Media {
   n?: string;
   /** MIME type. */
   m?: string;
-  /** Pixel width and height (photos, videos, GIFs). */
+  /** Pixel width and height (photos, videos, GIFs, video messages). */
   w?: number;
   h?: number;
-  /** Length in whole seconds (videos, voice, music). */
+  /** Length in whole seconds (videos, voice, music, video messages). */
   l?: number;
   /** Voice: the waveform, one byte (0–255) per bar, base64url. */
   v?: string;
@@ -260,7 +260,7 @@ const EXTENSIONS: Record<string, string> = {
 /** The name to save an attachment under: its own, or one made from its kind and type ("video.mp4"). */
 export function fileName(media: { t: string; n?: string; m?: string }): string {
   if (media.n) return media.n;
-  const base = { photo: 'photo', video: 'video', gif: 'animation', voice: 'voice', audio: 'audio', file: 'file' }[shownAs(media)];
+  const base = { photo: 'photo', video: 'video', gif: 'animation', voice: 'voice', audio: 'audio', round: 'video', file: 'file' }[shownAs(media)];
   const ext = media.m ? EXTENSIONS[media.m] : undefined;
   return ext ? `${base}.${ext}` : base;
 }

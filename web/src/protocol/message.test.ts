@@ -129,6 +129,8 @@ describe('checkMessage', () => {
     expect(checkMessage({ ...valid, media: video }).media).toEqual(video);
     const voice = { t: 'voice', id: media.id, k: media.k, d: media.d, s: 900, m: 'audio/mp4', l: 7, v: toBase64Url(new Uint8Array([0, 128, 255])) };
     expect(checkMessage({ ...valid, text: undefined, media: voice }).media).toEqual(voice);
+    const round = { t: 'round', id: media.id, k: media.k, d: media.d, s: 4_000_000, m: 'video/mp4', w: 384, h: 384, l: 12 };
+    expect(shownAs(checkMessage({ ...valid, text: undefined, media: round }).media!)).toBe('round');
   });
 
   it('accepts kinds from newer versions and shows them as files', () => {
@@ -144,6 +146,7 @@ describe('checkMessage', () => {
     expect(fileName({ t: 'gif', m: 'image/gif' })).toBe('animation.gif');
     expect(fileName({ t: 'voice_note' })).toBe('file');
     expect(fileName({ t: 'voice', m: 'audio/mp4' })).toBe('voice.m4a');
+    expect(fileName({ t: 'round', m: 'video/mp4' })).toBe('video.mp4');
     expect(fileName({ t: 'audio', n: 'song.mp3', m: 'audio/mpeg' })).toBe('song.mp3');
   });
 });

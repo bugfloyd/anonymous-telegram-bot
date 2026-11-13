@@ -6,7 +6,19 @@ import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
 import { fromBase64Url } from './crypto/encoding';
 import { showableAs } from './media/prepare';
-import { canRecord, MAX_VOICE_MS, MicUnavailable, startRecording, type Recorder, type Recording } from './media/record';
+import {
+  canRecord,
+  hasCamera,
+  MAX_ROUND_MS,
+  MAX_VOICE_MS,
+  RecordingUnavailable,
+  startRecording,
+  startRound,
+  type Recorder,
+  type Recording,
+  type RoundRecorder,
+  type RoundRecording,
+} from './media/record';
 import { MAX_FILE_BYTES, shownAs } from './protocol/message';
 import {
   confirmationMatches,
@@ -449,8 +461,15 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
       {app.preparing.value
         .filter((p) => p.conv === screen.id)
         .map((p) => (
-          <li key={p.key} class="bubble out" aria-busy="true">
-            {p.as !== 'file' && p.url ? (
+          <li key={p.key} class={p.as === 'round' ? 'bubble out bare' : 'bubble out'} aria-busy="true">
+            {p.as === 'round' && p.url ? (
+              <div class="round">
+                <video src={p.url} muted playsInline autoPlay loop />
+                <span class="media-progress">
+                  <Ring fraction={undefined} />
+                </span>
+              </div>
+            ) : p.as !== 'file' && p.url ? (
               <div class="photo">
                 {p.as === 'video' ? <video src={p.url} muted playsInline preload="metadata" /> : <img src={p.url} alt="" />}
                 <span class="media-progress">
@@ -551,6 +570,11 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
                       const to = replying.value?.id;
                       replying.value = null;
                       await app.sendVoice(recording, to);
+                    },
+                    onRound: async (recording: RoundRecording) => {
+                      const to = replying.value?.id;
+                      replying.value = null;
+                      await app.sendRound(recording, to);
                     },
                   }
                 : {})}
@@ -838,6 +862,7 @@ function Composer({
   onCancelReply,
   onAttach,
   onVoice,
+  onRound,
 }: {
   language: Language;
   busy: boolean;
@@ -849,9 +874,11 @@ function Composer({
   onAttach?: (file: File, as: SendAs, caption: string) => Promise<void>;
   /** Sends a recorded voice message (absent when attachments are off). */
   onVoice?: (recording: Recording) => Promise<void>;
+  /** Sends a recorded video message (absent when attachments are off). */
+  onRound?: (recording: RoundRecording) => Promise<void>;
 }) {
   const text = useSignal('');
-  const voice = useVoiceRecorder(language, onVoice);
+  const rec = useRecorder(language, onVoice, onRound);
   const attachMenu = useSignal(false);
   const picked = useSignal<Picked | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
@@ -873,8 +900,12 @@ function Composer({
     text.value = '';
     await onSend(value);
   };
+  const recording = rec.state !== 'idle';
+  const locked = rec.state === 'locked';
+  // The record button keeps its element (and the press on it) from idle to
+  // holding to locked, so the children here are flat and keyed.
   return (
-    <div class="composer-wrap">
+    <div class="composer-wrap" onKeyDown={(e) => e.key === 'Escape' && recording && rec.cancel()}>
       {reply && (
         <div class="reply-bar">
           <Quote name={t(language, 'replyingTo', { name: reply.name })} text={reply.text} />
@@ -883,68 +914,96 @@ function Composer({
           </button>
         </div>
       )}
-      <div class="composer">
-      {voice.recording ? (
-        <>
-          <button type="button" class="attach" aria-label={t(language, 'cancelRecording')} onClick={voice.cancel}>
+      <div class={rec.mode === 'round' && recording ? 'composer recording-round' : 'composer'}>
+        {locked ? (
+          <button key="trash" type="button" class="attach" aria-label={t(language, 'cancelRecording')} onClick={rec.cancel}>
             <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
             </svg>
           </button>
-          <div class="recorder" role="status">
-            <span class="rec-dot" />
-            <bdi class="rec-time" dir="ltr">
-              {formatLength(language, Math.floor(voice.elapsed / 1000))}
-            </bdi>
-            <span class="meter" dir="ltr" aria-hidden="true">
-              {voice.levels.map((level, i) => (
-                <span key={i} style={{ blockSize: `${Math.max(8, level * 100)}%` }} />
-              ))}
-            </span>
-          </div>
-          <button type="button" class="round-button" aria-label={t(language, 'send')} onClick={voice.finish}>
-            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 11.5L21 3l-8.5 18-2-7.5z" />
-            </svg>
-          </button>
-        </>
-      ) : (
-        <>
-      {onAttach && (
-        <>
-          <button type="button" class="attach" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
+        ) : !recording && onAttach ? (
+          <button key="attach" type="button" class="attach" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M16.5 6.5l-8 8a2.5 2.5 0 003.5 3.5l8.5-8.5a4.5 4.5 0 00-6.4-6.4L5.5 11.7a6.5 6.5 0 009.2 9.2l6.8-6.8" />
             </svg>
           </button>
-          <input type="file" accept="image/*,video/*" hidden ref={photoInput} onChange={pick(true)} />
-          <input type="file" hidden ref={fileInput} onChange={pick(false)} />
-        </>
-      )}
-      <textarea
-        ref={input}
-        dir="auto"
-        rows={2}
-        maxLength={4000}
-        placeholder={t(language, 'messagePlaceholder')}
-        value={text.value}
-        disabled={busy}
-        onInput={(e) => (text.value = e.currentTarget.value)}
-      />
-      {voice.available && text.value.trim() === '' ? (
-        <button type="button" class="round-button" aria-label={t(language, 'recordVoice')} disabled={busy || voice.starting} onClick={voice.start}>
-          <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM5 11a7 7 0 0014 0M12 18v3" />
-          </svg>
-        </button>
-      ) : (
-        <Button disabled={busy || text.value.trim() === ''} onClick={send}>
-          {t(language, 'send')}
-        </Button>
-      )}
-        </>
-      )}
+        ) : null}
+        {onAttach ? <input key="gallery" type="file" accept="image/*,video/*" hidden ref={photoInput} onChange={pick(true)} /> : null}
+        {onAttach ? <input key="files" type="file" hidden ref={fileInput} onChange={pick(false)} /> : null}
+        {recording ? (
+          <div key="bar" class="recorder" role="status">
+            <span class="rec-dot" />
+            <bdi class="rec-time" dir="ltr">
+              {formatLength(language, Math.floor(rec.elapsed / 1000))}
+            </bdi>
+            {locked ? (
+              rec.mode === 'voice' && (
+                <span class="meter" dir="ltr" aria-hidden="true">
+                  {rec.levels.map((level, i) => (
+                    <span key={i} style={{ blockSize: `${Math.max(8, level * 100)}%` }} />
+                  ))}
+                </span>
+              )
+            ) : (
+              <span class="slide-cancel" style={{ transform: `translateX(${-rec.slide * (document.documentElement.dir === 'rtl' ? -1 : 1)}px)`, opacity: Math.max(0.2, 1 - rec.slide / 120) }}>
+                <svg class="icon-stroke chevron" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M15 5l-7 7 7 7" />
+                </svg>
+                {t(language, 'slideToCancel')}
+              </span>
+            )}
+          </div>
+        ) : (
+          <textarea
+            key="text"
+            ref={input}
+            dir="auto"
+            rows={2}
+            maxLength={4000}
+            placeholder={t(language, 'messagePlaceholder')}
+            value={text.value}
+            disabled={busy}
+            onInput={(e) => (text.value = e.currentTarget.value)}
+          />
+        )}
+        {rec.available && (recording || text.value.trim() === '') ? (
+          <button
+            key="record"
+            type="button"
+            class={rec.state === 'holding' || rec.state === 'starting' ? 'round-button record holding' : 'round-button record'}
+            aria-label={t(language, locked ? 'send' : rec.mode === 'round' ? 'recordRound' : 'recordVoice')}
+            disabled={busy}
+            {...rec.press}
+          >
+            {(rec.state === 'holding' || rec.state === 'starting') && (
+              <span class="lock-hint" style={{ transform: `translateY(${-rec.lift}px)` }} aria-hidden="true">
+                <svg class="icon-stroke" viewBox="0 0 24 24">
+                  <path d="M7 11V8a5 5 0 0110 0v3M6 11h12v9H6z" />
+                </svg>
+                <svg class="icon-stroke" viewBox="0 0 24 24">
+                  <path d="M6 15l6-6 6 6" />
+                </svg>
+              </span>
+            )}
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d={
+                  locked
+                    ? 'M3 11.5L21 3l-8.5 18-2-7.5z'
+                    : rec.mode === 'round'
+                      ? 'M3 7h12v10H3zM15 10.5l6-3.5v10l-6-3.5'
+                      : 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3zM5 11a7 7 0 0014 0M12 18v3'
+                }
+              />
+            </svg>
+          </button>
+        ) : (
+          <Button key="send" disabled={busy || text.value.trim() === ''} onClick={send}>
+            {t(language, 'send')}
+          </Button>
+        )}
       </div>
+      {rec.mode === 'round' && recording && <RoundStage live={rec.live} elapsed={rec.elapsed} locked={locked} language={language} />}
       {attachMenu.value && (
         <div class="overlay" onClick={() => (attachMenu.value = false)} onKeyDown={(e) => e.key === 'Escape' && (attachMenu.value = false)}>
           <div class="dialog menu" role="dialog" aria-modal="true" aria-label={t(language, 'attach')} onClick={(e) => e.stopPropagation()}>
@@ -987,67 +1046,242 @@ function Composer({
   );
 }
 
-const MIC_TEXT: Record<MicUnavailable['reason'], Key> = { denied: 'micDenied', missing: 'micMissing', unsupported: 'micUnavailable' };
+const MIC_TEXT: Record<RecordingUnavailable['reason'], Key> = { denied: 'micDenied', missing: 'micMissing', unsupported: 'micUnavailable' };
+const CAMERA_TEXT: Record<RecordingUnavailable['reason'], Key> = { denied: 'cameraDenied', missing: 'cameraMissing', unsupported: 'cameraUnavailable' };
+
+type RecordMode = 'voice' | 'round';
+/** What the record button records, voice or video messages: a tap switches it. Remembered while the app is open. */
+const recordMode = signal<RecordMode>('voice');
+/** A press longer than this records; a shorter one is a tap. */
+const HOLD_MS = 250;
+/** How far up a press slides to lock the recording, and toward the start to drop it, in px. */
+const LOCK_LIFT = 72;
+const CANCEL_SLIDE = 110;
+
+interface Press {
+  x: number;
+  y: number;
+  pointer: number;
+  /** Until the press counts as a hold. */
+  timer: number;
+  /** A tap on the send button of a locked recording. */
+  send: boolean;
+  locked: boolean;
+  cancelled: boolean;
+}
 
 /**
- * Recording a voice message from the composer: a tap on the microphone
- * starts, Send stops and sends, the bin drops it. Leaving the conversation
- * drops a recording in progress; at 15 minutes it's sent.
+ * Recording voice and video messages from the composer, as in Telegram:
+ * hold the button to record and let go to send; slide toward the start to
+ * drop it, or up to lock it (then the bin drops it and the button sends). A
+ * tap switches between voice and video. From the keyboard, Enter starts a
+ * locked recording. Leaving the conversation drops a recording in progress;
+ * at the longest length (15 minutes, a minute for video) it's sent.
  */
-function useVoiceRecorder(language: Language, onVoice: ((recording: Recording) => Promise<void>) | undefined) {
-  const recorder = useRef<Recorder | null>(null);
-  const recording = useSignal(false);
-  const starting = useSignal(false);
+function useRecorder(language: Language, onVoice: ((recording: Recording) => Promise<void>) | undefined, onRound: ((recording: RoundRecording) => Promise<void>) | undefined) {
+  const state = useSignal<'idle' | 'starting' | 'holding' | 'locked'>('idle');
+  const mode = useSignal<RecordMode>('voice');
+  const voice = useRef<Recorder | null>(null);
+  const live = useSignal<RoundRecorder | null>(null);
   const elapsed = useSignal(0);
   const levels = useSignal<number[]>([]);
+  const slide = useSignal(0);
+  const lift = useSignal(0);
+  const press = useRef<Press | null>(null);
+  const alive = useRef(true);
+  const camera = useSignal(false);
+  useEffect(() => {
+    void hasCamera().then((has) => (camera.value = has));
+    return () => {
+      alive.current = false;
+      voice.current?.cancel();
+      live.peek()?.cancel();
+    };
+  }, []);
+  const reset = () => {
+    state.value = 'idle';
+    voice.current = null;
+    live.value = null;
+    slide.value = 0;
+    lift.value = 0;
+  };
+  const cancel = () => {
+    voice.current?.cancel();
+    live.peek()?.cancel();
+    reset();
+  };
   const finish = async () => {
-    const r = recorder.current;
-    if (!r || !onVoice) return;
-    recorder.current = null;
-    recording.value = false;
+    const v = voice.current;
+    const r = live.peek();
+    reset();
     try {
-      const result = await r.stop();
-      if (result) await onVoice(result);
+      if (v && onVoice) {
+        const result = await v.stop();
+        if (result) await onVoice(result);
+      } else if (r && onRound) {
+        const result = await r.stop();
+        if (result) await onRound(result);
+      }
     } catch {
-      say(t(language, 'micUnavailable'));
+      say(t(language, v ? 'micUnavailable' : 'cameraUnavailable'));
     }
   };
-  useEffect(() => () => recorder.current?.cancel(), []);
+  // Started from the keyboard, or the press is still on (or locked) and wasn't slid away.
+  const wanted = (p: Press | null) => alive.current && state.peek() === 'starting' && (!p || ((press.current === p || p.locked) && !p.cancelled));
+  const begin = async (p: Press | null) => {
+    const m = recordMode.peek();
+    mode.value = m;
+    state.value = 'starting';
+    elapsed.value = 0;
+    levels.value = [];
+    try {
+      const r = m === 'voice' ? await startRecording((level) => (levels.value = [...levels.peek().slice(-31), level])) : await startRound();
+      if (!wanted(p)) {
+        // Let go (or slid away) before the microphone or camera was ready.
+        r.cancel();
+        if (alive.current && state.peek() === 'starting') reset();
+        return;
+      }
+      if (m === 'voice') voice.current = r as Recorder;
+      else live.value = r as RoundRecorder;
+      state.value = !p || p.locked ? 'locked' : 'holding';
+    } catch (err) {
+      if (state.peek() === 'starting') reset();
+      const texts = m === 'voice' ? MIC_TEXT : CAMERA_TEXT;
+      say(t(language, err instanceof RecordingUnavailable ? texts[err.reason] : texts.unsupported));
+    }
+  };
+  const toggle = () => {
+    if (!onRound || !camera.value) return say(t(language, 'holdToRecord'));
+    recordMode.value = recordMode.peek() === 'voice' ? 'round' : 'voice';
+    say(t(language, recordMode.value === 'voice' ? 'holdForVoice' : 'holdForRound'));
+  };
+  const end = (e: PointerEvent, cancelled: boolean) => {
+    const p = press.current;
+    if (!p || p.pointer !== e.pointerId) return;
+    press.current = null;
+    if (p.send) {
+      if (!cancelled && state.peek() === 'locked') void finish();
+    } else if (p.timer) {
+      clearTimeout(p.timer);
+      if (!cancelled) toggle();
+    } else if (!p.cancelled && !p.locked && state.peek() === 'holding') {
+      if (cancelled) cancel();
+      else void finish();
+    } else if (!p.cancelled && !p.locked) {
+      // Still starting: begin() drops it once it's ready.
+      slide.value = 0;
+      lift.value = 0;
+    }
+  };
+  const recording = state.value === 'holding' || state.value === 'locked';
   useEffect(() => {
-    if (!recording.value) return;
+    if (!recording) return;
     const timer = setInterval(() => {
-      elapsed.value = recorder.current?.elapsed() ?? 0;
-      if (elapsed.value >= MAX_VOICE_MS) void finish();
-    }, 200);
+      const r = voice.current ?? live.peek();
+      elapsed.value = r?.elapsed() ?? 0;
+      if (elapsed.value >= (mode.peek() === 'round' ? MAX_ROUND_MS : MAX_VOICE_MS)) void finish();
+    }, 100);
     return () => clearInterval(timer);
-  }, [recording.value]);
+  }, [recording]);
   return {
     available: !!onVoice && canRecord(),
-    recording: recording.value,
-    starting: starting.value,
+    state: state.value,
+    mode: state.value === 'idle' ? recordMode.value : mode.value,
     elapsed: elapsed.value,
     levels: levels.value,
-    start: async () => {
-      if (!onVoice || starting.value || recording.value) return;
-      starting.value = true;
-      levels.value = [];
-      elapsed.value = 0;
-      try {
-        recorder.current = await startRecording((level) => (levels.value = [...levels.value.slice(-31), level]));
-        recording.value = true;
-      } catch (err) {
-        say(t(language, err instanceof MicUnavailable ? MIC_TEXT[err.reason] : 'micUnavailable'));
-      } finally {
-        starting.value = false;
-      }
-    },
-    finish: () => void finish(),
-    cancel: () => {
-      recorder.current?.cancel();
-      recorder.current = null;
-      recording.value = false;
+    live: live.value,
+    slide: slide.value,
+    lift: lift.value,
+    cancel,
+    press: {
+      onPointerDown: (e: PointerEvent) => {
+        if (e.button !== 0 || press.current) return;
+        const p: Press = { x: e.clientX, y: e.clientY, pointer: e.pointerId, timer: 0, send: false, locked: false, cancelled: false };
+        if (state.peek() === 'locked') {
+          press.current = { ...p, send: true };
+          return;
+        }
+        if (state.peek() !== 'idle') return;
+        try {
+          (e.currentTarget as Element).setPointerCapture(e.pointerId);
+        } catch {
+          // Touches stay with their element anyway.
+        }
+        p.timer = window.setTimeout(() => {
+          p.timer = 0;
+          void begin(p);
+        }, HOLD_MS);
+        press.current = p;
+      },
+      onPointerMove: (e: PointerEvent) => {
+        const p = press.current;
+        if (!p || p.pointer !== e.pointerId || p.send || p.timer || p.cancelled || p.locked) return;
+        const toStart = (p.x - e.clientX) * (document.documentElement.dir === 'rtl' ? -1 : 1);
+        const up = p.y - e.clientY;
+        slide.value = Math.max(0, toStart);
+        lift.value = Math.max(0, Math.min(LOCK_LIFT, up));
+        if (toStart > CANCEL_SLIDE) {
+          p.cancelled = true;
+          cancel();
+        } else if (up >= LOCK_LIFT) {
+          p.locked = true;
+          slide.value = 0;
+          lift.value = 0;
+          if (state.peek() === 'holding') state.value = 'locked';
+        }
+      },
+      onPointerUp: (e: PointerEvent) => end(e, false),
+      onPointerCancel: (e: PointerEvent) => end(e, true),
+      // Presses are handled above; a click without one is the keyboard.
+      onClick: (e: MouseEvent) => {
+        if (e.detail !== 0) return;
+        if (state.peek() === 'idle') void begin(null);
+        else if (state.peek() === 'locked') void finish();
+      },
+      onContextMenu: (e: MouseEvent) => e.preventDefault(),
     },
   };
+}
+
+/**
+ * While recording a video message: the camera's picture in a circle above
+ * the composer, with the time used of the minute around it, and (once
+ * locked) a button to switch cameras.
+ */
+function RoundStage({ live, elapsed, locked, language }: { live: RoundRecorder | null; elapsed: number; locked: boolean; language: Language }) {
+  const feed = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = feed.current;
+    if (!box || !live) return;
+    live.video.classList.toggle('mirrored', !live.canvas && live.mirrored());
+    box.append(live.video);
+    if (live.canvas) box.append(live.canvas);
+    return () => {
+      live.video.remove();
+      live.canvas?.remove();
+    };
+  }, [live]);
+  const fraction = Math.min(1, elapsed / MAX_ROUND_MS);
+  return createPortal(
+    <div class="round-stage">
+      <div class="round-live">
+        <div class="round-feed" ref={feed} />
+        {!live && <span class="spinner" />}
+        <svg class="round-ring" viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="48.5" pathLength={1} style={{ strokeDashoffset: `${1 - fraction}` }} />
+        </svg>
+      </div>
+      {locked && live?.flip && (
+        <button type="button" class="viewer-button flip" aria-label={t(language, 'flipCamera')} onClick={() => void live.flip?.()}>
+          <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 9h3l2-3h6l2 3h3v10H4zM9.5 14a2.5 2.5 0 004.9.7M14.5 13a2.5 2.5 0 00-4.9-.7M14.5 11.2v1.8h-1.8M9.5 15.8V14h1.8" />
+          </svg>
+        </button>
+      )}
+    </div>,
+    document.body,
+  );
 }
 
 /** A picked file, and whether it starts out shown as a photo, video or GIF (rather than as a file). */
@@ -1144,6 +1378,7 @@ function mediaLine(language: Language, media: { t: string; n?: string } | undefi
     gif: t(language, 'gif'),
     voice: `🎤 ${t(language, 'voice')}`,
     audio: `🎵 ${songTitle(media.n) || t(language, 'music')}`,
+    round: `⏺️ ${t(language, 'roundMessage')}`,
     file: `📎 ${media.n ?? t(language, 'file')}`,
   }[shownAs(media)];
   return text ? `${label}, ${text}` : label;
@@ -1188,6 +1423,8 @@ function Attachment({ app, message: m, language, progress }: { app: AppState; me
       return <VoiceView app={app} message={m} language={language} progress={progress} />;
     case 'audio':
       return <AudioView app={app} message={m} language={language} progress={progress} />;
+    case 'round':
+      return <RoundView app={app} message={m} language={language} progress={progress} />;
     default:
       return <FileView app={app} message={m} language={language} progress={progress} />;
   }
@@ -1300,8 +1537,8 @@ function Player({ src, language }: { src: string; language: Language }) {
   );
 }
 
-/** The voice message or song playing: starting another pauses it. */
-let nowPlaying: HTMLAudioElement | null = null;
+/** The voice message, song or video message playing with sound: starting another pauses it. */
+let nowPlaying: HTMLMediaElement | null = null;
 
 /** Plays an attachment's audio once it's on this device: play/pause, position, seeking and speed. */
 function useAudio(url: string | null, knownLength: number | undefined) {
@@ -1482,6 +1719,114 @@ function AudioView({ app, message: m, language, progress }: { app: AppState; mes
   );
 }
 
+/**
+ * A video message: a circle that plays muted and on a loop while it's on
+ * screen; a tap plays it from the start with sound (a ring shows how far),
+ * another tap pauses. Fetched on opening, as in Telegram.
+ */
+function RoundView({ app, message: m, language, progress }: { app: AppState; message: MessageView; language: Language; progress: number | undefined }) {
+  const url = useMediaUrl(app, m);
+  const { p, l } = m.media!;
+  const tiny = tinyPreview(p);
+  const video = useRef<HTMLVideoElement>(null);
+  // Playing with sound (after a tap), and paused by a tap while so.
+  const loud = useSignal(false);
+  const held = useSignal(false);
+  const time = useSignal(0);
+  const length = useSignal<number | null>(null);
+  const failed = useSignal(false);
+  const quiet = () => {
+    const v = video.current;
+    loud.value = false;
+    held.value = false;
+    if (!v) return;
+    if (nowPlaying === v) nowPlaying = null;
+    v.muted = true;
+    v.loop = true;
+    void v.play().catch(() => {});
+  };
+  useEffect(() => {
+    const v = video.current;
+    if (!v || !url.value) return;
+    // Muted, it plays only while on screen.
+    const seen = new IntersectionObserver(([entry]) => {
+      if (loud.peek()) return;
+      if (entry?.isIntersecting) void v.play().catch(() => {});
+      else v.pause();
+    });
+    seen.observe(v);
+    return () => {
+      seen.disconnect();
+      if (nowPlaying === v) nowPlaying = null;
+    };
+  }, [url.value, failed.value]);
+  const tap = () => {
+    const v = video.current;
+    if (!v) return;
+    if (loud.value && !v.paused) {
+      held.value = true;
+      v.pause();
+      return;
+    }
+    if (!loud.value) {
+      loud.value = true;
+      v.loop = false;
+      v.currentTime = 0;
+    }
+    held.value = false;
+    // Unmuted straight from the tap: phones only allow sound then.
+    v.muted = false;
+    if (nowPlaying && nowPlaying !== v) nowPlaying.pause();
+    nowPlaying = v;
+    void v.play().catch(quiet);
+  };
+  const total = length.value ?? l ?? 0;
+  const fraction = loud.value && total > 0 ? Math.min(1, time.value / total) : 0;
+  const ready = url.value && !failed.value;
+  return (
+    <div class={loud.value ? 'round loud' : 'round'}>
+      {tiny && <img class="tiny" src={tiny} alt="" />}
+      {ready && (
+        <video
+          ref={video}
+          src={url.value!}
+          muted={!loud.value}
+          loop={!loud.value}
+          playsInline
+          preload="auto"
+          onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && (length.value = e.currentTarget.duration)}
+          onTimeUpdate={(e) => (time.value = e.currentTarget.currentTime)}
+          // Paused by another voice or video message starting: back to looping quietly.
+          onPause={() => loud.peek() && !held.peek() && quiet()}
+          onEnded={() => {
+            time.value = 0;
+            quiet();
+          }}
+          onError={() => (failed.value = true)}
+        />
+      )}
+      {loud.value && (
+        <svg class="round-ring" viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="48.5" pathLength={1} style={{ strokeDashoffset: `${1 - fraction}` }} />
+        </svg>
+      )}
+      {ready && <button type="button" class="round-tap" aria-label={t(language, loud.value && !held.value ? 'pause' : 'play')} onClick={tap} />}
+      {total > 0 && (
+        <span class="round-badge">
+          <bdi dir="ltr">{formatLength(language, Math.round(loud.value ? time.value : total))}</bdi>
+          {!loud.value && (
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 9h4l5-4v14l-5-4H4zM17 9l4 6M21 9l-4 6" />
+            </svg>
+          )}
+        </span>
+      )}
+      {failed.value && <span class="media-gone">{t(language, 'videoUnplayable')}</span>}
+      <MediaState app={app} message={m} language={language} progress={progress} />
+    </div>
+  );
+}
+
 /** Seconds as "0:42" or "1:02:03". */
 function formatLength(language: Language, seconds: number): string {
   const n = new Intl.NumberFormat(locale(language), { useGrouping: false });
@@ -1642,10 +1987,12 @@ function Bubble({
     pulled.value = 0;
   };
   const quoteName = quoted ? (quoted.out ? tr('you') : peer) : '';
+  // A video message stands on its own, without a bubble, as in Telegram.
+  const bare = !!m.media && shownAs(m.media) === 'round' && !m.text;
   return (
     <li
       id={`m-${m.id}`}
-      class={`bubble ${m.out ? 'out' : 'in'}${highlighted ? ' flash' : ''}${pulled.value ? ' pulling' : ''}`}
+      class={`bubble ${m.out ? 'out' : 'in'}${bare ? ' bare' : ''}${highlighted ? ' flash' : ''}${pulled.value ? ' pulling' : ''}`}
       style={pulled.value ? { transform: `translateX(${-pulled.value * direction()}px)` } : undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
