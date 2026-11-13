@@ -171,7 +171,12 @@ the server never sees a key, name or type.
   voice and video messages are recorded in the app and carry none. Files are
   sent untouched.
 - The recipient fetches the upload by its unguessable ID, decrypts it and
-  keeps it on the device, encrypted under the device's storage key.
+  keeps it on the device, encrypted under the device's storage key. Photos,
+  voice and video messages and GIFs up to 10 MB download as soon as their
+  conversation is open (each kind can be turned off); the rest on a tap.
+- **Data and storage** shows the space attachments take, and clears them from
+  the device after a month or a week, or on request, keeping their messages.
+  A cleared attachment downloads again on a tap while its upload exists.
 - **Saving to the device:** a Mini App can't hand a file to the phone, so the
   app uses the share sheet where there is one, and otherwise opens a save page
   in the device's own browser. The file's key travels after the `#` in that

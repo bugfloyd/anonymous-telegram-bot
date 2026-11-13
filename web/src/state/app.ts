@@ -34,7 +34,8 @@ import type { TokenIssuer } from '../account/wallet';
 import { importIssuerKey } from '../crypto/blindrsa';
 import { toBase64Url } from '../crypto/encoding';
 import { createMessaging, NoTokens, type Messaging, type Outgoing } from '../messaging/engine';
-import { deleteMessage, getMedia, listConversations, listMessages, type LocalMedia, type MessageView } from '../messaging/store';
+import { clearMedia, deleteMessage, getMedia, listConversations, listMessages, mediaUsage, type LocalMedia, type MessageView } from '../messaging/store';
+import { DEFAULT_MEDIA_SETTINGS, getMediaSettings, keepCutoff, putMediaSettings, type KeepMedia, type MediaSettings } from '../messaging/settings';
 import { prepareAudio, prepareFile, prepareGif, preparePhoto, prepareVideo, TooBig } from '../media/prepare';
 import type { Recording, RoundRecording } from '../media/record';
 import { saveUrl } from '../media/save';
@@ -69,6 +70,15 @@ export type HomeNotice =
   | 'generic';
 
 export type InvitationsNotice = 'created' | 'none-left' | 'network' | 'generic';
+
+/** What the Data and storage screen shows: attachments on this device, in bytes. */
+export interface StorageUsage {
+  media: number;
+  /** Conversations holding attachments, largest first. */
+  chats: { id: string; label: string; bytes: number }[];
+  /** All the app's storage on this device (keys and history too), where the browser tells. */
+  app: { usage: number; quota: number } | null;
+}
 
 export type AdminNotice = 'saved' | 'granted' | 'not-member' | 'not-found' | 'bad-link' | 'network' | 'generic';
 
@@ -140,6 +150,8 @@ export type Screen =
       blockedCount: number;
     }
   | { kind: 'blocked'; conversations: ConversationView[]; busy: boolean; notice: HomeNotice | null }
+  /** Data and storage: what stays on this device and what's fetched by itself. */
+  | { kind: 'storage'; settings: MediaSettings; usage: StorageUsage | null; busy: boolean; cleared: number | null }
   | {
       kind: 'invitations';
       info: Omit<InvitationsInfo, 'codes'> & { codes: InvitationView[] };
@@ -207,6 +219,7 @@ export function createApp(deps: Deps) {
   let launchParam: string | null = isRegistrationLaunch(deps.launch.startParam) ? null : deps.launch.startParam || null;
   deps.bridge?.on('back_button_pressed', () => void showHome());
   let messaging: Messaging | null = null;
+  let mediaSettings: MediaSettings = DEFAULT_MEDIA_SETTINGS;
   let tab: 'chats' | 'links' = 'chats';
   let backgroundStarted = false;
   // Stops the inbox poll and the push socket (the account was deleted).
@@ -319,6 +332,9 @@ export function createApp(deps: Deps) {
 
   /** Creates the messaging engine and, outside tests, the inbox poll and upkeep. */
   async function startMessaging(online: boolean): Promise<void> {
+    // "Keep media" applies at every start, whether or not this build can send.
+    mediaSettings = await getMediaSettings(deps.db);
+    await tidyMedia();
     if (!messaging && deps.config && deps.api) {
       try {
         const issuer = deps.issuer ?? { key: await importIssuerKey(deps.config.issuer.spki), keyId: deps.config.issuer.keyId };
@@ -657,13 +673,18 @@ export function createApp(deps: Deps) {
 
   /**
    * Photos, voice and video messages and GIFs (up to 10 MB) are fetched as
-   * soon as their conversation is open, as in Telegram; videos, music and
-   * files wait for a tap.
+   * soon as their conversation is open, as in Telegram, unless turned off in
+   * Data and storage; videos, music and files wait for a tap. Attachments
+   * cleared from this device also wait for a tap.
    */
   function autoFetch(conv: string): void {
     const now = currentScreen();
     if (now.kind !== 'conversation' || now.id !== conv) return;
-    const automatic = (media: LocalMedia) => media.t === 'photo' || media.t === 'voice' || media.t === 'round' || (media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
+    const { auto } = mediaSettings;
+    const automatic = (media: LocalMedia) =>
+      (auto.photos && media.t === 'photo') ||
+      (auto.voice && (media.t === 'voice' || media.t === 'round')) ||
+      (auto.gifs && media.t === 'gif' && media.s <= AUTO_GIF_BYTES);
     void (async () => {
       for (const m of now.messages) {
         if (m.file === 'remote' && m.media && automatic(m.media) && !m.out) await fetchMedia(m.id);
@@ -692,6 +713,58 @@ export function createApp(deps: Deps) {
     const url = URL.createObjectURL(new Blob([file], shown ? { type: shown } : {}));
     urls.set(id, url);
     return url;
+  }
+
+  /** Clears attachments older than the "keep media" setting from this device. */
+  async function tidyMedia(): Promise<number> {
+    const before = keepCutoff(mediaSettings.keep, Date.now());
+    if (before === null) return 0;
+    const freed = await clearMedia(deps.db, { before });
+    if (freed > 0) deps.broadcast({ type: 'data-changed' });
+    return freed;
+  }
+
+  /** Data and storage, with what was just cleared (bytes), if anything. */
+  async function showStorage(cleared: number | null = null): Promise<void> {
+    backButton(true);
+    mediaSettings = await getMediaSettings(deps.db);
+    const current = screen.value;
+    if (current.kind !== 'storage') screen.value = { kind: 'storage', settings: mediaSettings, usage: null, busy: true, cleared };
+    const { total, byConversation } = await mediaUsage(deps.db);
+    const labels = new Map((await listConversations(deps.db)).map((c) => [c.id, c.label]));
+    const chats = Object.entries(byConversation)
+      .filter(([, bytes]) => bytes > 0)
+      .map(([id, bytes]) => ({ id, label: labels.get(id) ?? '', bytes }))
+      .sort((a, b) => b.bytes - a.bytes);
+    let app: StorageUsage['app'] = null;
+    try {
+      const estimate = await navigator.storage?.estimate?.();
+      if (estimate?.usage !== undefined && estimate.quota) app = { usage: estimate.usage, quota: estimate.quota };
+    } catch {
+      // Not every webview tells (Telegram Desktop on Linux has no navigator.storage).
+    }
+    if (currentScreen().kind !== 'storage') return;
+    screen.value = { kind: 'storage', settings: mediaSettings, usage: { media: total, chats, app }, busy: false, cleared };
+  }
+
+  async function changeMediaSettings(change: (s: MediaSettings) => MediaSettings): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'storage' || current.busy) return;
+    mediaSettings = change(await getMediaSettings(deps.db));
+    await putMediaSettings(deps.db, mediaSettings);
+    screen.value = { ...current, settings: mediaSettings, busy: true, cleared: null };
+    const freed = await tidyMedia();
+    return showStorage(freed > 0 ? freed : null);
+  }
+
+  /** Clears attachments from this device: one conversation's, or all. */
+  async function clearStoredMedia(conv?: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'storage' || current.busy) return;
+    screen.value = { ...current, busy: true, cleared: null };
+    const freed = await clearMedia(deps.db, conv === undefined ? {} : { conv });
+    if (freed > 0) deps.broadcast({ type: 'data-changed' });
+    return showStorage(freed);
   }
 
   /** The Blocked list. */
@@ -1129,6 +1202,12 @@ export function createApp(deps: Deps) {
     },
     blocked: () => showBlocked(),
     unblock,
+    /** Data and storage. */
+    storage: () => showStorage(),
+    setKeepMedia: (keep: KeepMedia) => changeMediaSettings((s) => ({ ...s, keep })),
+    setAutoDownload: (kind: keyof MediaSettings['auto'], on: boolean) =>
+      changeMediaSettings((s) => ({ ...s, auto: { ...s.auto, [kind]: on } })),
+    clearMedia: (conv?: string) => clearStoredMedia(conv),
     /** Shows a native popup; resolves with the button pressed, or null. */
     popup: (params: { title?: string; message: string; buttons: PopupButton[] }) =>
       deps.bridge ? openPopup(deps.bridge, params) : Promise.resolve(null),

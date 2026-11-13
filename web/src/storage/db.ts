@@ -72,8 +72,12 @@ export interface MessageRecord {
   out: boolean;
   /** Ours: sending, sent, failed, then seen once they open it. Theirs: received, then read once we told them. */
   status: 'sending' | 'sent' | 'failed' | 'seen' | 'received' | 'read';
-  /** An attachment's file: on this device, still to fetch, or gone (expired). */
-  file?: 'local' | 'remote' | 'gone';
+  /**
+   * An attachment's file: on this device, still to fetch, cleared from this
+   * device (fetched again only on a tap, while the server keeps it), or gone
+   * (expired).
+   */
+  file?: 'local' | 'remote' | 'cleared' | 'gone';
   /** AES-GCM under the storage key: nonce ‖ ciphertext of {text, replyTo}. */
   sealed: Uint8Array<ArrayBuffer>;
 }

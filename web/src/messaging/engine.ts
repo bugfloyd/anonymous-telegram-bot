@@ -246,7 +246,8 @@ export function createMessaging(deps: MessagingDeps) {
   }
 
   /**
-   * Fetches a received attachment: downloads, decrypts and keeps it on this
+   * Fetches an attachment: downloads, decrypts and keeps it on this device.
+   * A received one, or one of either side's that was cleared from this
    * device. The upload stays until it's saved outside the app (the save page
    * deletes it), the message or conversation is deleted, or it expires.
    * Returns where the file is now.
@@ -254,7 +255,7 @@ export function createMessaging(deps: MessagingDeps) {
   function fetchMedia(id: string, onProgress?: (fraction: number) => void): Promise<'local' | 'gone'> {
     return withLock(`media:${id}`, async () => {
       const message = await getMessage(db, id);
-      if (!message?.media || message.file !== 'remote') return message?.file === 'local' ? 'local' : 'gone';
+      if (!message?.media || (message.file !== 'remote' && message.file !== 'cleared')) return message?.file === 'local' ? 'local' : 'gone';
       const m = message.media as Media;
       let url: string;
       try {

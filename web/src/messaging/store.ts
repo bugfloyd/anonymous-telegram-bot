@@ -104,6 +104,51 @@ export async function setFile(db: Database, id: string, file: NonNullable<Messag
   if (record) await db.put('messages', { ...record, file });
 }
 
+/** The size of the attachments on this device, in bytes: in all, and by conversation. */
+export async function mediaUsage(db: Database): Promise<{ total: number; byConversation: Record<string, number> }> {
+  const byConversation: Record<string, number> = {};
+  let total = 0;
+  for (const record of await db.getAll('messages')) {
+    if (record.file !== 'local') continue;
+    const size = (await openBody(db, record.id, record.sealed)).media?.s ?? 0;
+    byConversation[record.conv] = (byConversation[record.conv] ?? 0) + size;
+    total += size;
+  }
+  return { total, byConversation };
+}
+
+/**
+ * Removes attachments from this device and keeps their messages: those of
+ * one conversation, or those older than a time, or all. Only uploaded ones
+ * go, since they can be fetched again while the server keeps them; one of
+ * ours still sending, or failed, stays. Returns the bytes freed.
+ */
+export async function clearMedia(db: Database, which: { conv?: string; before?: number } = {}): Promise<number> {
+  let freed = 0;
+  for (const record of await db.getAll('messages')) {
+    if (record.file !== 'local') continue;
+    if (which.conv !== undefined && record.conv !== which.conv) continue;
+    if (which.before !== undefined && record.at >= which.before) continue;
+    if (record.out && (record.status === 'sending' || record.status === 'failed')) continue;
+    const { media } = await openBody(db, record.id, record.sealed);
+    if (!media?.id || !media.k) continue;
+    // The same lock as fetching, so a fetch can't put the file back halfway.
+    freed += await withLock(`media:${record.id}`, async () => {
+      const tx = db.transaction(['messages', 'media'], 'readwrite');
+      const now = await tx.objectStore('messages').get(record.id);
+      if (now?.file !== 'local') {
+        await tx.done;
+        return 0;
+      }
+      await tx.objectStore('media').delete(record.id);
+      await tx.objectStore('messages').put({ ...now, file: 'cleared' });
+      await tx.done;
+      return media.s;
+    });
+  }
+  return freed;
+}
+
 /** Marks one of our messages in a conversation as seen, if it was sent; returns whether it did. */
 export async function markOwnSeen(db: Database, conv: string, id: string): Promise<boolean> {
   const record = await db.get('messages', id);
