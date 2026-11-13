@@ -14,9 +14,12 @@ the hosting repository's variables. Below, `<env>`, `<bot>`, `<app>` and
 - A push to `main` runs CI, which deploys to **dev**. Pull requests never get
   cloud access.
 - CI assumes the environment's deploy role through GitHub's OIDC provider (no
-  stored AWS keys), builds the Lambda bundles reproducibly, and applies
-  `infra/` with Terraform. The deploy role is limited by the bootstrap stack
-  and can't change its own permissions.
+  stored AWS keys), builds the Lambda bundles reproducibly and attests them,
+  and applies `infra/` with Terraform, which uploads each bundle, has AWS
+  Signer sign it, and deploys the signed copy. The deploy role is limited by
+  the bootstrap stack and can't change its own permissions.
+- It checks that each function runs the attested bundle plus its signature
+  ([verifying.md](verifying.md#the-backend)).
 - It then sets up the bot (the function registers its own webhook, menu
   button and commands, so the bot token never passes through CI), and runs
   smoke tests: the API, the webhook and the socket refuse what they should.
@@ -34,10 +37,20 @@ AWS_PROFILE=<profile> scripts/bootstrap.sh <aws-region> <env>
 ```
 
 It creates the Terraform state bucket, the GitHub OIDC provider, the deploy
-role and the Lambda permissions boundary (`infra/init`), and the GitHub
-environment `<env>`, which accepts deploys from `main` only, with the secrets
-and variables it computed (`AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`,
-`TF_STATE_BUCKET`, `AWS_REGION`).
+role, the Lambda permissions boundary and code signing (`infra/init`), and
+the GitHub environment `<env>`, which accepts deploys from `main` only, with
+the secrets and variables it computed (`AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`,
+`TF_STATE_BUCKET`, `LAMBDA_BUILDS_BUCKET`, `LAMBDA_SIGNING_PROFILE`,
+`LAMBDA_CODE_SIGNING_CONFIG`, `AWS_REGION`).
+
+Code signing is a versioned bucket for the bundles, an AWS Signer profile,
+and a code signing config set to enforce. Every function must use the config,
+so Lambda runs only code signed by the profile. The deploy role can upload
+and sign, but can't change the bucket's settings, the profile or the config,
+nor create a function without the config or remove it. If CI were ever
+compromised, an admin can revoke the profile from a given time, after which
+Lambda refuses to deploy anything it signed, and replace the profile by
+rerunning the bootstrap.
 
 Then set the rest:
 

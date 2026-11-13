@@ -224,3 +224,6 @@ the host learns nothing about which are used.
   never land in Terraform state. Each function's role reads only its own.
 - Logs: warnings and errors only, kept 7 days. IDs, IP addresses, user agents
   and bodies are never logged, and there are no API access logs.
+- Code signing: the functions run only code signed by CI's AWS Signer
+  profile, and each deploy checks that the running code is the attested build
+  ([verifying.md](verifying.md#the-backend)).

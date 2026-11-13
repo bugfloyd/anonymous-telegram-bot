@@ -93,7 +93,7 @@ rough attachment sizes) and the other limits are listed in full in the
 | [`backend/`](backend) | Go: the `api`, `bot`, `ws` and `notify` Lambda functions. |
 | [`infra/`](infra) | Terraform for one environment; [`infra/init/`](infra/init) bootstraps an AWS account. |
 | [`hosting/`](hosting) | The app's build-and-deploy workflow, run by the hosting repository. |
-| [`scripts/`](scripts) | Bootstrap, reproducible Lambda builds, and live-site verification. |
+| [`scripts/`](scripts) | Bootstrap, reproducible Lambda builds, deploy and live-site verification. |
 | [`docs/`](docs) | The documentation above. |
 
 Every check CI runs can be run locally; see [Development](docs/development.md).

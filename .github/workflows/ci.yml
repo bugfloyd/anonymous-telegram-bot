@@ -184,7 +184,8 @@ jobs:
     environment: dev
     permissions:
       contents: read
-      id-token: write # OIDC token for AWS, no stored AWS keys
+      id-token: write # OIDC token for AWS (no stored AWS keys), and Sigstore signing
+      attestations: write
     concurrency:
       group: deploy-dev
       cancel-in-progress: false
@@ -201,10 +202,13 @@ jobs:
           PAGES_REPO: ${{ vars.PAGES_REPO }}
           PAGES_URL: ${{ vars.PAGES_URL }}
           PAGES_DISPATCH_TOKEN: ${{ secrets.DEV_PAGES_DISPATCH_TOKEN }}
+          LAMBDA_BUILDS_BUCKET: ${{ secrets.LAMBDA_BUILDS_BUCKET }}
+          LAMBDA_SIGNING_PROFILE: ${{ secrets.LAMBDA_SIGNING_PROFILE }}
+          LAMBDA_CODE_SIGNING_CONFIG: ${{ secrets.LAMBDA_CODE_SIGNING_CONFIG }}
         run: |
           missing=0
           for name in BOT_TOKEN ISSUER_KEY AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS \
-            PAGES_REPO PAGES_URL PAGES_DISPATCH_TOKEN; do
+            PAGES_REPO PAGES_URL PAGES_DISPATCH_TOKEN LAMBDA_BUILDS_BUCKET LAMBDA_SIGNING_PROFILE LAMBDA_CODE_SIGNING_CONFIG; do
             if [ -z "${!name}" ]; then
               echo "::error::$name is not set in the dev environment"
               missing=1
@@ -229,6 +233,13 @@ jobs:
         with:
           name: lambda-bundles
           path: backend/dist
+
+      # Public, signed provenance for the function builds about to be
+      # deployed. The builds are reproducible, so anyone can rebuild this
+      # commit and compare (docs/verifying.md).
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: backend/dist/*.zip
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -284,6 +295,10 @@ jobs:
           TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
           # A secret only so that it is masked in these public logs.
           TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
+          # Code signing, from infra/init.
+          TF_VAR_lambda_builds_bucket: ${{ secrets.LAMBDA_BUILDS_BUCKET }}
+          TF_VAR_lambda_signing_profile: ${{ secrets.LAMBDA_SIGNING_PROFILE }}
+          TF_VAR_lambda_code_signing_config_arn: ${{ secrets.LAMBDA_CODE_SIGNING_CONFIG }}
         # Refreshed resources are printed with their IDs (such as the media
         # bucket's name): hidden, as in apply.
         run: |
@@ -301,6 +316,11 @@ jobs:
         run: |
           set -o pipefail
           terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
+
+      # Fetches the code each function runs from Lambda and checks it is the
+      # attested build plus AWS Signer's signature; prints both hashes.
+      - name: Check the deployed code
+        run: python3 scripts/check-lambda-deploy.py backend/dist incognitochat-dev
 
       - name: Read endpoints
         working-directory: infra

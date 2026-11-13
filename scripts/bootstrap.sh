@@ -2,7 +2,8 @@
 # One-time setup (rerun it to apply changes) of everything GitHub Actions
 # needs to deploy:
 #   - AWS: Terraform state bucket, GitHub OIDC provider, least-privilege deploy
-#     role and the Lambda permissions boundary (infra/init)
+#     role, the Lambda permissions boundary, and Lambda code signing (build
+#     bucket, signing profile, code signing config) (infra/init)
 #   - GitHub: a deployment environment that only accepts one branch (main),
 #     plus its secrets and variables
 #
@@ -67,6 +68,9 @@ else
 fi
 
 deploy_role_arn=$(tf output -raw deploy_role_arn)
+builds_bucket=$(tf output -raw builds_bucket)
+signing_profile=$(tf output -raw signing_profile_name)
+code_signing_config=$(tf output -raw code_signing_config_arn)
 
 # --- GitHub -------------------------------------------------------------------
 echo "Configuring GitHub environment '${environment}'"
@@ -86,6 +90,9 @@ fi
 printf '%s' "$deploy_role_arn" | gh secret set AWS_ROLE_ARN --env "$environment" --repo "$repo"
 printf '%s' "$account_id" | gh secret set AWS_ACCOUNT_ID --env "$environment" --repo "$repo"
 printf '%s' "$state_bucket" | gh secret set TF_STATE_BUCKET --env "$environment" --repo "$repo"
+printf '%s' "$builds_bucket" | gh secret set LAMBDA_BUILDS_BUCKET --env "$environment" --repo "$repo"
+printf '%s' "$signing_profile" | gh secret set LAMBDA_SIGNING_PROFILE --env "$environment" --repo "$repo"
+printf '%s' "$code_signing_config" | gh secret set LAMBDA_CODE_SIGNING_CONFIG --env "$environment" --repo "$repo"
 gh variable set AWS_REGION --env "$environment" --repo "$repo" --body "$region"
 
 if ! gh secret list --env "$environment" --repo "$repo" --json name --jq '.[].name' | grep -qx BOT_TOKEN; then

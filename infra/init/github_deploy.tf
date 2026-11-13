@@ -206,6 +206,75 @@ data "aws_iam_policy_document" "deploy" {
     actions   = ["iam:DeleteRolePermissionsBoundary"]
     resources = ["*"]
   }
+
+  # Code signing (lambda_signing.tf): upload builds, have them signed, and
+  # deploy the signed copies. Bucket settings, the profile and the code
+  # signing config stay out of reach.
+  statement {
+    sid = "BuildsBucket"
+    actions = [
+      "s3:ListBucket",
+      "s3:ListBucketVersions",
+      "s3:GetBucketLocation",
+      "s3:GetBucketVersioning",
+    ]
+    resources = [aws_s3_bucket.builds.arn]
+  }
+
+  statement {
+    sid = "Builds"
+    actions = [
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:GetObjectTagging",
+      "s3:GetObjectVersionTagging",
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+      # Terraform deletes every version of a removed build.
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+    ]
+    resources = ["${aws_s3_bucket.builds.arn}/*"]
+  }
+
+  statement {
+    sid       = "SignBuilds"
+    actions   = ["signer:StartSigningJob", "signer:GetSigningProfile"]
+    resources = [aws_signer_signing_profile.lambda.arn]
+  }
+
+  statement {
+    sid       = "SigningJobs"
+    actions   = ["signer:DescribeSigningJob", "signer:GetRevocationStatus"]
+    resources = ["arn:${local.partition}:signer:${local.region}:${local.account_id}:/signing-jobs/*"]
+  }
+
+  statement {
+    sid       = "UseCodeSigningConfig"
+    actions   = ["lambda:GetCodeSigningConfig", "lambda:PutFunctionCodeSigningConfig"]
+    resources = [aws_lambda_code_signing_config.lambda.arn]
+  }
+
+  # Functions are created, and stay, with this code signing config only.
+  statement {
+    sid       = "KeepCodeSigningConfig"
+    effect    = "Deny"
+    actions   = ["lambda:CreateFunction", "lambda:PutFunctionCodeSigningConfig"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringNotEquals"
+      variable = "lambda:CodeSigningConfigArn"
+      values   = [aws_lambda_code_signing_config.lambda.arn]
+    }
+  }
+
+  statement {
+    sid       = "KeepCodeSigningAttached"
+    effect    = "Deny"
+    actions   = ["lambda:DeleteFunctionCodeSigningConfig"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_policy" "deploy" {

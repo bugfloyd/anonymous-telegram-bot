@@ -91,6 +91,26 @@ variable "lambda_dir" {
   default     = "../backend/dist"
 }
 
+# Code signing, from infra/init (GitHub environment secrets). Sensitive so
+# that plans in the public logs don't show them.
+variable "lambda_builds_bucket" {
+  description = "Versioned bucket the builds are uploaded to for signing"
+  type        = string
+  sensitive   = true
+}
+
+variable "lambda_signing_profile" {
+  description = "AWS Signer profile the builds are signed with"
+  type        = string
+  sensitive   = true
+}
+
+variable "lambda_code_signing_config_arn" {
+  description = "Code signing config that makes each function run only code signed by that profile"
+  type        = string
+  sensitive   = true
+}
+
 variable "log_retention_days" {
   description = "Retention for function logs"
   type        = number

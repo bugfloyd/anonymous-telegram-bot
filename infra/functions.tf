@@ -187,19 +187,54 @@ resource "aws_iam_role_policy" "fn" {
   policy = data.aws_iam_policy_document.fn[each.key].json
 }
 
+# Each build is uploaded, signed by AWS Signer, and the signed copy is
+# deployed. The code signing config (infra/init) makes Lambda refuse code
+# that isn't signed by CI's profile. A new upload happens only when a build
+# changes, and each upload gets a new signing job and a new signed copy.
+resource "aws_s3_object" "build" {
+  for_each = local.functions
+
+  bucket      = var.lambda_builds_bucket
+  key         = "builds/${each.key}.zip"
+  source      = "${var.lambda_dir}/${each.key}.zip"
+  source_hash = filesha256("${var.lambda_dir}/${each.key}.zip")
+}
+
+resource "aws_signer_signing_job" "build" {
+  for_each = local.functions
+
+  profile_name = var.lambda_signing_profile
+
+  source {
+    s3 {
+      bucket  = aws_s3_object.build[each.key].bucket
+      key     = aws_s3_object.build[each.key].key
+      version = aws_s3_object.build[each.key].version_id
+    }
+  }
+
+  destination {
+    s3 {
+      bucket = var.lambda_builds_bucket
+      prefix = "signed/${each.key}/"
+    }
+  }
+}
+
 resource "aws_lambda_function" "fn" {
   for_each = local.functions
 
-  function_name    = "${local.prefix}-${each.key}"
-  description      = "Incognito Chat ${each.key} (${var.environment})"
-  role             = aws_iam_role.fn[each.key].arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  memory_size      = lookup(each.value, "memory", 128)
-  timeout          = each.value.timeout
-  filename         = "${var.lambda_dir}/${each.key}.zip"
-  source_code_hash = filebase64sha256("${var.lambda_dir}/${each.key}.zip")
+  function_name           = "${local.prefix}-${each.key}"
+  description             = "Incognito Chat ${each.key} (${var.environment})"
+  role                    = aws_iam_role.fn[each.key].arn
+  runtime                 = "provided.al2023"
+  handler                 = "bootstrap"
+  architectures           = ["arm64"]
+  memory_size             = lookup(each.value, "memory", 128)
+  timeout                 = each.value.timeout
+  s3_bucket               = aws_signer_signing_job.build[each.key].signed_object[0].s3[0].bucket
+  s3_key                  = aws_signer_signing_job.build[each.key].signed_object[0].s3[0].key
+  code_signing_config_arn = var.lambda_code_signing_config_arn
 
   # Functions read their parameters once, at cold start. PARAMS_VERSION
   # changes whenever one of this function's parameters is rewritten, which
