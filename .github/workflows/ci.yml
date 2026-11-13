@@ -200,7 +200,7 @@ jobs:
   # CI, and releases published with it start no workflows.
   release:
     name: Release
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: [backend, web, terraform]
     runs-on: ubuntu-latest
     timeout-minutes: 10
