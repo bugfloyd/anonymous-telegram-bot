@@ -95,7 +95,8 @@ and CI builds everything twice and compares. Keep it that way:
   variables. Docs use placeholders such as `<bot>`, `<app>` and `<org>`.
 - Commits and pull request titles follow Conventional Commits. Changes to
   `main` go through pull requests, squash-merged; a push to `main` deploys to
-  dev.
+  dev. The titles set the next version and the changelog
+  ([releases](deployment.md#releases)).
 - The protocol is documented in [protocol.md](protocol.md) together with the
   code that implements it; change both in the same pull request.
 - User-facing text is written in English and Persian (`web/src/i18n`), and

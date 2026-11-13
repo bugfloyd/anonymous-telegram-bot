@@ -1,13 +1,17 @@
 name: CI
 
-# Every pull request and every push to main is tested and built. Pushes to
-# main then deploy to the dev environment (its own AWS account), which only
-# main may use (see scripts/bootstrap.sh).
+# Every pull request, every push to main and every release is tested and
+# built. Pushes to main deploy to dev and update the release pull request;
+# published releases deploy to production (deploy-environment.yml). Each
+# environment has its own AWS account and accepts only its own refs: dev
+# main, production release tags (see scripts/bootstrap.sh).
 # Pull requests never get cloud access or secrets.
 on:
   pull_request:
   push:
     branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
 
 # Least privilege by default; jobs opt in to more.
@@ -179,279 +183,58 @@ jobs:
     name: Deploy to dev
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: [backend, web, terraform]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: dev
     permissions:
       contents: read
-      id-token: write # OIDC token for AWS (no stored AWS keys), and Sigstore signing
+      id-token: write
       attestations: write
-    concurrency:
-      group: deploy-dev
-      cancel-in-progress: false
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: dev
+      site-ref: ${{ github.sha }}
+    secrets: inherit
+
+  # release-please keeps a release pull request up to date from the
+  # Conventional Commit titles on main (version and changelog). Merging it
+  # tags the release and publishes it, which deploys production (below). It
+  # uses a GitHub App's token: pull requests opened with GITHUB_TOKEN get no
+  # CI, and releases published with it start no workflows.
+  release:
+    name: Release
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [backend, web, terraform]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions: {}
     steps:
-      - name: Check environment configuration
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          ISSUER_KEY: ${{ secrets.ISSUER_KEY }}
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          AWS_REGION: ${{ vars.AWS_REGION }}
-          CLIENT_ORIGINS: ${{ vars.CLIENT_ORIGINS }}
-          PAGES_REPO: ${{ vars.PAGES_REPO }}
-          PAGES_URL: ${{ vars.PAGES_URL }}
-          PAGES_DISPATCH_TOKEN: ${{ secrets.DEV_PAGES_DISPATCH_TOKEN }}
-          LAMBDA_BUILDS_BUCKET: ${{ secrets.LAMBDA_BUILDS_BUCKET }}
-          LAMBDA_SIGNING_PROFILE: ${{ secrets.LAMBDA_SIGNING_PROFILE }}
-          LAMBDA_CODE_SIGNING_CONFIG: ${{ secrets.LAMBDA_CODE_SIGNING_CONFIG }}
-        run: |
-          missing=0
-          for name in BOT_TOKEN ISSUER_KEY AWS_ROLE_ARN AWS_ACCOUNT_ID TF_STATE_BUCKET AWS_REGION CLIENT_ORIGINS \
-            PAGES_REPO PAGES_URL PAGES_DISPATCH_TOKEN LAMBDA_BUILDS_BUCKET LAMBDA_SIGNING_PROFILE LAMBDA_CODE_SIGNING_CONFIG; do
-            if [ -z "${!name}" ]; then
-              echo "::error::$name is not set in the dev environment"
-              missing=1
-            fi
-          done
-          # Catch a mis-pasted secret before anything is written to AWS.
-          if [ -n "$BOT_TOKEN" ] && ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
-            echo "::error::BOT_TOKEN doesn't look like a Telegram bot token"
-            missing=1
-          fi
-          if [ -n "$ISSUER_KEY" ] && [[ "$ISSUER_KEY" != "-----BEGIN PRIVATE KEY-----"* ]]; then
-            echo "::error::ISSUER_KEY isn't a PKCS#8 PEM private key"
-            missing=1
-          fi
-          exit "$missing"
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get a token for the release app
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          persist-credentials: false
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
 
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          name: lambda-bundles
-          path: backend/dist
+          token: ${{ steps.app.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
-      # Public, signed provenance for the function builds about to be
-      # deployed. The builds are reproducible, so anyone can rebuild this
-      # commit and compare (docs/verifying.md).
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: backend/dist/*.zip
-
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
-          mask-aws-account-id: true
-          role-session-name: github-${{ github.run_id }}-${{ github.run_attempt }}
-          role-duration-seconds: 1800
-
-      - name: Terraform init
-        working-directory: infra
-        env:
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          AWS_REGION: ${{ vars.AWS_REGION }}
-        run: >-
-          terraform init -lockfile=readonly
-          -backend-config="bucket=${TF_STATE_BUCKET}"
-          -backend-config="region=${AWS_REGION}"
-
-      # Workflow logs are public. Hide the endpoints of earlier deploys before
-      # Terraform prints anything (there are none on the first deploy).
-      - name: Mask endpoints
-        working-directory: infra
-        run: |
-          for name in api_url ws_url webhook_url media_origin; do
-            value=$(terraform output -raw "$name" 2>/dev/null || true)
-            if [ -n "$value" ]; then
-              echo "::add-mask::${value}"
-              host=${value#*://}
-              echo "::add-mask::${host%%[/.]*}"
-            fi
-          done
-
-      - name: Terraform plan
-        working-directory: infra
-        env:
-          TF_VAR_aws_region: ${{ vars.AWS_REGION }}
-          TF_VAR_environment: dev
-          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
-          TF_VAR_bot_token_version: ${{ vars.BOT_TOKEN_VERSION || '1' }}
-          TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
-          TF_VAR_issuer_key_version: ${{ vars.ISSUER_KEY_VERSION || '1' }}
-          TF_VAR_secrets_version: ${{ vars.SECRETS_VERSION || '1' }}
-          TF_VAR_client_origins: ${{ vars.CLIENT_ORIGINS }}
-          TF_VAR_deletion_protection: ${{ vars.DELETION_PROTECTION || 'true' }}
-          TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
-          # A secret only so that it is masked in these public logs.
-          TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
-          # Code signing, from infra/init.
-          TF_VAR_lambda_builds_bucket: ${{ secrets.LAMBDA_BUILDS_BUCKET }}
-          TF_VAR_lambda_signing_profile: ${{ secrets.LAMBDA_SIGNING_PROFILE }}
-          TF_VAR_lambda_code_signing_config_arn: ${{ secrets.LAMBDA_CODE_SIGNING_CONFIG }}
-        # Refreshed resources are printed with their IDs (such as the media
-        # bucket's name): hidden, as in apply.
-        run: |
-          set -o pipefail
-          terraform plan -no-color -out=tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
-
-      - name: Terraform apply
-        working-directory: infra
-        env:
-          # Ephemeral variables aren't saved in the plan file; supply them again.
-          TF_VAR_bot_token: ${{ secrets.BOT_TOKEN }}
-          TF_VAR_issuer_key: ${{ secrets.ISSUER_KEY }}
-        # Resource IDs (such as the WebSocket API's) are printed on creation.
-        # pipefail: without it, a failed apply would pass through sed as a success.
-        run: |
-          set -o pipefail
-          terraform apply -no-color tfplan | sed -E 's/\[id=[^]]*\]/[id=***]/'
-
-      # Fetches the code each function runs from Lambda and checks it is the
-      # attested build plus AWS Signer's signature; prints both hashes.
-      - name: Check the deployed code
-        run: python3 scripts/check-lambda-deploy.py backend/dist incognitochat-dev
-
-      - name: Read endpoints
-        working-directory: infra
-        run: |
-          for name in api_url ws_url webhook_url media_origin; do
-            value=$(terraform output -raw "$name")
-            echo "::add-mask::${value}"
-            host=${value#*://}
-            echo "::add-mask::${host%%[/.]*}"
-            echo "$(echo "$name" | tr '[:lower:]' '[:upper:]')=${value}" >> "$GITHUB_ENV"
-          done
-
-      - name: Smoke test – API answers with JSON errors
-        run: |
-          body=$(curl -sS --max-time 30 -w '\n%{http_code}' "${API_URL%/}/no-such-route")
-          status=${body##*$'\n'}
-          if [ "$status" != "404" ] || [[ "$body" != *'"error":"not_found"'* ]]; then
-            echo "::error::Expected a 404 JSON error from the API, got HTTP ${status}"
-            exit 1
-          fi
-          echo "API reachable (HTTP 404 with a JSON error)"
-
-      # A login for a device that doesn't exist: the function must have loaded
-      # its parameters and be able to read the directory table to refuse it.
-      - name: Smoke test – API refuses an unknown device
-        run: |
-          rand_id() { head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d "="; }
-          payload=$(printf '{"account":"%s","device":"%s","timestamp":%d,"nonce":"%s","signature":"%s"}' \
-            "$(rand_id)" "$(rand_id)" "$(date +%s)" "$(rand_id)" "$(head -c 64 /dev/zero | basenc -w0 --base64url | tr -d "=")")
-          body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
-            -d "$payload" "${API_URL%/}/session")
-          status=${body##*$'\n'}
-          if [ "$status" != "401" ] || [[ "$body" != *'"error":"login_refused"'* ]]; then
-            echo "::error::Expected 401 login_refused from POST /session, got HTTP ${status}"
-            exit 1
-          fi
-          echo "API loaded its configuration and reads the directory (HTTP 401 login_refused)"
-
-      # A send without a token: the API must have loaded its issuer key to
-      # get this far, and refuses it after checking the envelope.
-      - name: Smoke test – sends need a token
-        run: |
-          envelope=$(head -n 1 backend/internal/envelope/testdata/client-envelopes.hex | tr -d '\n' | tr a-f A-F | basenc --base16 -d | basenc -w0 --base64url | tr -d '=')
-          mailbox=$(head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d '=')
-          body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
-            -d "{\"mailbox\":\"${mailbox}\",\"envelope\":\"${envelope}\"}" "${API_URL%/}/send")
-          status=${body##*$'\n'}
-          if [ "$status" != "401" ] || [[ "$body" != *'"error":"invalid_token"'* ]]; then
-            echo "::error::Expected 401 invalid_token from POST /send without a token, got HTTP ${status}"
-            exit 1
-          fi
-          echo "Sends need a token (HTTP 401 invalid_token)"
-
-      - name: Smoke test – webhook is reachable
-        run: |
-          status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST -d '{}' "$WEBHOOK_URL")
-          if [ "$status" != "404" ]; then
-            echo "::error::Expected HTTP 404 from the webhook stub, got ${status}"
-            exit 1
-          fi
-          echo "Webhook reachable (HTTP 404 until the bot is built)"
-
-      # The bot registers its own webhook (with its secret) and menu button:
-      # neither the bot token nor the webhook secret passes through CI.
-      - name: Set up the bot
-        working-directory: infra
-        run: |
-          function=$(terraform output -raw bot_function_name)
-          payload=$(jq -nc --arg url "$WEBHOOK_URL" '{setup: {webhookUrl: $url}}')
-          failed=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
-            --payload "$payload" --query FunctionError --output text "$RUNNER_TEMP/bot-setup.json")
-          if [ "$failed" != "None" ] || ! jq -e '.ok == true' "$RUNNER_TEMP/bot-setup.json" >/dev/null; then
-            echo "::error::Bot setup failed"
-            exit 1
-          fi
-          echo "Webhook, menu button and /start command are set"
-
-      - name: Smoke test – the notify function starts
-        working-directory: infra
-        run: |
-          # An empty account is the no-op the api sends for unknown mailboxes;
-          # it proves the function reads its parameters and starts.
-          function=$(terraform output -raw notify_function_name)
-          failed=$(aws lambda invoke --function-name "$function" --cli-binary-format raw-in-base64-out \
-            --payload '{"notify":{"account":""}}' --query FunctionError --output text "$RUNNER_TEMP/notify.json")
-          if [ "$failed" != "None" ]; then
-            echo "::error::The notify function failed"
-            exit 1
-          fi
-          echo "The notify function starts"
-
-      - name: Smoke test – sockets refuse unauthenticated connections
-        run: |
-          # Without a session token, and with a forged one (the ws function
-          # must start and check it).
-          for protocols in "" "v1, v1.forged.token"; do
-            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 --http1.1 \
-              -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Version: 13' \
-              -H 'Sec-WebSocket-Key: c21va2UtdGVzdC1rZXktMQ==' ${protocols:+-H "Sec-WebSocket-Protocol: ${protocols}"} \
-              "https://${WS_URL#wss://}")
-            if [ "$status" != "403" ]; then
-              echo "::error::Expected HTTP 403 for a socket with protocols '${protocols}', got ${status}"
-              exit 1
-            fi
-          done
-          echo "Sockets refuse unauthenticated connections (HTTP 403)"
-
-      # The dev client is built, attested and deployed by the dev site's own
-      # workflow (hosting/deploy.yml, kept in that repository), from this very
-      # commit. The token can only start that workflow, not change the site.
-      - name: Ask the dev site to build this commit
-        env:
-          GH_TOKEN: ${{ secrets.DEV_PAGES_DISPATCH_TOKEN }}
-          PAGES_REPO: ${{ vars.PAGES_REPO }}
-        run: gh workflow run deploy.yml --repo "$PAGES_REPO" --field ref="$GITHUB_SHA"
-
-      - name: Wait for the dev client to go live
-        env:
-          PAGES_URL: ${{ vars.PAGES_URL }}
-        run: |
-          for _ in $(seq 1 60); do
-            manifest=$(curl -sS --max-time 10 "${PAGES_URL%/}/manifest.json?v=${GITHUB_SHA}-${RANDOM}" || true)
-            if [ "$(jq -r '.commit // empty' <<<"$manifest" 2>/dev/null)" = "$GITHUB_SHA" ]; then
-              if [ "$(jq -r '.build.VITE_API_URL' <<<"$manifest")" != "$API_URL" ]; then
-                echo "::error::The dev site was built for another API; update its API_URL variable"
-                exit 1
-              fi
-              echo "The dev client built from this commit is live"
-              exit 0
-            fi
-            sleep 10
-          done
-          echo "::error::The dev site didn't serve this commit within 10 minutes"
-          exit 1
+  # A published release (tag vX.Y.Z on main) deploys production after the
+  # production environment's required reviewer approves it.
+  deploy-production:
+    name: Deploy to production
+    if: github.event_name == 'release'
+    needs: [backend, web, terraform]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      environment: production
+      site-ref: ${{ github.event.release.tag_name }}
+    secrets: inherit
