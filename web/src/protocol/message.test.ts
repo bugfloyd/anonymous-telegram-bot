@@ -110,6 +110,8 @@ describe('checkMessage', () => {
     ['bad reply', { reply: 'x' }],
     ['media kind', { media: { ...media, t: 'Hologram!' } }],
     ['media length', { media: { ...media, t: 'video', l: 1.5 } }],
+    ['media waveform', { media: { ...media, t: 'voice', v: toBase64Url(new Uint8Array(101)) } }],
+    ['empty waveform', { media: { ...media, t: 'voice', v: '' } }],
     ['media key', { media: { ...media, k: 'AAAA' } }],
     ['media size', { media: { ...media, s: 26 * 1024 * 1024 } }],
     ['media type', { media: { ...media, m: 'not a type' } }],
@@ -125,6 +127,8 @@ describe('checkMessage', () => {
     expect(checkMessage({ ...valid, text: undefined, media }).media?.t).toBe('photo');
     const video = { ...media, t: 'video', m: 'video/mp4', l: 42 };
     expect(checkMessage({ ...valid, media: video }).media).toEqual(video);
+    const voice = { t: 'voice', id: media.id, k: media.k, d: media.d, s: 900, m: 'audio/mp4', l: 7, v: toBase64Url(new Uint8Array([0, 128, 255])) };
+    expect(checkMessage({ ...valid, text: undefined, media: voice }).media).toEqual(voice);
   });
 
   it('accepts kinds from newer versions and shows them as files', () => {
@@ -139,5 +143,7 @@ describe('checkMessage', () => {
     expect(fileName({ t: 'video', m: 'video/quicktime' })).toBe('video.mov');
     expect(fileName({ t: 'gif', m: 'image/gif' })).toBe('animation.gif');
     expect(fileName({ t: 'voice_note' })).toBe('file');
+    expect(fileName({ t: 'voice', m: 'audio/mp4' })).toBe('voice.m4a');
+    expect(fileName({ t: 'audio', n: 'song.mp3', m: 'audio/mpeg' })).toBe('song.mp3');
   });
 });
