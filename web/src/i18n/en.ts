@@ -179,6 +179,7 @@ export const en = {
   sent: 'Sent',
   delete: 'Delete',
   deleteConfirm: "Delete this conversation from this device? They keep their copy and aren't told. If they write again, it comes back.",
+  deleteConfirmBoth: 'Delete this conversation on both sides? It goes from their device too. If either of you writes again, it comes back.',
   noticeDeleted: 'Conversation deleted from this device.',
   alsoBlock: 'Also block them: nothing they send will arrive. You can unblock them later.',
   blockedTitle: 'Blocked',

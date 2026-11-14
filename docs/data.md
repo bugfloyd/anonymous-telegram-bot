@@ -95,7 +95,9 @@ or a "seen". This is explained in [security.md](security.md#what-still-leaks).
   one): it goes from the other side's device too, opened or not, and its
   attachment from the server. Unticked, it goes only from their own device,
   and the other side can still fetch its attachment.
-- **Delete a conversation** on their device. The other person keeps theirs.
+- **Delete a conversation** on their device; the other person keeps theirs.
+  Or for both sides (unticked by default): it goes from the other person's
+  device too, both sides' messages, until either writes again.
 - **Block** someone. They're not told; their messages are no longer delivered.
 - **Replace their link.** The old one stops working at once.
 - **Turn notices off** by blocking the bot in Telegram.

@@ -175,6 +175,8 @@ describe('checkMessage', () => {
   it('accepts a delete naming 1 to 100 messages, and nothing else', () => {
     const del = { ...valid, kind: 'delete', text: undefined };
     expect(checkMessage({ ...del, delete: [valid.id] }).delete).toEqual([valid.id]);
+    // Or the whole conversation.
+    expect(checkMessage({ ...del, all: true }).all).toBe(true);
     for (const bad of [
       del,
       { ...del, delete: [] },
@@ -184,6 +186,10 @@ describe('checkMessage', () => {
       { ...del, delete: [valid.id], text: 'hi' },
       { ...valid, delete: [valid.id] },
       { ...valid, kind: 'reaction', text: undefined, reaction: { to: valid.id, e: '👍' }, delete: [valid.id] },
+      { ...del, delete: [valid.id], all: true },
+      { ...del, all: false },
+      { ...del, all: 'yes' },
+      { ...valid, all: true },
     ]) {
       expect(() => checkMessage(bad)).toThrow(MessageError);
     }

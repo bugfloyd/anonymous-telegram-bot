@@ -448,12 +448,21 @@ export function createMessaging(deps: MessagingDeps) {
   }
 
   /**
-   * Deletes a conversation from this device only: its messages go, and it
-   * leaves the list. The other side keeps theirs and isn't told. Its keys
-   * and mailbox stay, so if they write again it comes back, as in Telegram;
-   * block() is for never hearing from them again.
+   * Deletes a conversation: its messages go, and it leaves the list. Its keys
+   * and mailbox stay, so if either side writes again it comes back, as in
+   * Telegram; block() is for never hearing from them again. Only from this
+   * device, unless forBoth: then, first, the other side's app is told to
+   * delete the whole conversation too (quietly, like a receipt), and our
+   * attachments' uploads go from the server. If that can't be sent, nothing
+   * is deleted. Like deleting a message for both, it relies on their app.
    */
-  async function remove(conv: string): Promise<void> {
+  async function remove(conv: string, forBoth = false): Promise<void> {
+    if (forBoth) {
+      const c = await getConversation(db, conv);
+      if (!c || c.status !== 'active') throw new Error("can't delete for both sides");
+      await transmit(conv, { kind: 'delete', id: newId(), at: now(), all: true });
+      for (const m of await listMessages(db, conv)) if (m.out) await deleteUpload(m.media);
+    }
     await withLock(`send:${conv}`, async () => {
       const c = await getConversation(db, conv);
       if (!c) return;
@@ -603,8 +612,16 @@ export function createMessaging(deps: MessagingDeps) {
     // Shown no later than it arrived, so a fast clock can't push a message above newer ones.
     const at = Math.min(message.at, t);
     let changed = false;
-    if (message.kind === 'message' && conv.deleted?.some((d) => d.id === message.id)) {
-      // They deleted it for both sides before it arrived.
+    if (message.kind === 'message' && (conv.deleted?.some((d) => d.id === message.id) || message.at < (conv.clearedBefore ?? 0))) {
+      // They deleted it for both sides before it arrived, or the whole conversation after sending it.
+    } else if (message.kind === 'delete' && message.all) {
+      // They deleted the whole conversation for both sides: both sides'
+      // messages go here too, and it leaves the list until either writes.
+      await deleteMessages(db, conv.id);
+      conv.unread = 0;
+      conv.hidden = true;
+      conv.clearedBefore = Math.max(conv.clearedBefore ?? 0, message.at);
+      changed = true;
     } else if (message.kind === 'message' && (message.text || message.media || message.sticker)) {
       await addMessage(
         db,

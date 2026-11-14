@@ -486,14 +486,17 @@ export function createApp(deps: Deps) {
    * Deletes a conversation from this device (and first blocks it, if asked),
    * then shows the list.
    */
-  async function deleteConversation(id: string, alsoBlock: boolean): Promise<void> {
+  /** Deletes a conversation from this device, and on theirs too if forBoth; then blocks them if asked. */
+  async function deleteConversation(id: string, alsoBlock: boolean, forBoth = false): Promise<void> {
     if (!messaging) return;
     const current = screen.value;
     if ((current.kind === 'home' || current.kind === 'conversation') && current.busy) return;
     if (current.kind === 'home' || current.kind === 'conversation') screen.value = { ...current, busy: true };
     try {
+      // Told before blocking, which ends our way of writing to them.
+      if (forBoth) await messaging.remove(id, true);
       if (alsoBlock) await messaging.block(id);
-      await messaging.remove(id);
+      if (!forBoth) await messaging.remove(id);
     } catch (err) {
       if (handleGone(err)) return;
       return showHome({ tab: 'chats', notice: err instanceof NetworkError ? 'network' : 'generic' });

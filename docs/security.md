@@ -137,11 +137,12 @@ it. This is how close it gets.
   If Telegram or the phone clears the app's storage, the account is gone.
   Whether iPhones keep the app's storage over long periods is still being
   tested.
-- **Deleting for both sides relies on honest apps.** Deleting a message for
-  both sides asks the other side's app to delete it, and deletes its upload
-  from the server. A modified app could keep it, and anyone can take a
-  screenshot, as with Telegram's. It can only ever delete the sender's own
-  messages.
+- **Deleting for both sides relies on honest apps.** Deleting a message, or
+  a whole conversation, for both sides asks the other side's app to delete
+  it, and deletes the deleter's uploads from the server. A modified app could
+  keep it, and anyone can take a screenshot, as with Telegram's. A single
+  message can only be one of the deleter's own; a whole conversation, as in
+  Telegram, takes both sides' messages.
 - **Blocks rely on honest apps.** A block also covers new conversations from
   the same person through the same link, using a tag the sender's app adds. A
   modified app could send a random tag and appear as someone new. Per-link
