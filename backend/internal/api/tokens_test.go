@@ -51,6 +51,25 @@ func TestRateLimitedSendKeepsItsToken(t *testing.T) {
 	}
 }
 
+// A spent token replayed at a mailbox must not use up the mailbox's limit
+// for everyone else.
+func TestReplayedTokenDoesNotCountAgainstTheMailbox(t *testing.T) {
+	h := newHarness(t)
+	env := clientEnvelope(t)
+	mailbox := ids.New()
+	spent := mintToken(t, h.now)
+	if status, out := h.post(t, "/send", map[string]any{"mailbox": ids.New(), "envelope": env, "token": spent}); status != http.StatusOK {
+		t.Fatalf("send: %d %v", status, out)
+	}
+	for range 2 * SendsPerMailboxPerMinute {
+		status, out := h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env, "token": spent})
+		wantError(t, status, out, http.StatusUnauthorized, "invalid_token")
+	}
+	if status, out := h.post(t, "/send", map[string]any{"mailbox": mailbox, "envelope": env, "token": mintToken(t, h.now)}); status != http.StatusOK {
+		t.Fatalf("send after replays: %d %v", status, out)
+	}
+}
+
 func TestIssueTokens(t *testing.T) {
 	h := newHarness(t)
 	m := h.account(t, userID)

@@ -140,20 +140,25 @@ func (s *Server) send(ctx context.Context, req httpapi.Request) httpapi.Response
 	if err != nil {
 		return httpapi.Error(http.StatusUnauthorized, "invalid_token")
 	}
-	ok, err := s.Limits.Allow(ctx, "send#"+in.Mailbox, SendsPerMailboxPerMinute, time.Minute)
-	if err != nil {
-		return s.internal(route, err)
-	}
-	if !ok {
-		// The token isn't spent: the sender can try again later.
-		return httpapi.Error(http.StatusTooManyRequests, "rate_limited")
-	}
+	// The token is spent before anything is counted, so a replayed token
+	// can't use up a mailbox's limit.
 	fresh, err := s.Spent.Spend(ctx, nonce, forgetAfter)
 	if err != nil {
 		return s.internal(route, err)
 	}
 	if !fresh {
 		return httpapi.Error(http.StatusUnauthorized, "invalid_token")
+	}
+	ok, err := s.Limits.Allow(ctx, "send#"+in.Mailbox, SendsPerMailboxPerMinute, time.Minute)
+	if err != nil {
+		return s.internal(route, err)
+	}
+	if !ok {
+		// The sender gets the token back and can try again later.
+		if err := s.Spent.Unspend(ctx, nonce); err != nil {
+			return s.internal(route, err)
+		}
+		return httpapi.Error(http.StatusTooManyRequests, "rate_limited")
 	}
 
 	mailbox, err := s.Directory.Mailbox(ctx, in.Mailbox)

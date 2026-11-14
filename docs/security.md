@@ -102,6 +102,10 @@ it. This is how close it gets.
   attachment uploads and downloads. GitHub sees the IP address of every app
   load, together with the link being opened (Telegram puts it in the page
   address).
+- **The user's own network.** The app's traffic doesn't travel through
+  Telegram: it goes straight to the app's host and the backend. Whoever
+  carries it (an internet provider, a Wi-Fi owner, a VPN) sees that the
+  device uses this service, and when. They see no content, links or accounts.
 - **Telegram** sees who opens which link, and when notices are sent.
 - **Recipients are known to the server.** It must know a mailbox's owner to
   deliver to it. Only senders and pairings are hidden.

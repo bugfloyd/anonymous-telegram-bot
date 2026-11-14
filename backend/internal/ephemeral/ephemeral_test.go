@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+
 	"github.com/incognitochat/incognitochat/backend/internal/dynamotest"
 )
 
@@ -94,8 +96,56 @@ func TestSpent(t *testing.T) {
 	if ok, _ := sp.Spend(ctx, nonce, start.Add(time.Hour)); ok {
 		t.Fatal("double spend accepted")
 	}
+	// Another instance, with nothing remembered, refuses it too.
+	other := &Spent{DB: client, Table: sp.Table, Now: sp.Now}
+	if ok, _ := other.Spend(ctx, nonce, start.Add(time.Hour)); ok {
+		t.Fatal("double spend accepted by another instance")
+	}
 	clock = start.Add(2 * time.Hour)
 	if ok, _ := sp.Spend(ctx, nonce, clock.Add(time.Hour)); !ok {
 		t.Fatal("record outlived its expiry")
 	}
+
+	// A token given back can be spent again, here and elsewhere.
+	if err := sp.Unspend(ctx, nonce); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := other.Spend(ctx, nonce, clock.Add(time.Hour)); !ok || err != nil {
+		t.Fatalf("spend after unspend: %v, %v", ok, err)
+	}
+}
+
+// A replayed token is refused from memory, without asking the table again.
+func TestSpentRemembersReplays(t *testing.T) {
+	db := &countingDB{}
+	sp := &Spent{DB: db, Table: "t", Now: func() time.Time { return start }}
+	ctx := context.Background()
+	nonce := []byte("0123456789abcdef0123456789abcdef")
+	if ok, err := sp.Spend(ctx, nonce, start.Add(time.Hour)); !ok || err != nil {
+		t.Fatalf("first spend: %v, %v", ok, err)
+	}
+	for range 10 {
+		if ok, _ := sp.Spend(ctx, nonce, start.Add(time.Hour)); ok {
+			t.Fatal("double spend accepted")
+		}
+	}
+	if db.puts != 1 {
+		t.Fatalf("table writes: %d, want 1", db.puts)
+	}
+}
+
+// countingDB accepts every write and counts them.
+type countingDB struct{ puts int }
+
+func (c *countingDB) PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	c.puts++
+	return &dynamodb.PutItemOutput{}, nil
+}
+
+func (c *countingDB) UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	return &dynamodb.UpdateItemOutput{}, nil
+}
+
+func (c *countingDB) DeleteItem(context.Context, *dynamodb.DeleteItemInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+	return &dynamodb.DeleteItemOutput{}, nil
 }

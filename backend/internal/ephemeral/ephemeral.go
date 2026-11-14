@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,6 +28,7 @@ import (
 type DB interface {
 	PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+	DeleteItem(context.Context, *dynamodb.DeleteItemInput, ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 }
 
 // Nonces records used login nonces. It implements session.NonceStore.
@@ -44,16 +46,60 @@ func (n *Nonces) Use(ctx context.Context, nonce string, expires time.Time) (bool
 
 // Spent records spent send tokens. Tokens say nothing about who spent them,
 // and neither does this.
+//
+// It also remembers, in memory, the tokens it has seen spent, so replaying
+// one token over and over costs the table nothing after the first time.
 type Spent struct {
 	DB    DB
 	Table string
 	Now   func() time.Time
+
+	mu   sync.Mutex
+	seen map[string]int64 // spent nonce -> when its record expires (Unix seconds)
 }
+
+// maxSeen bounds the in-memory record of spent tokens; it starts over when full.
+const maxSeen = 8192
 
 // Spend records a token's nonce until forgetAfter (when the token stops
 // being accepted anyway). It reports false if the token was spent already.
 func (sp *Spent) Spend(ctx context.Context, nonce []byte, forgetAfter time.Time) (bool, error) {
-	return once(ctx, sp.DB, sp.Table, "S#"+base64.RawURLEncoding.EncodeToString(nonce), "S", forgetAfter, sp.Now())
+	key := base64.RawURLEncoding.EncodeToString(nonce)
+	now := sp.Now()
+	sp.mu.Lock()
+	until, known := sp.seen[key]
+	sp.mu.Unlock()
+	if known && now.Unix() < until {
+		return false, nil
+	}
+	fresh, err := once(ctx, sp.DB, sp.Table, "S#"+key, "S", forgetAfter, now)
+	if err != nil {
+		return false, err
+	}
+	// Spent either way: just now, or before.
+	sp.mu.Lock()
+	if sp.seen == nil || len(sp.seen) >= maxSeen {
+		sp.seen = map[string]int64{}
+	}
+	sp.seen[key] = expiry(forgetAfter)
+	sp.mu.Unlock()
+	return fresh, nil
+}
+
+// Unspend gives back a token that Spend just took, when what it paid for
+// didn't happen.
+func (sp *Spent) Unspend(ctx context.Context, nonce []byte) error {
+	key := base64.RawURLEncoding.EncodeToString(nonce)
+	if _, err := sp.DB.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: &sp.Table,
+		Key:       map[string]types.AttributeValue{"pk": s("S#" + key), "sk": s("S")},
+	}); err != nil {
+		return err
+	}
+	sp.mu.Lock()
+	delete(sp.seen, key)
+	sp.mu.Unlock()
+	return nil
 }
 
 // Quiet holds quiet periods: one action per key per period.
@@ -76,7 +122,7 @@ func once(ctx context.Context, db DB, table, pk, sk string, expires, now time.Ti
 		Item: map[string]types.AttributeValue{
 			"pk": s(pk),
 			"sk": s(sk),
-			"e":  num(expires.Add(time.Minute - time.Nanosecond).Truncate(time.Minute).Unix()),
+			"e":  num(expiry(expires)),
 		},
 		ConditionExpression:       aws.String("attribute_not_exists(pk) OR e <= :now"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":now": num(now.Unix())},
@@ -128,6 +174,11 @@ func (l *Limiter) AllowN(ctx context.Context, key string, n, limit int, window t
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// expiry rounds an expiry time up to the minute, as stored.
+func expiry(expires time.Time) int64 {
+	return expires.Add(time.Minute - time.Nanosecond).Truncate(time.Minute).Unix()
 }
 
 func conditionFailed(err error) bool {
