@@ -25,6 +25,13 @@ describe('api', () => {
       cache: 'no-store',
       redirect: 'error',
     });
+    // The body's SHA-256, which CloudFront's signature to the backend covers.
+    expect((seen.init?.headers as Record<string, string>)['X-Amz-Content-Sha256']).toBe(
+      '015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862',
+    );
+    // A request without a body carries no hash.
+    await api.request('GET', '/account', {}, checkTokenResponse);
+    expect(Object.keys(seen.init?.headers as Record<string, string>)).not.toContain('X-Amz-Content-Sha256');
     expect(new Headers(seen.init!.headers).get('content-type')).toBe('application/json');
   });
 

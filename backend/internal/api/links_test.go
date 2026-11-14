@@ -108,7 +108,7 @@ func (h *harness) call(t *testing.T, d *device, token, method, path string, body
 	req.RequestContext.HTTP.Method = method
 	req.Headers = map[string]string{"content-type": "application/json"}
 	if token != "" {
-		req.Headers["authorization"] = "Bearer " + token
+		req.Headers["x-session"] = token
 	}
 	req.Body = string(raw)
 	if sign {

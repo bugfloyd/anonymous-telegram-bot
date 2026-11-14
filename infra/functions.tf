@@ -291,7 +291,10 @@ resource "aws_lambda_function_url" "api" {
   cors {
     allow_origins = var.client_origins
     allow_methods = ["GET", "POST", "PUT", "DELETE"]
-    allow_headers = ["authorization", "content-type", "x-device-signature"]
+    # x-session carries the session token (authorization is still allowed
+    # for apps built before it); x-amz-content-sha256 is the body's hash,
+    # which Lambda needs once CloudFront signs requests to this URL.
+    allow_headers = ["authorization", "content-type", "x-amz-content-sha256", "x-device-signature", "x-session"]
     max_age       = 3600
   }
 }

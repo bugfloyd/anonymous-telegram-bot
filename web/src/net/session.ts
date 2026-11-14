@@ -37,7 +37,7 @@ export function createSession(db: Database, api: Api, now: () => number = () => 
     async call(method, path, body, check, options = {}) {
       const text = body === undefined ? '' : JSON.stringify(body);
       for (let attempt = 0; ; attempt++) {
-        const headers: Record<string, string> = { Authorization: `Bearer ${await token()}` };
+        const headers: Record<string, string> = { 'X-Session': await token() };
         if (options.sign) headers['X-Device-Signature'] = await signRequest(db, method, path, text, now);
         try {
           return await api.request(method, path, text === '' ? { headers } : { body: text, headers }, check);
