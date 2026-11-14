@@ -127,6 +127,8 @@ export interface Message {
   reaction?: Reaction;
   /** For kind "delete": the IDs of the sender's own messages to delete on the recipient's device too. */
   delete?: string[];
+  /** For kind "delete", instead of IDs: the whole conversation, both sides' messages, as in Telegram. */
+  all?: true;
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -238,6 +240,7 @@ export function checkMessage(value: unknown): Message {
     m.delete.forEach((d) => bytes(d, 16, 'delete'));
   }
   if (m.kind !== 'delete' && m.delete !== undefined) throw new MessageError(`bad ${m.kind}`);
+  if (m.all !== undefined && (m.all !== true || m.kind !== 'delete')) throw new MessageError(`bad ${m.kind}`);
   switch (m.kind) {
     case 'message':
       // Text, an attachment, or both (a caption); or a sticker on its own.
@@ -252,7 +255,10 @@ export function checkMessage(value: unknown): Message {
       if (m.reaction === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad reaction');
       break;
     case 'delete':
-      if (m.delete === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad delete');
+      // Some messages, or the whole conversation: one or the other.
+      if ((m.delete === undefined) === (m.all === undefined) || m.text !== undefined || m.seen !== undefined || m.media !== undefined) {
+        throw new MessageError('bad delete');
+      }
       break;
     default:
       if (m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError(`bad ${m.kind}`);

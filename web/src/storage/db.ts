@@ -67,6 +67,11 @@ export interface ConversationRecord {
    * forgotten once they could no longer be waiting (31 days).
    */
   deleted?: { id: string; at: number }[];
+  /**
+   * They deleted the whole conversation for both sides at this time (their
+   * clock): anything of theirs sent before it that arrives later is dropped.
+   */
+  clearedBefore?: number;
 }
 
 /** A message, as kept on the device. Only its text is sealed; times and status are local metadata. */

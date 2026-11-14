@@ -471,7 +471,7 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           </div>
         ) : (
           <div class="head-actions">
-            <button type="button" class="link-button" disabled={screen.busy} onClick={() => void confirmDelete(app, language, screen.id)}>
+            <button type="button" class="link-button" disabled={screen.busy} onClick={() => void confirmDelete(app, language, screen.id, screen.label, !screen.blocked && !screen.ended)}>
               {tr('delete')}
             </button>
             <button type="button" class="link-button" disabled={screen.busy} onClick={() => (confirmingBlock.value = true)}>
@@ -641,39 +641,45 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
 }
 
 /** Asks, in Telegram's own popup, whether to delete a conversation from this device, or delete and block it. */
-/** The conversation the delete dialog is open for. */
-const deleting = signal<string | null>(null);
+/** The conversation the delete dialog is open for: its label, and whether it's open (so it can be deleted for both sides). */
+const deleting = signal<{ id: string; label: string; active: boolean } | null>(null);
 
-/** Asks before deleting a conversation, with blocking as an extra, unchecked choice. */
-function confirmDelete(_app: AppState, _language: Language, id: string): void {
-  deleting.value = id;
+/** Asks before deleting a conversation, with blocking and deleting for both sides as extra, unchecked choices. */
+function confirmDelete(_app: AppState, _language: Language, id: string, label: string, active: boolean): void {
+  deleting.value = { id, label, active };
 }
 
 function DeleteDialog({ app, language }: { app: AppState; language: Language }) {
   const alsoBlock = useSignal(false);
+  const forBoth = useSignal(false);
   const first = useRef<HTMLButtonElement>(null);
-  const id = deleting.value;
-  useBackCloses(!!id, () => {
-    deleting.value = null;
-    alsoBlock.value = false;
-  });
-  useEffect(() => {
-    if (id) first.current?.focus();
-  }, [id]);
-  if (!id) return null;
+  const target = deleting.value;
   const close = () => {
     deleting.value = null;
     alsoBlock.value = false;
+    forBoth.value = false;
   };
+  useBackCloses(!!target, close);
+  useEffect(() => {
+    if (target) first.current?.focus();
+  }, [target?.id]);
+  if (!target) return null;
   const confirm = () => {
     const block = alsoBlock.value;
+    const both = target.active && forBoth.value;
     close();
-    void app.deleteConversation(id, block);
+    void app.deleteConversation(target.id, block, both);
   };
   return (
     <div class="overlay" onClick={close} onKeyDown={(e) => e.key === 'Escape' && close()}>
       <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-text" onClick={(e) => e.stopPropagation()}>
-        <p id="delete-text">{t(language, 'deleteConfirm')}</p>
+        <p id="delete-text">{t(language, target.active && forBoth.value ? 'deleteConfirmBoth' : 'deleteConfirm')}</p>
+        {target.active && (
+          <label class="check">
+            <input type="checkbox" checked={forBoth.value} onChange={(e) => (forBoth.value = e.currentTarget.checked)} />
+            <span>{t(language, 'alsoDeleteFor', { name: `\u2068${target.label}\u2069` })}</span>
+          </label>
+        )}
         <label class="check">
           <input type="checkbox" checked={alsoBlock.value} onChange={(e) => (alsoBlock.value = e.currentTarget.checked)} />
           <span>{t(language, 'alsoBlock')}</span>
@@ -890,7 +896,7 @@ function ChatRow({
     }
     onReveal(null);
     app.haptic();
-    void confirmDelete(app, language, c.id);
+    void confirmDelete(app, language, c.id, c.label, c.status === 'active');
   };
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
@@ -946,7 +952,7 @@ function ChatRow({
         aria-hidden={shown === 0}
         onClick={() => {
           onReveal(null);
-          void confirmDelete(app, language, c.id);
+          void confirmDelete(app, language, c.id, c.label, c.status === 'active');
         }}
       >
         {tr('delete')}

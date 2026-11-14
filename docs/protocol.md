@@ -176,10 +176,12 @@ JSON fields:
 | `sticker` | a sticker (`message` only, with no text or attachment): `{id, e?}`, see Stickers |
 | `reaction` | a reaction (`reaction` only): `{to, e}`, where `to` is the ID of a message in the conversation, from either side, and `e` one emoji (one grapheme with an emoji code point, at most 32 UTF-16 units) or empty to take the reaction back |
 | `delete` | IDs of the sender's own messages to delete on the recipient's device too (`delete` only, 1–100) |
+| `all` | `true`: the whole conversation instead, both sides' messages (`delete` only, instead of `delete`) |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text, an attachment or a sticker; `seen` needs `seen` and no text;
-`reaction` needs `reaction` and `delete` needs `delete`, and nothing else;
+`reaction` needs `reaction` and `delete` needs `delete` or `all` (one of
+them), and nothing else;
 `key_update` and `end` carry none of these.
 
 **Deleting for both sides.** A sender can delete their own messages on the
@@ -191,7 +193,11 @@ recipient's own messages changes nothing. A `delete` that arrives before the
 message it names (delivery has no set order) is remembered for 31 days, the
 longest a message can wait, and the message is dropped when it comes. A
 conversation started by anything but a `message` stays out of the list
-until one arrives. Like blocks, this relies on the recipient's app doing it.
+until one arrives. With `all`, the recipient deletes the whole
+conversation, both sides' messages, as in Telegram; it leaves the list until
+either side writes again, and messages from that side sent before the
+`delete` (by its `at`) that arrive later are dropped. Like blocks, this
+relies on the recipient's app doing it.
 
 **Reactions.** Each side has at most one reaction per message, as on Telegram
 without Premium; a new one replaces it. The recipient keeps the one with the

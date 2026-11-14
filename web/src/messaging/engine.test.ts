@@ -750,6 +750,59 @@ describe('deleting for both sides', () => {
   });
 });
 
+describe('deleting a whole conversation for both sides', () => {
+  it("deletes both sides' messages there too, and late arrivals sent before it", async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi back');
+    await sender.messaging.sync();
+    const photo = crypto.getRandomValues(new Uint8Array(800));
+    await sender.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 8, h: 8, m: 'image/jpeg' } });
+    await sender.messaging.send(conv, 'late one');
+    // The owner gets the photo, not yet the last message.
+    const inbox = backend.inboxes.get('owner')!;
+    const late = inbox.pop()!;
+    await owner.messaging.sync();
+    expect((await listMessages(owner.db, conv)).length).toBe(3);
+
+    // The sender deletes the whole conversation for both sides.
+    const quiet = backend.quietSends.length;
+    await sender.messaging.remove(conv, true);
+    expect(backend.quietSends.slice(quiet)).toEqual([true]);
+    expect(await listMessages(sender.db, conv)).toEqual([]);
+    expect(backend.uploads.size).toBe(0);
+    // The owner's side: both sides' messages go, and it leaves the list.
+    expect(await owner.messaging.sync()).toBe(1);
+    expect(await listMessages(owner.db, conv)).toEqual([]);
+    expect((await getConversation(owner.db, conv))!.hidden).toBe(true);
+    // The message sent before it, arriving late, is dropped.
+    inbox.push(late);
+    expect(await owner.messaging.sync()).toBe(0);
+    expect(await listMessages(owner.db, conv)).toEqual([]);
+    // Writing again brings it back, on both sides.
+    await sender.messaging.send(conv, 'new start');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['new start']);
+    expect((await getConversation(owner.db, conv))!.hidden).toBe(false);
+  });
+
+  it('deletes nothing if it cannot be sent', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.block(conv);
+    await expect(owner.messaging.remove(conv, true)).rejects.toThrow();
+    expect((await listMessages(owner.db, conv)).length).toBe(1);
+  });
+});
+
 describe('attachments', () => {
   it('sends a file encrypted, and the recipient fetches, keeps and deletes it', async () => {
     const backend = await fakeBackend();

@@ -135,7 +135,8 @@ secret: one person keeps the same label through the same link.
   message, from a quick row in the long-press menu or the full emoji picker;
   a double-tap reacts with ❤️, as in Telegram.
   Deleting one of your own messages deletes it on both sides by default (the
-  other side's app is asked to; see the limits in the security model). Blocks are silent: the blocked side's sends
+  other side's app is asked to; see the limits in the security model). A
+  whole conversation can be deleted on both sides too, if chosen. Blocks are silent: the blocked side's sends
   still look accepted, and new conversations from the same person through the
   same link are dropped by their sender tag.
 - **Key rotation:** conversation and link encryption keys are replaced every
