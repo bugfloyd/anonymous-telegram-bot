@@ -38,7 +38,7 @@ cleared on their own (Data and storage), and their messages stay.
 | The account's link: its ID, its public keys, its first-contact mailbox | So people can write to the user | Until it's replaced, or the account ends |
 | Mailboxes: random IDs, and which account they belong to | To deliver messages | Until they're ended or expire |
 | Messages waiting for the device, encrypted | Delivery | Until the device confirms them, at most 30 days |
-| Attachments waiting to be fetched or saved, encrypted, with their padded size | Delivery | Until saved, deleted, or at most 31 days |
+| Attachments, encrypted, with their padded size | Delivery, and fetching again (after clearing them from the device) | Until the recipient deletes the message or the chat, or at most 31 days; downloading or saving doesn't delete them |
 | Invitation codes the account created, and its invitation level | Invite-only access to links | While the account exists |
 | Short-lived counters, login nonces, spent send tokens, open-socket records | Rate limits, replay protection, live updates | Minutes, up to two weeks |
 | Error logs, without IDs, IP addresses or content | Fixing problems | 7 days |
@@ -78,7 +78,7 @@ The services the software runs on:
   load, and the link being opened, which is part of the page address.
 - **The device's browser**, when an attachment is saved outside Telegram,
   opens a save page; the address may stay in its history (it opens nothing
-  once the attachment is saved).
+  once the upload is gone).
 
 None of them receive message content. The app loads no third-party code and
 has no analytics or trackers.
