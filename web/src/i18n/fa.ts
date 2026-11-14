@@ -161,6 +161,8 @@ export const fa = {
   messageActions: 'کارهای پیام',
   deleteForMe: 'پاک کردن برای من',
   deleteMessageConfirm: 'این پیام از این دستگاه پاک شود؟ نسخهٔ طرف مقابل می‌ماند.',
+  deleteOwnMessageConfirm: 'این پیام پاک شود؟',
+  alsoDeleteFor: 'برای {name} هم پاک شود',
   unreadCount: '{count}',
   messagePlaceholder: 'پیام',
   send: 'ارسال',

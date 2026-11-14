@@ -91,6 +91,10 @@ or a "seen". This is explained in [security.md](security.md#what-still-leaks).
 
 ## What users can do
 
+- **Delete a message for both sides** (their own, the default when deleting
+  one): it goes from the other side's device too, opened or not, and its
+  attachment from the server. Unticked, it goes only from their own device,
+  and the other side can still fetch its attachment.
 - **Delete a conversation** on their device. The other person keeps theirs.
 - **Block** someone. They're not told; their messages are no longer delivered.
 - **Replace their link.** The old one stops working at once.

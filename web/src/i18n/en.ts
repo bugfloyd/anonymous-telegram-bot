@@ -160,6 +160,8 @@ export const en = {
   messageActions: 'Message actions',
   deleteForMe: 'Delete for me',
   deleteMessageConfirm: "Delete this message from this device? The other side keeps their copy.",
+  deleteOwnMessageConfirm: 'Delete this message?',
+  alsoDeleteFor: 'Also delete for {name}',
   unreadCount: '{count}',
   messagePlaceholder: 'Message',
   send: 'Send',

@@ -668,6 +668,88 @@ describe('reactions', () => {
   });
 });
 
+describe('deleting for both sides', () => {
+  it('deletes our message and its upload on both sides, opened or not', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    const photo = crypto.getRandomValues(new Uint8Array(1000));
+    await sender.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 10, h: 10, m: 'image/jpeg' } });
+    await sender.messaging.send(conv, 'oops');
+    expect(await owner.messaging.sync()).toBe(3);
+    const [hello, pic, oops] = await listMessages(sender.db, conv);
+    // They downloaded the photo; they haven't opened the conversation.
+    await owner.messaging.fetchMedia(pic!.id);
+    expect(backend.uploads.size).toBe(1);
+    const unread = (await getConversation(owner.db, conv))!.unread;
+
+    const quiet = backend.quietSends.length;
+    await sender.messaging.deleteForEveryone(conv, oops!.id);
+    await sender.messaging.deleteForEveryone(conv, pic!.id);
+    expect(backend.quietSends.slice(quiet)).toEqual([true, true]);
+    // Gone here, and the upload is gone from the server.
+    expect((await listMessages(sender.db, conv)).map((m) => m.text)).toEqual(['hello']);
+    expect(backend.uploads.size).toBe(0);
+    // Gone there too, with the downloaded photo, and from the unread count.
+    expect(await owner.messaging.sync()).toBe(2);
+    expect((await listMessages(owner.db, conv)).map((m) => m.id)).toEqual([hello!.id]);
+    expect(await getMedia(owner.db, pic!.id)).toBeUndefined();
+    expect((await getConversation(owner.db, conv))!.unread).toBe(unread - 2);
+  });
+
+  it('drops a message whose delete arrives first, and keeps no empty conversation', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    const [hello] = await listMessages(sender.db, conv);
+    await sender.messaging.deleteForEveryone(conv, hello!.id);
+    expect((await listMessages(sender.db, conv)).length).toBe(0);
+    // The delete arrives before the message.
+    backend.inboxes.get('owner')!.reverse();
+    expect(await owner.messaging.sync()).toBe(0);
+    expect(await listMessages(owner.db, conv)).toEqual([]);
+    const c = await getConversation(owner.db, conv);
+    expect(c?.hidden).toBe(true);
+    expect(c?.deleted?.map((d) => d.id)).toEqual([hello!.id]);
+    expect((await listConversations(owner.db)).filter((x) => !x.hidden)).toEqual([]);
+  });
+
+  it("can't delete the other side's messages, or what never went out", async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'my reply');
+    await sender.messaging.sync();
+    const reply = (await listMessages(sender.db, conv)).find((m) => !m.out)!;
+    // Their message can't be deleted for both sides from here.
+    await expect(sender.messaging.deleteForEveryone(conv, reply.id)).rejects.toThrow();
+    // A modified app naming their message in a delete: their app ignores it.
+    const record = (await sender.db.get('messages', reply.id))!;
+    await sender.db.put('messages', { ...record, out: true, status: 'sent' });
+    await sender.messaging.deleteForEveryone(conv, reply.id);
+    expect(await owner.messaging.sync()).toBe(0);
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['hello', 'my reply']);
+    // Deleting ours for both sides takes only ours there: theirs stays.
+    const [hello] = await listMessages(sender.db, conv);
+    await sender.messaging.deleteForEveryone(conv, hello!.id);
+    await owner.messaging.sync();
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['my reply']);
+    // Deleting our own photo only for us keeps the upload, for them to fetch.
+    const photo = crypto.getRandomValues(new Uint8Array(500));
+    await owner.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 5, h: 5, m: 'image/jpeg' } });
+    const mine = (await listMessages(owner.db, conv)).at(-1)!;
+    await owner.messaging.discardUploads([mine]);
+    expect(backend.uploads.size).toBe(1);
+  });
+});
+
 describe('attachments', () => {
   it('sends a file encrypted, and the recipient fetches, keeps and deletes it', async () => {
     const backend = await fakeBackend();

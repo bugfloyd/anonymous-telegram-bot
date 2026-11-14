@@ -21,8 +21,10 @@ const TAG_LENGTH = 32;
 export const MAX_TEXT_BYTES = 12_000;
 const MAX_SEEN = 100;
 
-export type Kind = 'message' | 'seen' | 'reaction' | 'key_update' | 'end';
-const KINDS: readonly Kind[] = ['message', 'seen', 'reaction', 'key_update', 'end'];
+export type Kind = 'message' | 'seen' | 'reaction' | 'delete' | 'key_update' | 'end';
+const KINDS: readonly Kind[] = ['message', 'seen', 'reaction', 'delete', 'key_update', 'end'];
+/** The most messages one "delete" names. */
+export const MAX_DELETE = 100;
 /** The longest reaction, in UTF-16 units: one emoji, joined sequences included. */
 const MAX_REACTION = 32;
 
@@ -123,6 +125,8 @@ export interface Message {
   sticker?: Sticker;
   /** For kind "reaction": which message, and the emoji. */
   reaction?: Reaction;
+  /** For kind "delete": the IDs of the sender's own messages to delete on the recipient's device too. */
+  delete?: string[];
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -229,6 +233,11 @@ export function checkMessage(value: unknown): Message {
   if (m.sticker !== undefined) checkSticker(m.sticker);
   if (m.reaction !== undefined) checkReaction(m.reaction);
   if (m.kind !== 'reaction' && m.reaction !== undefined) throw new MessageError(`bad ${m.kind}`);
+  if (m.delete !== undefined) {
+    if (!Array.isArray(m.delete) || m.delete.length === 0 || m.delete.length > MAX_DELETE) throw new MessageError('bad delete');
+    m.delete.forEach((d) => bytes(d, 16, 'delete'));
+  }
+  if (m.kind !== 'delete' && m.delete !== undefined) throw new MessageError(`bad ${m.kind}`);
   switch (m.kind) {
     case 'message':
       // Text, an attachment, or both (a caption); or a sticker on its own.
@@ -241,6 +250,9 @@ export function checkMessage(value: unknown): Message {
       break;
     case 'reaction':
       if (m.reaction === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad reaction');
+      break;
+    case 'delete':
+      if (m.delete === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad delete');
       break;
     default:
       if (m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError(`bad ${m.kind}`);

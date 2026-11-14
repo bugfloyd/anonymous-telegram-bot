@@ -160,7 +160,7 @@ JSON fields:
 | Field | Meaning |
 |---|---|
 | `v` | 1 |
-| `kind` | `message`, `seen`, `reaction`, `key_update` or `end` |
+| `kind` | `message`, `seen`, `reaction`, `delete`, `key_update` or `end` |
 | `conv` | conversation ID (16 bytes) |
 | `id` | message ID (16 bytes) |
 | `at` | sent time, Unix milliseconds, sender's clock |
@@ -175,11 +175,23 @@ JSON fields:
 | `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, v?, p?}`, see Media |
 | `sticker` | a sticker (`message` only, with no text or attachment): `{id, e?}`, see Stickers |
 | `reaction` | a reaction (`reaction` only): `{to, e}`, where `to` is the ID of a message in the conversation, from either side, and `e` one emoji (one grapheme with an emoji code point, at most 32 UTF-16 units) or empty to take the reaction back |
+| `delete` | IDs of the sender's own messages to delete on the recipient's device too (`delete` only, 1–100) |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text, an attachment or a sticker; `seen` needs `seen` and no text;
-`reaction` needs `reaction` and nothing else; `key_update` and `end` carry
-none of these.
+`reaction` needs `reaction` and `delete` needs `delete`, and nothing else;
+`key_update` and `end` carry none of these.
+
+**Deleting for both sides.** A sender can delete their own messages on the
+recipient's device too, whether or not they were opened: the app sends a
+`delete`, deletes the uploads of any attachments (it holds their delete
+secrets), then deletes its own copies. The recipient deletes only messages
+from that side in that conversation; a `delete` naming one of the
+recipient's own messages changes nothing. A `delete` that arrives before the
+message it names (delivery has no set order) is remembered for 31 days, the
+longest a message can wait, and the message is dropped when it comes. A
+conversation started by anything but a `message` stays out of the list
+until one arrives. Like blocks, this relies on the recipient's app doing it.
 
 **Reactions.** Each side has at most one reaction per message, as on Telegram
 without Premium; a new one replaces it. The recipient keeps the one with the
@@ -231,8 +243,8 @@ each mailbox's owner, to deliver, but not who writes to it.
   token. The server checks the envelope's layout and the caps, then stores the
   envelope once for each of the owner's devices. Unknown and discarded
   mailboxes get the same `200 {}`, after a similar pause, and nothing is
-  stored. `quiet` sends (seen receipts, reactions and key updates) trigger no
-  notice.
+  stored. `quiet` sends (seen receipts, reactions, deletes and key updates)
+  trigger no notice.
 - `GET /inbox` returns a device's undelivered envelopes in no meaningful order;
   `POST /ack {ids}` deletes the ones it has stored. Undelivered envelopes expire
   after 30 days.
