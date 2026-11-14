@@ -174,6 +174,11 @@ it. This is how close it gets.
 - An independent relay that hides IP addresses, random notice delays, and a
   setting to turn "seen" receipts off.
 - Change alerts from AWS's audit logs, ideally held by an independent party.
+- The backend in an attested enclave (such as AWS Nitro Enclaves), so the app
+  can check that the server runs this repository's code before talking to
+  it. The operator could then no longer learn which Telegram user owns which
+  account or mailbox, or match a sender's IP address to an account. Timing
+  and IP addresses would still leak, and users would trust AWS's attestation.
 - Unforgeable sender tags (anonymous credentials), so blocks hold against
   modified apps.
 - A per-message ratchet (Double Ratchet or MLS) and post-quantum key exchange.
