@@ -32,3 +32,8 @@ output "code_signing_config_arn" {
   description = "Code signing config every function must have (stored as a GitHub environment secret)"
   value       = aws_lambda_code_signing_config.lambda.arn
 }
+
+output "alerts_topic_arn" {
+  description = "SNS topic the budget and the alarms publish to; subscribe an address to it to receive them"
+  value       = aws_sns_topic.alerts.arn
+}

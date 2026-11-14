@@ -73,8 +73,8 @@ AWS_PROFILE=<profile> DEPLOY_TAGS='v*.*.*' REVIEWERS=<login> scripts/bootstrap.s
 ```
 
 It creates the Terraform state bucket, the GitHub OIDC provider, the deploy
-role, the Lambda permissions boundary and code signing (`infra/init`), and
-the GitHub environment `<env>`, which accepts deploys from `main` only (dev)
+role, the Lambda permissions boundary, code signing and the alerts below
+(`infra/init`), and the GitHub environment `<env>`, which accepts deploys from `main` only (dev)
 or from release tags only, with required reviewers (production), with the
 secrets and variables it computed (`AWS_ACCOUNT_ID`, `AWS_ROLE_ARN`,
 `TF_STATE_BUCKET`, `LAMBDA_BUILDS_BUCKET`, `LAMBDA_SIGNING_PROFILE`,
@@ -88,6 +88,30 @@ nor create a function without the config or remove it. If CI were ever
 compromised, an admin can revoke the profile from a given time, after which
 Lambda refuses to deploy anything it signed, and replace the profile by
 rerunning the bootstrap.
+
+Alerts are a monthly cost budget (`MONTHLY_BUDGET=<dollars>` when
+bootstrapping; 50 for production and 10 otherwise by default) and a few
+alarms, all publishing to one SNS topic, `incognitochat-<env>-alerts`:
+
+| Alert | When |
+|---|---|
+| Budget | Half the budget is spent, all of it is, or the month is forecast to pass it. Billing data lags by hours. |
+| `lambda-throttles` | Any function was refused for lack of concurrency. |
+| `api-invocations` | The `api` function was called more than 30,000 times in 5 minutes (100 a second). |
+| `api-errors` | The `api` function failed more than 10 times in 5 minutes. |
+| `<table>-table-throttles` | A table refused requests because its per-second cap was reached. |
+
+The topic starts without subscribers, so no address is stored in the
+repository or in Terraform state. Subscribe one, and confirm the email AWS
+sends:
+
+```shell
+AWS_PROFILE=<profile> aws sns subscribe --region <aws-region> --protocol email \
+  --topic-arn "$(terraform -chdir=infra/init output -raw alerts_topic_arn)" \
+  --notification-endpoint <address>
+```
+
+CI can't change these alerts: they belong to the bootstrap stack.
 
 Then set the rest:
 
