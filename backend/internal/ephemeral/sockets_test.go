@@ -9,6 +9,40 @@ import (
 	"github.com/incognitochat/incognitochat/backend/internal/dynamotest"
 )
 
+// An account keeps at most MaxSockets connections on record: opening more
+// forgets the oldest, so a delivery never fans out further.
+func TestSocketsAreCapped(t *testing.T) {
+	client := dynamotest.Client(t)
+	clock := time.Unix(1_800_000_000, 0)
+	s := &Sockets{DB: client, Table: dynamotest.Table(t, client), Now: func() time.Time { return clock }}
+	ctx := context.Background()
+
+	var opened []string
+	for i := range MaxSockets + 3 {
+		c := "conn" + string(rune('a'+i))
+		opened = append(opened, c)
+		if err := s.Open(ctx, "acct", c); err != nil {
+			t.Fatal(err)
+		}
+		clock = clock.Add(time.Second)
+	}
+	if err := s.Open(ctx, "other", "theirs"); err != nil {
+		t.Fatal(err)
+	}
+	conns, err := s.Connections(ctx, "acct")
+	slices.Sort(conns)
+	if want := opened[3:]; err != nil || !slices.Equal(conns, want) {
+		t.Fatalf("connections = %v, %v; want the newest %v", conns, err, want)
+	}
+	// A forgotten connection's $disconnect finds nothing, and that's fine.
+	if err := s.Close(ctx, opened[0]); err != nil {
+		t.Fatal(err)
+	}
+	if conns, _ := s.Connections(ctx, "other"); !slices.Equal(conns, []string{"theirs"}) {
+		t.Fatalf("another account's connections = %v", conns)
+	}
+}
+
 func TestSockets(t *testing.T) {
 	client := dynamotest.Client(t)
 	clock := time.Unix(1_800_000_000, 0)
