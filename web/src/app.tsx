@@ -2335,6 +2335,21 @@ function Quote({ name, text, onClick }: { name: string; text: string; onClick?: 
 
 /** How far a message is pulled before letting go answers it, in px. */
 const REPLY_SWIPE = 56;
+const STRONG = /[A-Za-z\u00C0-\u02AF\u0370-\u052F\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+const RTL = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
+/**
+ * Whether a text's last paragraph runs in the page's direction (each one
+ * takes its own, from its first strong letter), so its end is on the side
+ * where the time goes. With no letters it may follow either: only on a
+ * left-to-right page, where both are the same.
+ */
+function endsInPageDirection(text: string): boolean {
+  const pageRtl = document.documentElement.dir === 'rtl';
+  const first = text.split('\n').at(-1)?.match(STRONG)?.[0];
+  return first ? RTL.test(first) === pageRtl : !pageRtl;
+}
+
 /** Two taps closer together than this, in ms, are a double-tap: ❤️, as in Telegram. */
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_REACTION = '❤️';
@@ -2453,6 +2468,16 @@ function Bubble({
     }
   };
   const quoteName = quoted ? (quoted.out ? tr('you') : peer) : '';
+  const meta = (
+    <>
+      <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
+      {m.out && <Ticks status={m.status} language={language} />}
+    </>
+  );
+  // As in Telegram: the time sits on the text's last line where there's room
+  // (an invisible copy at the end of the text keeps that room, or wraps to a
+  // line of its own); with reactions, it goes on their row instead.
+  const inlineTime = !!m.text && !m.reactions?.mine?.e && !m.reactions?.theirs?.e && endsInPageDirection(m.text);
   // A sticker or video message stands on its own, without a bubble, as in Telegram.
   const bare = !!m.sticker || (!!m.media && shownAs(m.media) === 'round' && !m.text);
   return (
@@ -2486,13 +2511,21 @@ function Bubble({
       {m.text && (
         <span class="text" dir="auto">
           {m.text}
+          {inlineTime && (
+            <span class="meta-spacer" aria-hidden="true">
+              {meta}
+            </span>
+          )}
         </span>
       )}
-      <Reactions message={m} language={language} canReact={canReact} onReact={onReact} />
-      <span class="meta">
-        <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
-        {m.out && <Ticks status={m.status} language={language} />}
-      </span>
+      {inlineTime ? (
+        <span class="meta floating">{meta}</span>
+      ) : (
+        <span class="footer">
+          <Reactions message={m} language={language} canReact={canReact} onReact={onReact} />
+          <span class="meta">{meta}</span>
+        </span>
+      )}
     </li>
   );
 }
