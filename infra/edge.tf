@@ -127,6 +127,12 @@ resource "aws_wafv2_web_acl" "api" {
   description = "Limits requests per IP address to the Incognito Chat API, ${var.environment}"
   scope       = "CLOUDFRONT"
 
+  # Turning the firewall off must first detach it from the distribution;
+  # with this, Terraform updates the distribution before it deletes this.
+  lifecycle {
+    create_before_destroy = true
+  }
+
   default_action {
     allow {}
   }
