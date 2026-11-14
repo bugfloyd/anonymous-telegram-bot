@@ -33,13 +33,15 @@ import {
 } from './keys';
 import { dropFromPool, pooled, POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, type LocalMedia } from './store';
+import { addMessage, deleteMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, type LocalMedia } from './store';
 import { decryptFile, encryptFile, newFileKey, uploadSize } from '../crypto/media';
 import { xhrTransfer, type Transfer } from '../net/transfer';
 
 const DAY = 24 * 3600 * 1000;
 /** Messages sent longer ago than this, or later than now plus a day, are dropped (design §10). */
 const MAX_AGE = 31 * DAY;
+/** The most deletes for messages not here yet that a conversation remembers. */
+const MAX_REMEMBERED_DELETES = 500;
 const MAX_INBOX_PAGES = 10;
 const MAX_SEEN = 100;
 const META_BLOCKED = 'blocked-tags';
@@ -274,16 +276,41 @@ export function createMessaging(deps: MessagingDeps) {
     });
   }
 
-  /** Deletes the uploads of received attachments: their messages are being deleted here. */
-  async function discardUploads(messages: { out: boolean; media?: LocalMedia }[]): Promise<void> {
-    for (const m of messages) {
-      if (m.out || !m.media?.id || !m.media.d) continue;
-      try {
-        await api.post(`/media/${m.media.id}/delete`, { secret: m.media.d }, checkObject);
-      } catch {
-        // It expires anyway.
-      }
+  /** Deletes an attachment's upload from the server, if it's still there. */
+  async function deleteUpload(media: LocalMedia | undefined): Promise<void> {
+    if (!media?.id || !media.d) return;
+    try {
+      await api.post(`/media/${media.id}/delete`, { secret: media.d }, checkObject);
+    } catch {
+      // It expires anyway.
     }
+  }
+
+  /**
+   * Deletes the uploads of received attachments: their messages are being
+   * deleted here. Ours stay, for the other side to fetch: deleting our own
+   * message only for us leaves theirs as it is.
+   */
+  async function discardUploads(messages: { out: boolean; media?: LocalMedia }[]): Promise<void> {
+    for (const m of messages) if (!m.out) await deleteUpload(m.media);
+  }
+
+  /**
+   * Deletes one of our messages on both sides, as in Telegram: their app
+   * deletes it too, whether they've opened it or not, its upload goes from
+   * the server, and then it goes here. Sent quietly, like a receipt. Sent
+   * first: if that fails, nothing is deleted, so it can be tried again. It
+   * relies on their app doing so, as blocks do.
+   */
+  async function deleteForEveryone(conv: string, id: string): Promise<void> {
+    const c = await getConversation(db, conv);
+    const m = await getMessage(db, id);
+    if (!c || c.status !== 'active' || !m || m.conv !== conv || !m.out || (m.status !== 'sent' && m.status !== 'seen')) {
+      throw new Error('nothing to delete for both sides');
+    }
+    await transmit(conv, { kind: 'delete', id: newId(), at: now(), delete: [id] });
+    await deleteUpload(m.media);
+    await deleteMessage(db, id);
   }
 
   /**
@@ -553,6 +580,9 @@ export function createMessaging(deps: MessagingDeps) {
           status: 'active',
           lastReceived: null,
           ...(message.tag ? { tag: message.tag } : {}),
+          // Started by something other than a message (a delete or reaction
+          // that overtook it): out of the list until a message comes.
+          ...(message.kind !== 'message' ? { hidden: true } : {}),
         };
       }
     } else if (entry.conv) {
@@ -573,7 +603,9 @@ export function createMessaging(deps: MessagingDeps) {
     // Shown no later than it arrived, so a fast clock can't push a message above newer ones.
     const at = Math.min(message.at, t);
     let changed = false;
-    if (message.kind === 'message' && (message.text || message.media || message.sticker)) {
+    if (message.kind === 'message' && conv.deleted?.some((d) => d.id === message.id)) {
+      // They deleted it for both sides before it arrived.
+    } else if (message.kind === 'message' && (message.text || message.media || message.sticker)) {
       await addMessage(
         db,
         { id: message.id, conv: conv.id, at, out: false, status: 'received', ...(message.media ? { file: 'remote' as const } : {}) },
@@ -592,6 +624,23 @@ export function createMessaging(deps: MessagingDeps) {
     } else if (message.kind === 'seen') {
       // They opened these: our messages in this conversation only.
       for (const id of message.seen ?? []) if (await markOwnSeen(db, conv.id, id)) changed = true;
+    } else if (message.kind === 'delete' && message.delete) {
+      // Only their own messages: a delete can't reach ours. One that hasn't
+      // arrived yet is remembered, and dropped when it comes.
+      // A message older than MAX_AGE is refused anyway, so that's how long to remember.
+      const since = t - MAX_AGE;
+      const remembered = (conv.deleted ?? []).filter((d) => d.at >= since);
+      for (const id of message.delete) {
+        const target = await db.get('messages', id);
+        if (!target) {
+          if (!remembered.some((d) => d.id === id)) remembered.push({ id, at: t });
+        } else if (target.conv === conv.id && !target.out) {
+          if (target.status === 'received' && conv.unread > 0) conv.unread -= 1;
+          await deleteMessage(db, id);
+          changed = true;
+        }
+      }
+      conv.deleted = remembered.slice(-MAX_REMEMBERED_DELETES);
     } else if (message.kind === 'reaction' && message.reaction) {
       // To a message of this conversation only, by their clock: the latest wins.
       const target = await getMessage(db, message.reaction.to);
@@ -678,7 +727,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sendMedia, fetchMedia, discardUploads, sync, markRead, markSeen, react, block, unblock, remove, maintain };
+  return { startConversation, send, sendMedia, fetchMedia, discardUploads, deleteForEveryone, sync, markRead, markSeen, react, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

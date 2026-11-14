@@ -61,6 +61,12 @@ export interface ConversationRecord {
   rotateAt?: number;
   /** For a sender not answered yet: Unix ms when the link's current key was last fetched. */
   linkCheckedAt?: number;
+  /**
+   * Their messages they deleted for both sides before they arrived here
+   * (deliveries come in no set order), with when: dropped if they come, and
+   * forgotten once they could no longer be waiting (31 days).
+   */
+  deleted?: { id: string; at: number }[];
 }
 
 /** A message, as kept on the device. Only its text is sealed; times and status are local metadata. */

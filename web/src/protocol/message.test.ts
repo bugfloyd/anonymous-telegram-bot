@@ -172,6 +172,23 @@ describe('checkMessage', () => {
     }
   });
 
+  it('accepts a delete naming 1 to 100 messages, and nothing else', () => {
+    const del = { ...valid, kind: 'delete', text: undefined };
+    expect(checkMessage({ ...del, delete: [valid.id] }).delete).toEqual([valid.id]);
+    for (const bad of [
+      del,
+      { ...del, delete: [] },
+      { ...del, delete: Array.from({ length: 101 }, () => valid.id) },
+      { ...del, delete: ['short'] },
+      { ...del, delete: valid.id },
+      { ...del, delete: [valid.id], text: 'hi' },
+      { ...valid, delete: [valid.id] },
+      { ...valid, kind: 'reaction', text: undefined, reaction: { to: valid.id, e: '👍' }, delete: [valid.id] },
+    ]) {
+      expect(() => checkMessage(bad)).toThrow(MessageError);
+    }
+  });
+
   it('accepts kinds from newer versions and shows them as files', () => {
     const voice = checkMessage({ ...valid, media: { ...media, t: 'voice_note' } }).media!;
     expect(shownAs(voice)).toBe('file');

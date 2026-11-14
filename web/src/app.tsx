@@ -548,12 +548,14 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           language={language}
           canReply={!screen.blocked && !screen.ended}
           canReact={canReact(screen, menu.value)}
+          peer={screen.label}
+          canDeleteForBoth={canReact(screen, menu.value) && menu.value.out}
           onClose={() => (menu.value = null)}
           onReact={(m, e) => void app.react(m.id, e)}
           onReply={(m) => (replying.value = m)}
-          onDelete={(m) => {
+          onDelete={(m, both) => {
             if (replying.value?.id === m.id) replying.value = null;
-            void app.deleteMessage(m.id);
+            void (both ? app.deleteForEveryone(m.id) : app.deleteMessage(m.id));
           }}
         />
       )}
@@ -2608,6 +2610,8 @@ function MessageMenu({
   language,
   canReply,
   canReact,
+  peer,
+  canDeleteForBoth,
   onClose,
   onReact,
   onReply,
@@ -2617,14 +2621,20 @@ function MessageMenu({
   language: Language;
   canReply: boolean;
   canReact: boolean;
+  /** The other side's label, for "Also delete for …". */
+  peer: string;
+  /** One of ours, sent, in an open conversation: it can be deleted on their side too. */
+  canDeleteForBoth: boolean;
   onClose: () => void;
   onReact: (m: MessageView, emoji: string) => void;
   onReply: (m: MessageView) => void;
-  onDelete: (m: MessageView) => void;
+  onDelete: (m: MessageView, forBoth: boolean) => void;
 }) {
   const tr = (key: Key) => t(language, key);
   const confirming = useSignal(false);
   const picking = useSignal(false);
+  // As in Telegram, deleting one of ours deletes it for them too unless unticked.
+  const forBoth = useSignal(true);
   const mine = message.reactions?.mine?.e ?? '';
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => first.current?.focus(), [confirming.value]);
@@ -2637,10 +2647,17 @@ function MessageMenu({
       <div class="dialog menu" role="dialog" aria-modal="true" aria-label={tr('messageActions')} onClick={(e) => e.stopPropagation()}>
         {confirming.value ? (
           <>
-            <p>{tr('deleteMessageConfirm')}</p>
+            <p>{tr(canDeleteForBoth ? 'deleteOwnMessageConfirm' : 'deleteMessageConfirm')}</p>
+            {canDeleteForBoth && (
+              <label class="check">
+                <input type="checkbox" checked={forBoth.value} onChange={(e) => (forBoth.value = e.currentTarget.checked)} />
+                {/* The label isolated, so it reads right inside Persian text too. */}
+                <span>{t(language, 'alsoDeleteFor', { name: `\u2068${peer}\u2069` })}</span>
+              </label>
+            )}
             <div class="row">
-              <button type="button" class="button danger" ref={first} onClick={act(() => onDelete(message))}>
-                {tr('deleteForMe')}
+              <button type="button" class="button danger" ref={first} onClick={act(() => onDelete(message, canDeleteForBoth && forBoth.value))}>
+                {tr(canDeleteForBoth ? 'delete' : 'deleteForMe')}
               </button>
               <Button kind="secondary" onClick={onClose}>
                 {tr('cancel')}
@@ -2683,7 +2700,7 @@ function MessageMenu({
               </button>
             )}
             <button type="button" class="menu-item danger" {...(!canReply && !message.text ? { ref: first } : {})} onClick={() => (confirming.value = true)}>
-              {tr('deleteForMe')}
+              {tr(canDeleteForBoth ? 'delete' : 'deleteForMe')}
             </button>
           </>
         )}

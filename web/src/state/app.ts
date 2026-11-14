@@ -1238,6 +1238,25 @@ export function createApp(deps: Deps) {
       const now = currentScreen();
       if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, messages: await listMessages(deps.db, current.id) };
     },
+    /**
+     * Deletes one of our messages on both sides (their app deletes it too,
+     * and its upload goes from the server). If it can't be sent, nothing is
+     * deleted and the conversation says why.
+     */
+    deleteForEveryone: async (id: string) => {
+      const current = screen.value;
+      if (current.kind !== 'conversation' || !messaging) return;
+      let error: SendError | null = null;
+      try {
+        await messaging.deleteForEveryone(current.id, id);
+      } catch (err) {
+        if (handleGone(err)) return;
+        error = sendError(err);
+      }
+      deps.broadcast({ type: 'data-changed' });
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
+    },
     blocked: () => showBlocked(),
     unblock,
     /**
