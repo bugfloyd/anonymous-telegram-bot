@@ -230,7 +230,7 @@ The panel under the message box has emoji and stickers, as in Telegram.
 | Function | Entry | Can read |
 |---|---|---|
 | `bot` | Telegram webhook (function URL, checked with a random webhook secret) | the bot token |
-| `api` | all HTTPS routes (function URL) | the session key, the Telegram-ID pepper, the send-token issuer key; the tables; the bucket |
+| `api` | all HTTPS routes (function URL, optionally behind CloudFront and a firewall; see [deployment.md](deployment.md#cloudfront-in-front-of-the-api)) | the session key, the Telegram-ID pepper, the send-token issuer key; the tables; the bucket |
 | `ws` | WebSocket connect and disconnect | the session key; socket records only |
 | `notify` | invoked by `api` | the bot token and the key that opens chat IDs |
 

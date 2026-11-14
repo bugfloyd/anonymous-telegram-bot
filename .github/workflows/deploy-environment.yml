@@ -150,6 +150,8 @@ jobs:
           TF_VAR_deletion_protection: ${{ vars.DELETION_PROTECTION || 'true' }}
           TF_VAR_invite_only: ${{ vars.INVITE_ONLY || 'true' }}
           TF_VAR_reserve_concurrency: ${{ vars.RESERVE_CONCURRENCY || 'false' }}
+          TF_VAR_api_access: ${{ vars.API_ACCESS || 'direct' }}
+          TF_VAR_firewall: ${{ vars.FIREWALL || 'false' }}
           # A secret only so that it is masked in these public logs.
           TF_VAR_admin_telegram_ids: ${{ secrets.ADMIN_TELEGRAM_IDS }}
           # Code signing, from infra/init.
@@ -182,13 +184,14 @@ jobs:
       - name: Read endpoints
         working-directory: infra
         run: |
-          for name in api_url ws_url webhook_url media_origin; do
+          for name in api_url api_function_url ws_url webhook_url media_origin; do
             value=$(terraform output -raw "$name")
             echo "::add-mask::${value}"
             host=${value#*://}
             echo "::add-mask::${host%%[/.]*}"
             echo "$(echo "$name" | tr '[:lower:]' '[:upper:]')=${value}" >> "$GITHUB_ENV"
           done
+          echo "API_LOCKED=$(terraform output -raw api_locked)" >> "$GITHUB_ENV"
 
       - name: Smoke test – API answers with JSON errors
         run: |
@@ -200,6 +203,18 @@ jobs:
           fi
           echo "API reachable (HTTP 404 with a JSON error)"
 
+      # Behind CloudFront alone, the function URL must refuse a direct call
+      # (Lambda answers 403 itself, without running the function).
+      - name: Smoke test – the function URL answers CloudFront alone
+        if: env.API_LOCKED == 'true'
+        run: |
+          status=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' "${API_FUNCTION_URL%/}/no-such-route")
+          if [ "$status" != "403" ]; then
+            echo "::error::Expected the function URL to refuse a direct call with 403, got HTTP ${status}"
+            exit 1
+          fi
+          echo "The function URL refuses direct calls (HTTP 403)"
+
       # A login for a device that doesn't exist: the function must have loaded
       # its parameters and be able to read the directory table to refuse it.
       - name: Smoke test – API refuses an unknown device
@@ -207,7 +222,9 @@ jobs:
           rand_id() { head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d "="; }
           payload=$(printf '{"account":"%s","device":"%s","timestamp":%d,"nonce":"%s","signature":"%s"}' \
             "$(rand_id)" "$(rand_id)" "$(date +%s)" "$(rand_id)" "$(head -c 64 /dev/zero | basenc -w0 --base64url | tr -d "=")")
+          # The body's hash: Lambda needs it once CloudFront signs requests.
           body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
+            -H "x-amz-content-sha256: $(printf '%s' "$payload" | sha256sum | cut -d' ' -f1)" \
             -d "$payload" "${API_URL%/}/session")
           status=${body##*$'\n'}
           if [ "$status" != "401" ] || [[ "$body" != *'"error":"login_refused"'* ]]; then
@@ -222,8 +239,10 @@ jobs:
         run: |
           envelope=$(head -n 1 backend/internal/envelope/testdata/client-envelopes.hex | tr -d '\n' | tr a-f A-F | basenc --base16 -d | basenc -w0 --base64url | tr -d '=')
           mailbox=$(head -c 16 /dev/urandom | basenc -w0 --base64url | tr -d '=')
+          payload="{\"mailbox\":\"${mailbox}\",\"envelope\":\"${envelope}\"}"
           body=$(curl -sS --max-time 30 -w '\n%{http_code}' -H 'Content-Type: application/json' \
-            -d "{\"mailbox\":\"${mailbox}\",\"envelope\":\"${envelope}\"}" "${API_URL%/}/send")
+            -H "x-amz-content-sha256: $(printf '%s' "$payload" | sha256sum | cut -d' ' -f1)" \
+            -d "$payload" "${API_URL%/}/send")
           status=${body##*$'\n'}
           if [ "$status" != "401" ] || [[ "$body" != *'"error":"invalid_token"'* ]]; then
             echo "::error::Expected 401 invalid_token from POST /send without a token, got HTTP ${status}"

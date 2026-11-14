@@ -128,6 +128,8 @@ gh variable set CLIENT_ORIGINS --env <env> --body '["https://<org>.github.io"]'
 | `CLIENT_ORIGINS` | variable | Origins allowed to call the API from a browser: the app's `https://<org>.github.io`. |
 | `INVITE_ONLY` | variable | `true` by default: only accounts that joined through an invitation, and admins, can own links. |
 | `RESERVE_CONCURRENCY` | variable | `true` gives each function its own share of the account's concurrent executions (`api` 100, `notify` 20, `ws` 10, `bot` 5), so a flood on one can't starve the others. Off by default: it needs a Lambda concurrency quota of at least 235 in the account (new accounts start at 10; ask for more in Service Quotas). |
+| `API_ACCESS` | variable | How the app reaches the API (below): `direct` (default), `cloudfront` or `cloudfront-only`. |
+| `FIREWALL` | variable | `true` puts a firewall (AWS WAF) in front of CloudFront, limiting requests per IP address (3,000 in 5 minutes). Off by default: it costs a few dollars a month. |
 | `DELETION_PROTECTION` | variable | Protects the tables from deletion. Keep it on in production. |
 | `SECRETS_VERSION` | variable | Raise it to replace the generated secrets (session key, Telegram-ID pepper, webhook secret). Replacing the pepper starts every account over. |
 | `PAGES_REPO`, `PAGES_URL` | variables | The hosting repository and the site's address, for starting its deploy and waiting for it. |
@@ -180,3 +182,30 @@ it needs: only `bot` and `notify` can read the bot token.
 
 The tables are on-demand with per-table caps on read and write units, the
 WebSocket API is throttled, and nothing runs when idle. Logs are kept 7 days.
+A budget and alarms watch the account, and each function can be given its
+own share of concurrency (`RESERVE_CONCURRENCY`), both above.
+
+## CloudFront in front of the API
+
+A CloudFront distribution stands in front of the `api` function URL
+(`infra/edge.tf`), so floods can be limited per IP address before they reach
+Lambda. It caches nothing and logs nothing. `API_ACCESS` moves the app
+behind it one step at a time:
+
+1. `direct` (default): the app calls the function URL. The distribution
+   exists but isn't used; its address is the `api_cloudfront_url` output, to
+   try it first.
+2. `cloudfront`: the `api_url` output becomes CloudFront's address. Set the
+   site's `API_URL` variable to it before deploying, since the deploy checks
+   that the site was built for `api_url`. The function URL still answers, so
+   an app that is still open keeps working.
+3. `cloudfront-only`: the function URL requires AWS's signature, which only
+   CloudFront adds, and refuses everyone else without running the function.
+   The deploy checks that it does.
+
+`FIREWALL=true` adds AWS WAF in front of CloudFront with one rule: at most
+3,000 requests in 5 minutes from one IP address (`firewall_rate_limit`).
+Many people can share an address (a mobile carrier, a VPN), so the limit is
+far above what one person's app sends. It keeps no sampled requests, which
+would hold addresses. It only protects the API once `API_ACCESS` is
+`cloudfront-only`: before that, the function URL can be called around it.

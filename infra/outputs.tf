@@ -1,9 +1,26 @@
 # All outputs are sensitive so Terraform never prints them: workflow logs are
 # public. CI reads them with `terraform output -raw` and masks them.
 output "api_url" {
-  description = "HTTPS API base URL (built into the client)"
+  description = "HTTPS API base URL (built into the client): CloudFront's, or the function URL while api_access is direct"
+  value       = local.api_behind_cloudfront ? "https://${aws_cloudfront_distribution.api.domain_name}/" : aws_lambda_function_url.api.function_url
+  sensitive   = true
+}
+
+output "api_function_url" {
+  description = "The api function's own URL, behind CloudFront"
   value       = aws_lambda_function_url.api.function_url
   sensitive   = true
+}
+
+output "api_cloudfront_url" {
+  description = "CloudFront's URL for the API, whatever api_access is (to try it before switching)"
+  value       = "https://${aws_cloudfront_distribution.api.domain_name}/"
+  sensitive   = true
+}
+
+output "api_locked" {
+  description = "Whether the function URL answers CloudFront alone"
+  value       = local.api_locked
 }
 
 output "ws_url" {
