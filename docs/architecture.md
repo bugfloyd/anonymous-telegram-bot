@@ -185,12 +185,18 @@ the server never sees a key, name or type.
   deleted, and in any case after 31 days. The bucket keeps no versions and no
   access logs.
 
-## Stickers
+## Emoji and stickers
 
-Three packs of stickers are part of the app's build (Microsoft's Fluent Emoji,
-MIT licensed). Sending one sends only its name, and nothing is uploaded. The app
-fetches all the images at once when a conversation opens, never per sticker, so
-the host learns nothing about which are used.
+The panel under the message box has emoji and stickers, as in Telegram.
+
+- **Emoji** are the phone's own, typed into the message: the app ships only the
+  list, by category, from Unicode's data (up to Emoji 14.0, so older phones
+  show them all; `web/src/emoji/make-data.mjs`). Recently used ones are kept
+  in memory only.
+- **Stickers:** three packs are part of the app's build (Microsoft's Fluent
+  Emoji, MIT licensed). Sending one sends only its name, and nothing is
+  uploaded. The app fetches all the images at once when a conversation
+  opens, never per sticker, so the host learns nothing about which are used.
 
 ## The app on the device
 
