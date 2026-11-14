@@ -15,8 +15,8 @@ whom.
   service is invite-only, owning a link needs an invitation; anyone with
   Telegram can write to one.
 - **Conversations like Telegram's:** text, replies, photos, videos, GIFs,
-  files, music, voice messages, round video messages, emoji and stickers, with
-  "sent" and "seen" ticks.
+  files, music, voice messages, round video messages, emoji and stickers,
+  reactions, and "sent" and "seen" ticks.
 - **Anonymous both ways:** a sender is a label like `🦊 K3F9`, the same each
   time they write through your link, and unlinkable to anything else they do.
 - **Silent blocks:** the blocked person isn't told; their messages just stop

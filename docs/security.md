@@ -105,8 +105,9 @@ it. This is how close it gets.
 - **Telegram** sees who opens which link, and when notices are sent.
 - **Recipients are known to the server.** It must know a mailbox's owner to
   deliver to it. Only senders and pairings are hidden.
-- **Which messages are "seen" receipts.** Receipts are marked so they don't
-  trigger a notice. The server sees the mark, not who sent it.
+- **Which messages are quiet.** "Seen" receipts, reactions and key updates
+  are marked so they don't trigger a notice. The server sees the mark, not
+  which of these it is or who sent it.
 - **Attachment sizes, roughly.** Files are padded before upload (to the next
   power of two up to 1 MiB, then the next whole MiB), and paid with one send
   token per started 5 MiB. So the server sees a size class, not the type, name

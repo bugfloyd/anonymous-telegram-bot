@@ -476,6 +476,8 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             time={time}
             highlighted={highlight.value === m.id}
             canReply={!screen.blocked && !screen.ended}
+            canReact={canReact(screen, m)}
+            onReact={(e) => void app.react(m.id, e)}
             onReply={() => (replying.value = m)}
             onMenu={() => (menu.value = m)}
             onQuote={() => m.replyTo && jumpTo(m.replyTo)}
@@ -525,7 +527,9 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           message={menu.value}
           language={language}
           canReply={!screen.blocked && !screen.ended}
+          canReact={canReact(screen, menu.value)}
           onClose={() => (menu.value = null)}
+          onReact={(m, e) => void app.react(m.id, e)}
           onReply={(m) => (replying.value = m)}
           onDelete={(m) => {
             if (replying.value?.id === m.id) replying.value = null;
@@ -2342,6 +2346,8 @@ function Bubble({
   time,
   highlighted,
   canReply,
+  canReact,
+  onReact,
   onReply,
   onMenu,
   onQuote,
@@ -2355,6 +2361,8 @@ function Bubble({
   time: Intl.DateTimeFormat;
   highlighted: boolean;
   canReply: boolean;
+  canReact: boolean;
+  onReact: (emoji: string) => void;
   onReply: () => void;
   onMenu: () => void;
   onQuote: () => void;
@@ -2432,6 +2440,7 @@ function Bubble({
           {m.text}
         </span>
       )}
+      <Reactions message={m} language={language} canReact={canReact} onReact={onReact} />
       <span class="meta">
         <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
         {m.out && <Ticks status={m.status} language={language} />}
@@ -2440,24 +2449,70 @@ function Bubble({
   );
 }
 
-/** The long-press menu of a message: Reply, Copy, Delete for me. */
+/** The reactions offered first in a message's menu, as in Telegram; the rest are in the emoji picker. */
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🔥'];
+
+/** Whether one can react to a message: in an open conversation, and not to one of ours still on its way. */
+function canReact(screen: Extract<Screen, { kind: 'conversation' }>, m: MessageView): boolean {
+  return !screen.blocked && !screen.ended && !(m.out && (m.status === 'sending' || m.status === 'failed'));
+}
+
+/** A message's reactions under it: one chip per emoji, ours highlighted; a tap adds ours, or takes it back. */
+function Reactions({ message: m, language, canReact, onReact }: { message: MessageView; language: Language; canReact: boolean; onReact: (emoji: string) => void }) {
+  const mine = m.reactions?.mine?.e ?? '';
+  const theirs = m.reactions?.theirs?.e ?? '';
+  const chips = [...new Set([mine, theirs].filter((e) => e !== ''))];
+  if (chips.length === 0) return null;
+  return (
+    <span class="reactions">
+      {chips.map((e) => {
+        const count = Number(e === mine) + Number(e === theirs);
+        return (
+          <button
+            key={e}
+            type="button"
+            class={e === mine ? 'reaction-chip mine' : 'reaction-chip'}
+            aria-pressed={e === mine}
+            aria-label={e === mine ? `${e} ${t(language, 'yourReaction')}` : e}
+            disabled={!canReact}
+            onPointerDown={(ev) => ev.stopPropagation()}
+            onClick={() => onReact(e)}
+          >
+            <span class="reaction-emoji">{e}</span>
+            {count > 1 && <span>{formatCount(language, count)}</span>}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+const formatCount = (language: Language, n: number) => new Intl.NumberFormat(locale(language)).format(n);
+
+/** The long-press menu of a message: reactions, then Reply, Copy, Delete for me. */
 function MessageMenu({
   message,
   language,
   canReply,
+  canReact,
   onClose,
+  onReact,
   onReply,
   onDelete,
 }: {
   message: MessageView;
   language: Language;
   canReply: boolean;
+  canReact: boolean;
   onClose: () => void;
+  onReact: (m: MessageView, emoji: string) => void;
   onReply: (m: MessageView) => void;
   onDelete: (m: MessageView) => void;
 }) {
   const tr = (key: Key) => t(language, key);
   const confirming = useSignal(false);
+  const picking = useSignal(false);
+  const mine = message.reactions?.mine?.e ?? '';
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => first.current?.focus(), [confirming.value]);
   const act = (f: () => void) => () => {
@@ -2479,8 +2534,26 @@ function MessageMenu({
               </Button>
             </div>
           </>
+        ) : picking.value ? (
+          <div class="reaction-picker">
+            <EmojiSection language={language} onEmoji={(e) => act(() => onReact(message, e))()} />
+          </div>
         ) : (
           <>
+            {canReact && (
+              <div class="reaction-row" role="group" aria-label={tr('reactions')}>
+                {QUICK_REACTIONS.map((e) => (
+                  <button key={e} type="button" class="reaction-option" aria-pressed={mine === e} onClick={act(() => onReact(message, e))}>
+                    {e}
+                  </button>
+                ))}
+                <button type="button" class="reaction-option more" aria-label={tr('moreReactions')} onClick={() => (picking.value = true)}>
+                  <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+              </div>
+            )}
             {canReply && (
               <button type="button" class="menu-item" ref={first} onClick={act(() => onReply(message))}>
                 {tr('reply')}

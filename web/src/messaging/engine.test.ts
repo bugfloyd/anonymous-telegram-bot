@@ -614,6 +614,60 @@ describe('healing dead mailboxes', () => {
   });
 });
 
+describe('reactions', () => {
+  it('sends a reaction quietly; the other side sees it, and the latest wins', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    const [hello] = await listMessages(owner.db, conv);
+    const reactionOf = async (who: typeof owner, side: 'mine' | 'theirs') => (await listMessages(who.db, conv))[0]!.reactions?.[side]?.e;
+
+    // The owner reacts to the sender's message: shown at once, sent with no notice.
+    const quiet = backend.quietSends.length;
+    await owner.messaging.react(conv, hello!.id, '❤️');
+    expect(backend.quietSends.slice(quiet)).toEqual([true]);
+    expect(await reactionOf(owner, 'mine')).toBe('❤️');
+    expect(await sender.messaging.sync()).toBe(1);
+    expect(await reactionOf(sender, 'theirs')).toBe('❤️');
+    // The message itself is untouched.
+    expect((await listMessages(sender.db, conv))[0]).toMatchObject({ text: 'hello', out: true });
+
+    // Changed, then taken back.
+    await owner.messaging.react(conv, hello!.id, '👍');
+    const thumbs = backend.seenEnvelopes.at(-1)!;
+    await owner.messaging.react(conv, hello!.id, '');
+    expect(await sender.messaging.sync()).toBe(2);
+    expect(await reactionOf(sender, 'theirs')).toBe('');
+    // The older one delivered again doesn't bring it back.
+    backend.inboxes.get('sender')!.push({ id: rand(), mailbox: [...backend.mailboxes].find(([, o]) => o === 'sender')![0], envelope: thumbs });
+    expect(await sender.messaging.sync()).toBe(0);
+    expect(await reactionOf(sender, 'theirs')).toBe('');
+
+    // The sender reacts to their own message; the owner sees it as theirs.
+    await sender.messaging.react(conv, hello!.id, '🔥');
+    expect(await owner.messaging.sync()).toBe(1);
+    expect(await reactionOf(owner, 'theirs')).toBe('🔥');
+    expect(await reactionOf(owner, 'mine')).toBe('');
+  });
+
+  it('refuses a reaction that isn\'t one emoji, or to a message that isn\'t there', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    const [hello] = await listMessages(sender.db, conv);
+    await expect(sender.messaging.react(conv, hello!.id, 'ok')).rejects.toThrow();
+    await expect(sender.messaging.react(conv, hello!.id, '👍👍')).rejects.toThrow();
+    await expect(sender.messaging.react(conv, 'AAAAAAAAAAAAAAAAAAAAAA', '👍')).rejects.toThrow();
+    await expect(sender.messaging.react('another', hello!.id, '👍')).rejects.toThrow();
+    expect((await listMessages(sender.db, conv))[0]!.reactions).toBeUndefined();
+  });
+});
+
 describe('attachments', () => {
   it('sends a file encrypted, and the recipient fetches, keeps and deletes it', async () => {
     const backend = await fakeBackend();

@@ -160,7 +160,7 @@ JSON fields:
 | Field | Meaning |
 |---|---|
 | `v` | 1 |
-| `kind` | `message`, `seen`, `key_update` or `end` |
+| `kind` | `message`, `seen`, `reaction`, `key_update` or `end` |
 | `conv` | conversation ID (16 bytes) |
 | `id` | message ID (16 bytes) |
 | `at` | sent time, Unix milliseconds, sender's clock |
@@ -174,10 +174,19 @@ JSON fields:
 | `seen` | IDs read (`seen` only, 1–100) |
 | `media` | an attachment (`message` only, with or without text): `{t, id, k, d, s, n?, m?, w?, h?, l?, v?, p?}`, see Media |
 | `sticker` | a sticker (`message` only, with no text or attachment): `{id, e?}`, see Stickers |
+| `reaction` | a reaction (`reaction` only): `{to, e}`, where `to` is the ID of a message in the conversation, from either side, and `e` one emoji (one grapheme with an emoji code point, at most 32 UTF-16 units) or empty to take the reaction back |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text, an attachment or a sticker; `seen` needs `seen` and no text;
-`key_update` and `end` carry neither.
+`reaction` needs `reaction` and nothing else; `key_update` and `end` carry
+none of these.
+
+**Reactions.** Each side has at most one reaction per message, as on Telegram
+without Premium; a new one replaces it. The recipient keeps the one with the
+latest `at` from that side, so a replayed or late older one changes nothing.
+A reaction to a message the recipient doesn't have (deleted, or in another
+conversation) is dropped. Versions without reactions drop them as an unknown
+kind.
 
 **Who writes with which key.** A first message through a link comes from a
 fresh conversation key of the sender and is written for the link's current
@@ -222,7 +231,8 @@ each mailbox's owner, to deliver, but not who writes to it.
   token. The server checks the envelope's layout and the caps, then stores the
   envelope once for each of the owner's devices. Unknown and discarded
   mailboxes get the same `200 {}`, after a similar pause, and nothing is
-  stored. `quiet` sends (seen receipts) trigger no notice.
+  stored. `quiet` sends (seen receipts, reactions and key updates) trigger no
+  notice.
 - `GET /inbox` returns a device's undelivered envelopes in no meaningful order;
   `POST /ack {ids}` deletes the ones it has stored. Undelivered envelopes expire
   after 30 days.

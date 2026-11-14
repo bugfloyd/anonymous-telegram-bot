@@ -13,6 +13,12 @@ const IV = 12;
 /** An attachment as kept with its message: no upload fields until it's uploaded (ours) or always (theirs). */
 export type LocalMedia = Omit<Media, 'id' | 'k' | 'd'> & Partial<Pick<Media, 'id' | 'k' | 'd'>>;
 
+/** One side's reaction to a message, and when it was set; an empty emoji is one taken back. */
+export interface ReactionMark {
+  e: string;
+  at: number;
+}
+
 export interface MessageBody {
   text: string;
   replyTo?: string;
@@ -20,6 +26,8 @@ export interface MessageBody {
   media?: LocalMedia;
   /** A sticker (then the text is empty). */
   sticker?: Sticker;
+  /** Reactions, one per side: ours and theirs. */
+  reactions?: { mine?: ReactionMark; theirs?: ReactionMark };
 }
 
 /** A message with its text, for showing. */
@@ -147,6 +155,33 @@ export async function clearMedia(db: Database, which: { conv?: string; before?: 
     });
   }
   return freed;
+}
+
+/**
+ * Sets one side's reaction to a message (an empty emoji takes it back). One
+ * set at an earlier time than the one there (a replay, or an old one
+ * arriving late) changes nothing. Returns whether what's shown changed.
+ */
+export async function setReaction(db: Database, id: string, side: 'mine' | 'theirs', e: string, at: number): Promise<boolean> {
+  return withLock(`message:${id}`, async () => {
+    const message = await getMessage(db, id);
+    if (!message) return false;
+    const current = message.reactions?.[side];
+    if (current && current.at >= at) return false;
+    const body: MessageBody = {
+      text: message.text,
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+      ...(message.media ? { media: message.media } : {}),
+      ...(message.sticker ? { sticker: message.sticker } : {}),
+      reactions: { ...message.reactions, [side]: { e, at } },
+    };
+    const sealed = await sealBody(db, id, body);
+    const tx = db.transaction('messages', 'readwrite');
+    const record = await tx.store.get(id);
+    if (record) await tx.store.put({ ...record, sealed });
+    await tx.done;
+    return !!record && (current?.e ?? '') !== e;
+  });
 }
 
 /** Marks one of our messages in a conversation as seen, if it was sent; returns whether it did. */

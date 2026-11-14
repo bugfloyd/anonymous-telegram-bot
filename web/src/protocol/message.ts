@@ -21,8 +21,10 @@ const TAG_LENGTH = 32;
 export const MAX_TEXT_BYTES = 12_000;
 const MAX_SEEN = 100;
 
-export type Kind = 'message' | 'seen' | 'key_update' | 'end';
-const KINDS: readonly Kind[] = ['message', 'seen', 'key_update', 'end'];
+export type Kind = 'message' | 'seen' | 'reaction' | 'key_update' | 'end';
+const KINDS: readonly Kind[] = ['message', 'seen', 'reaction', 'key_update', 'end'];
+/** The longest reaction, in UTF-16 units: one emoji, joined sequences included. */
+const MAX_REACTION = 32;
 
 /**
  * What an attachment is shown as: music is `audio`, a round video message
@@ -77,6 +79,20 @@ export interface Sticker {
   e?: string;
 }
 
+/** A reaction to a message: one emoji, or empty to take one's reaction back. */
+export interface Reaction {
+  /** The message reacted to (16 bytes), from either side of the conversation. */
+  to: string;
+  e: string;
+}
+
+/** Whether a string is one emoji, as a reaction must be. */
+export function isReactionEmoji(e: string): boolean {
+  if (e.length === 0 || e.length > MAX_REACTION) return false;
+  if ([...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(e)].length !== 1) return false;
+  return /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u.test(e);
+}
+
 export interface Message {
   v: typeof PROTOCOL_VERSION;
   kind: Kind;
@@ -105,6 +121,8 @@ export interface Message {
   media?: Media;
   /** A sticker (kind "message"), on its own: no text or attachment with it. */
   sticker?: Sticker;
+  /** For kind "reaction": which message, and the emoji. */
+  reaction?: Reaction;
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -209,6 +227,8 @@ export function checkMessage(value: unknown): Message {
   }
   if (m.media !== undefined) checkMedia(m.media);
   if (m.sticker !== undefined) checkSticker(m.sticker);
+  if (m.reaction !== undefined) checkReaction(m.reaction);
+  if (m.kind !== 'reaction' && m.reaction !== undefined) throw new MessageError(`bad ${m.kind}`);
   switch (m.kind) {
     case 'message':
       // Text, an attachment, or both (a caption); or a sticker on its own.
@@ -219,12 +239,22 @@ export function checkMessage(value: unknown): Message {
     case 'seen':
       if (m.seen === undefined || m.text !== undefined) throw new MessageError('bad seen');
       break;
+    case 'reaction':
+      if (m.reaction === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad reaction');
+      break;
     default:
       if (m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError(`bad ${m.kind}`);
   }
   if (m.kind !== 'message' && m.sticker !== undefined) throw new MessageError(`bad ${m.kind}`);
   if (m.kind === 'seen' && m.media !== undefined) throw new MessageError('bad seen');
   return m as unknown as Message;
+}
+
+function checkReaction(value: unknown): void {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new MessageError('bad reaction');
+  const r = value as Record<string, unknown>;
+  bytes(r.to, 16, 'reaction');
+  if (typeof r.e !== 'string' || (r.e !== '' && !isReactionEmoji(r.e))) throw new MessageError('bad reaction');
 }
 
 function checkMedia(value: unknown): void {

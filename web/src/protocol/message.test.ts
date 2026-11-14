@@ -151,6 +151,27 @@ describe('checkMessage', () => {
     }
   });
 
+  it('accepts a reaction: one emoji, or empty to take it back', () => {
+    const reaction = { ...valid, kind: 'reaction', text: undefined };
+    for (const e of ['👍', '❤️', '👨‍👩‍👧', '🇮🇷', '1️⃣', '']) {
+      expect(checkMessage({ ...reaction, reaction: { to: valid.id, e } }).reaction).toEqual({ to: valid.id, e });
+    }
+    for (const bad of [
+      reaction,
+      { ...reaction, reaction: { to: valid.id, e: 'ok' } },
+      { ...reaction, reaction: { to: valid.id, e: '👍👍' } },
+      { ...reaction, reaction: { to: valid.id, e: 'a' } },
+      { ...reaction, reaction: { to: 'short', e: '👍' } },
+      { ...reaction, reaction: { to: valid.id } },
+      { ...reaction, reaction: '👍' },
+      { ...reaction, text: 'hi', reaction: { to: valid.id, e: '👍' } },
+      { ...valid, reaction: { to: valid.id, e: '👍' } },
+      { ...valid, kind: 'seen', text: undefined, seen: [valid.id], reaction: { to: valid.id, e: '👍' } },
+    ]) {
+      expect(() => checkMessage(bad)).toThrow(MessageError);
+    }
+  });
+
   it('accepts kinds from newer versions and shows them as files', () => {
     const voice = checkMessage({ ...valid, media: { ...media, t: 'voice_note' } }).media!;
     expect(shownAs(voice)).toBe('file');
