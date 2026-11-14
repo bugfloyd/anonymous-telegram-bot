@@ -282,11 +282,13 @@ resource "aws_lambda_function_event_invoke_config" "notify" {
   maximum_event_age_in_seconds = 60
 }
 
-# Public HTTPS endpoints. The functions authenticate requests themselves:
-# session tokens for api, the webhook secret header for bot.
+# HTTPS endpoints. The functions authenticate requests themselves: session
+# tokens for api, the webhook secret header for bot. The api URL is public
+# until the API is moved behind CloudFront alone (edge.tf), when it requires
+# AWS's signature, which only CloudFront adds.
 resource "aws_lambda_function_url" "api" {
   function_name      = aws_lambda_function.fn["api"].function_name
-  authorization_type = "NONE"
+  authorization_type = local.api_locked ? "AWS_IAM" : "NONE"
 
   cors {
     allow_origins = var.client_origins
@@ -307,7 +309,7 @@ resource "aws_lambda_function_url" "bot" {
 # A public function URL needs both permissions: one for the URL, and one for
 # the invocation behind it (limited to calls through the URL).
 locals {
-  public_functions = toset(["api", "bot"])
+  public_functions = toset(local.api_locked ? ["bot"] : ["api", "bot"])
 }
 
 resource "aws_lambda_permission" "url" {

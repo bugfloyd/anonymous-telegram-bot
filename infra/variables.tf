@@ -123,6 +123,34 @@ variable "deletion_protection" {
   default     = true
 }
 
+variable "api_access" {
+  description = "How the app reaches the API (infra/edge.tf): direct (the function URL), cloudfront (through CloudFront; the function URL still answers), or cloudfront-only (the function URL answers CloudFront alone). Move one step at a time, and update the site's API_URL when the api_url output changes"
+  type        = string
+  default     = "direct"
+
+  validation {
+    condition     = contains(["direct", "cloudfront", "cloudfront-only"], var.api_access)
+    error_message = "api_access must be direct, cloudfront or cloudfront-only."
+  }
+}
+
+variable "firewall" {
+  description = "Put a firewall (AWS WAF) in front of CloudFront, limiting requests per IP address. Costs a few dollars a month"
+  type        = bool
+  default     = false
+}
+
+variable "firewall_rate_limit" {
+  description = "Requests one IP address may make in 5 minutes before the firewall blocks it. Many people can share an address (a carrier, a VPN)"
+  type        = number
+  default     = 3000
+
+  validation {
+    condition     = var.firewall_rate_limit >= 100
+    error_message = "firewall_rate_limit must be at least 100."
+  }
+}
+
 variable "reserve_concurrency" {
   description = "Reserve each function's share of the account's concurrent executions (infra/functions.tf), a guard against floods. Needs a Lambda concurrency quota of at least 235: AWS keeps 100 unreserved, and new accounts start at 10"
   type        = bool
