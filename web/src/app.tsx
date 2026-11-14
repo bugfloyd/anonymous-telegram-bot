@@ -2506,12 +2506,13 @@ function Bubble({
   const inlineTime = !!m.text && !m.reactions?.mine?.e && !m.reactions?.theirs?.e && endsInPageDirection(m.text);
   // A sticker or video message stands on its own, without a bubble, as in Telegram.
   const bare = !!m.sticker || (!!m.media && shownAs(m.media) === 'round' && !m.text);
+  // The whole row is the message, as in Telegram: a long press, a double-tap
+  // or a swipe in the empty space beside the bubble acts on it too.
   return (
     <li
       ref={item}
       id={`m-${m.id}`}
-      class={`bubble ${m.out ? 'out' : 'in'}${bare ? ' bare' : ''}${highlighted ? ' flash' : ''}${pulled.value ? ' pulling' : ''}`}
-      style={pulled.value ? { transform: `translateX(${-pulled.value * direction()}px)` } : undefined}
+      class="message-row"
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}
@@ -2521,37 +2522,42 @@ function Bubble({
         longPress();
       }}
     >
-      {pulled.value > 0 && (
-        <span class={pulled.value >= REPLY_SWIPE ? 'reply-hint ready' : 'reply-hint'} aria-hidden="true">
-          ↩
-        </span>
-      )}
-      {quoted !== undefined &&
-        (quoted ? (
-          <Quote name={quoteName} text={contentLine(language, quoted)} onClick={onQuote} />
+      <div
+        class={`bubble ${m.out ? 'out' : 'in'}${bare ? ' bare' : ''}${highlighted ? ' flash' : ''}${pulled.value ? ' pulling' : ''}`}
+        style={pulled.value ? { transform: `translateX(${-pulled.value * direction()}px)` } : undefined}
+      >
+        {pulled.value > 0 && (
+          <span class={pulled.value >= REPLY_SWIPE ? 'reply-hint ready' : 'reply-hint'} aria-hidden="true">
+            ↩
+          </span>
+        )}
+        {quoted !== undefined &&
+          (quoted ? (
+            <Quote name={quoteName} text={contentLine(language, quoted)} onClick={onQuote} />
+          ) : (
+            <Quote name={tr('deletedMessage')} text="" />
+          ))}
+        {m.media && <Attachment app={app} message={m} language={language} progress={app.transfers.value[m.id]} />}
+        {m.sticker && <StickerView sticker={m.sticker} language={language} />}
+        {m.text && (
+          <span class="text" dir="auto">
+            {m.text}
+            {inlineTime && (
+              <span class="meta-spacer" aria-hidden="true">
+                {meta}
+              </span>
+            )}
+          </span>
+        )}
+        {inlineTime ? (
+          <span class="meta floating">{meta}</span>
         ) : (
-          <Quote name={tr('deletedMessage')} text="" />
-        ))}
-      {m.media && <Attachment app={app} message={m} language={language} progress={app.transfers.value[m.id]} />}
-      {m.sticker && <StickerView sticker={m.sticker} language={language} />}
-      {m.text && (
-        <span class="text" dir="auto">
-          {m.text}
-          {inlineTime && (
-            <span class="meta-spacer" aria-hidden="true">
-              {meta}
-            </span>
-          )}
-        </span>
-      )}
-      {inlineTime ? (
-        <span class="meta floating">{meta}</span>
-      ) : (
-        <span class="footer">
-          <Reactions message={m} language={language} canReact={canReact} onReact={onReact} />
-          <span class="meta">{meta}</span>
-        </span>
-      )}
+          <span class="footer">
+            <Reactions message={m} language={language} canReact={canReact} onReact={onReact} />
+            <span class="meta">{meta}</span>
+          </span>
+        )}
+      </div>
     </li>
   );
 }
