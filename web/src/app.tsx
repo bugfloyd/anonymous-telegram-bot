@@ -478,6 +478,10 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
             canReply={!screen.blocked && !screen.ended}
             canReact={canReact(screen, m)}
             onReact={(e) => void app.react(m.id, e)}
+            onDoubleTap={() => {
+              app.haptic();
+              void app.react(m.id, DOUBLE_TAP_REACTION);
+            }}
             onReply={() => (replying.value = m)}
             onMenu={() => (menu.value = m)}
             onQuote={() => m.replyTo && jumpTo(m.replyTo)}
@@ -2331,6 +2335,11 @@ function Quote({ name, text, onClick }: { name: string; text: string; onClick?: 
 
 /** How far a message is pulled before letting go answers it, in px. */
 const REPLY_SWIPE = 56;
+/** Two taps closer together than this, in ms, are a double-tap: ❤️, as in Telegram. */
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_REACTION = '❤️';
+/** Parts of a message that handle taps themselves (players, photos, files, chips): a double-tap there isn't a reaction. */
+const OWN_TAPS = 'button, a, input, video, audio, .photo';
 
 /**
  * A message. Swiping it toward the start answers it; a long press (or a
@@ -2348,6 +2357,7 @@ function Bubble({
   canReply,
   canReact,
   onReact,
+  onDoubleTap,
   onReply,
   onMenu,
   onQuote,
@@ -2363,6 +2373,8 @@ function Bubble({
   canReply: boolean;
   canReact: boolean;
   onReact: (emoji: string) => void;
+  /** A double-tap on the message itself: react with ❤️, or take it back. */
+  onDoubleTap: () => void;
   onReply: () => void;
   onMenu: () => void;
   onQuote: () => void;
@@ -2370,6 +2382,7 @@ function Bubble({
   const tr = (key: Key) => t(language, key);
   const gesture = useRef<{ x: number; y: number; pointer: number; mode: 'pending' | 'swipe' | 'scroll'; timer: number; pressed: boolean } | null>(null);
   const pulled = useSignal(0);
+  const lastTap = useRef<{ at: number; x: number; y: number } | null>(null);
   const direction = () => (document.documentElement.dir === 'rtl' ? -1 : 1);
   const longPress = () => {
     const g = gesture.current;
@@ -2404,6 +2417,19 @@ function Bubble({
     gesture.current = null;
     if (g.mode === 'swipe' && pulled.value >= REPLY_SWIPE) onReply();
     pulled.value = 0;
+    // A tap that didn't move or turn into a long press; a second one soon after, close by, is a double-tap.
+    const tap = e.type === 'pointerup' && g.mode === 'pending' && !g.pressed && !(e.target as Element).closest(OWN_TAPS);
+    if (!tap || !canReact) {
+      lastTap.current = null;
+      return;
+    }
+    const prev = lastTap.current;
+    if (prev && e.timeStamp - prev.at < DOUBLE_TAP_MS && Math.abs(e.clientX - prev.x) < SLOP * 2 && Math.abs(e.clientY - prev.y) < SLOP * 2) {
+      lastTap.current = null;
+      onDoubleTap();
+    } else {
+      lastTap.current = { at: e.timeStamp, x: e.clientX, y: e.clientY };
+    }
   };
   const quoteName = quoted ? (quoted.out ? tr('you') : peer) : '';
   // A sticker or video message stands on its own, without a bubble, as in Telegram.
