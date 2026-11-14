@@ -1260,6 +1260,21 @@ export function createApp(deps: Deps) {
       const now = currentScreen();
       if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
     },
+    /** Edits one of our messages (its text, or a caption); if it can't be sent, it stays as it was and the conversation says why. */
+    editMessage: async (id: string, text: string) => {
+      const current = screen.value;
+      if (current.kind !== 'conversation' || !messaging) return;
+      let error: SendError | null = null;
+      try {
+        await messaging.edit(current.id, id, text);
+      } catch (err) {
+        if (handleGone(err)) return;
+        error = sendError(err);
+      }
+      deps.broadcast({ type: 'data-changed' });
+      const now = currentScreen();
+      if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
+    },
     blocked: () => showBlocked(),
     unblock,
     /**

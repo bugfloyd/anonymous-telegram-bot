@@ -160,7 +160,7 @@ JSON fields:
 | Field | Meaning |
 |---|---|
 | `v` | 1 |
-| `kind` | `message`, `seen`, `reaction`, `delete`, `key_update` or `end` |
+| `kind` | `message`, `seen`, `reaction`, `delete`, `edit`, `key_update` or `end` |
 | `conv` | conversation ID (16 bytes) |
 | `id` | message ID (16 bytes) |
 | `at` | sent time, Unix milliseconds, sender's clock |
@@ -177,11 +177,12 @@ JSON fields:
 | `reaction` | a reaction (`reaction` only): `{to, e}`, where `to` is the ID of a message in the conversation, from either side, and `e` one emoji (one grapheme with an emoji code point, at most 32 UTF-16 units) or empty to take the reaction back |
 | `delete` | IDs of the sender's own messages to delete on the recipient's device too (`delete` only, 1–100) |
 | `all` | `true`: the whole conversation instead, both sides' messages (`delete` only, instead of `delete`) |
+| `edit` | a new text for one of the sender's own messages (`edit` only): `{to, text}`, `text` at most 12,000 UTF-8 bytes, empty only for an attachment's caption |
 
 Unknown fields are ignored but covered by the tag. `message` needs non-blank
 text, an attachment or a sticker; `seen` needs `seen` and no text;
-`reaction` needs `reaction` and `delete` needs `delete` or `all` (one of
-them), and nothing else;
+`reaction` needs `reaction`, `edit` needs `edit`, and `delete` needs
+`delete` or `all` (one of them), and nothing else;
 `key_update` and `end` carry none of these.
 
 **Deleting for both sides.** A sender can delete their own messages on the
@@ -198,6 +199,15 @@ conversation, both sides' messages, as in Telegram; it leaves the list until
 either side writes again, and messages from that side sent before the
 `delete` (by its `at`) that arrive later are dropped. Like blocks, this
 relies on the recipient's app doing it.
+
+**Editing.** A sender can change the text of their own sent messages, or an
+attachment's caption, which may become empty; stickers, voice and video
+messages have none. The recipient applies an `edit` only to a message from
+that side in that conversation and keeps the latest by `at`, so a replayed
+or late older one changes nothing; the message shows as edited. An `edit`
+that arrives before its message is kept, sealed under the storage key like
+any text, for at most 31 days, and applied when the message comes. Like
+deleting for both sides, it relies on the recipient's app.
 
 **Reactions.** Each side has at most one reaction per message, as on Telegram
 without Premium; a new one replaces it. The recipient keeps the one with the
@@ -249,8 +259,8 @@ each mailbox's owner, to deliver, but not who writes to it.
   token. The server checks the envelope's layout and the caps, then stores the
   envelope once for each of the owner's devices. Unknown and discarded
   mailboxes get the same `200 {}`, after a similar pause, and nothing is
-  stored. `quiet` sends (seen receipts, reactions, deletes and key updates)
-  trigger no notice.
+  stored. `quiet` sends (seen receipts, reactions, edits, deletes and key
+  updates) trigger no notice.
 - `GET /inbox` returns a device's undelivered envelopes in no meaningful order;
   `POST /ack {ids}` deletes the ones it has stored. Undelivered envelopes expire
   after 30 days.

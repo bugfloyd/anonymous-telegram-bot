@@ -72,6 +72,8 @@ export interface ConversationRecord {
    * clock): anything of theirs sent before it that arrives later is dropped.
    */
   clearedBefore?: number;
+  /** Edits of their messages that came before the messages did, sealed under the storage key (messaging/store.ts). */
+  edits?: { id: string; at: number; sealed: Uint8Array<ArrayBuffer> }[];
 }
 
 /** A message, as kept on the device. Only its text is sealed; times and status are local metadata. */
