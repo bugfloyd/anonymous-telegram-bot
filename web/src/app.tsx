@@ -1,6 +1,6 @@
 import { signal, useSignal } from '@preact/signals';
-import { createPortal, type ComponentChildren } from 'preact';
-import { useEffect, useLayoutEffect, useRef } from 'preact/hooks';
+import { createContext, createPortal, type ComponentChildren } from 'preact';
+import { useContext, useEffect, useLayoutEffect, useRef } from 'preact/hooks';
 import { locale, relativeTime, t, type Language } from './i18n';
 import type { Key } from './i18n/en';
 import type { MessageView } from './messaging/store';
@@ -99,9 +99,23 @@ const ADMIN_NOTICE_TEXT: Record<AdminNotice, Key> = {
   generic: 'errorGeneric',
 };
 
+/** What open overlays tell the back button (AppState.onBack). */
+const BackStack = createContext<(close: () => void) => () => void>(() => () => {});
+
+/**
+ * While open, the back button (Telegram's, or the phone's) closes this
+ * first, as in Telegram, instead of leaving the screen.
+ */
+function useBackCloses(open: boolean, close: () => void): void {
+  const register = useContext(BackStack);
+  const latest = useRef(close);
+  latest.current = close;
+  useEffect(() => (open ? register(() => latest.current()) : undefined), [open]);
+}
+
 export function App({ app, language }: { app: AppState; language: Language }) {
   return (
-    <>
+    <BackStack.Provider value={app.onBack}>
       <Screen app={app} language={language} />
       <DeleteDialog app={app} language={language} />
       {toast.value && (
@@ -109,7 +123,7 @@ export function App({ app, language }: { app: AppState; language: Language }) {
           {toast.value}
         </p>
       )}
-    </>
+    </BackStack.Provider>
   );
 }
 
@@ -410,6 +424,7 @@ function useChatScroll(app: AppState, id: string, messages: { id: string; out: b
 function Conversation({ app, language, screen }: { app: AppState; language: Language; screen: Extract<Screen, { kind: 'conversation' }> }) {
   const tr = (key: Key, values?: Record<string, string | number>) => t(language, key, values);
   const confirmingBlock = useSignal(false);
+  useBackCloses(confirmingBlock.value, () => (confirmingBlock.value = false));
   const scroll = useChatScroll(app, screen.id, screen.messages);
   const sending = app.preparing.value.filter((p) => p.conv === screen.id).length;
   useEffect(() => {
@@ -418,6 +433,7 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
   // The message being answered, the one whose menu is open, and the one just jumped to.
   const replying = useSignal<MessageView | null>(null);
   const menu = useSignal<MessageView | null>(null);
+  useBackCloses(!!menu.value, () => (menu.value = null));
   const highlight = useSignal<string | null>(null);
   const byId = new Map(screen.messages.map((m) => [m.id, m]));
   useEffect(() => {
@@ -635,6 +651,10 @@ function DeleteDialog({ app, language }: { app: AppState; language: Language }) 
   const alsoBlock = useSignal(false);
   const first = useRef<HTMLButtonElement>(null);
   const id = deleting.value;
+  useBackCloses(!!id, () => {
+    deleting.value = null;
+    alsoBlock.value = false;
+  });
   useEffect(() => {
     if (id) first.current?.focus();
   }, [id]);
@@ -991,6 +1011,7 @@ function Composer({
 }) {
   const text = useSignal('');
   const stickers = useSignal(false);
+  useBackCloses(stickers.value, () => (stickers.value = false));
   // Where the cursor was in the message box, for typing from the emoji panel.
   const caret = useRef<Caret>({ start: 0, end: 0 });
   const keepCaret = (box: HTMLTextAreaElement) => (caret.current = { start: box.selectionStart, end: box.selectionEnd });
@@ -1001,6 +1022,7 @@ function Composer({
   };
   const rec = useRecorder(language, onVoice, onRound);
   const attachMenu = useSignal(false);
+  useBackCloses(attachMenu.value, () => (attachMenu.value = false));
   const picked = useSignal<Picked | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1720,6 +1742,7 @@ function AttachDialog({
   onCancel: () => void;
   onSend: (as: SendAs, caption: string) => void;
 }) {
+  useBackCloses(true, onCancel);
   const tr = (key: Key) => t(language, key);
   const kind = showableAs(picked.file);
   // Music shows as music from Files too, as in Telegram.
@@ -2263,6 +2286,7 @@ function formatLength(language: Language, seconds: number): string {
  */
 function Viewer({ language, onClose, onSave, children }: { language: Language; onClose: () => void; onSave: () => void; children: ComponentChildren }) {
   const close = useRef<HTMLButtonElement>(null);
+  useBackCloses(true, onClose);
   useEffect(() => close.current?.focus(), []);
   return createPortal(
     <div class="viewer" role="dialog" aria-modal="true" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()}>

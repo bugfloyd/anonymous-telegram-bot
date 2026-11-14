@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readAccount } from '../account/account';
 import { ApiError, NetworkError, type Api } from '../net/api';
 import { parseLaunch, type Launch } from '../platform/launch';
@@ -502,6 +502,47 @@ describe('data and storage', () => {
     expect(owner.broadcasts).toContainEqual({ type: 'data-changed' });
     await owner.app.home();
     expect(home(owner.app.screen.value).tab).toBe('links');
+  });
+});
+
+describe('the back button', () => {
+  it('closes what is open on top first, then goes back home', async () => {
+    const handlers = new Map<string, (data: unknown) => void>();
+    const posted: { type: string; data: unknown }[] = [];
+    const bridge: Bridge = {
+      transport: 'webview-proxy',
+      post: (type, ...data) => void posted.push({ type, data: data[0] }),
+      on: (type, handler) => {
+        handlers.set(type, handler as (data: unknown) => void);
+        return () => {};
+      },
+    };
+    const shown = () => posted.filter((p) => p.type === 'web_app_setup_back_button').at(-1)?.data;
+    const back = () => handlers.get('back_button_pressed')!({});
+    const owner = await registered(fakeServer().api, { bridge });
+    await owner.app.showTab('links');
+    expect(shown()).toEqual({ is_visible: false });
+
+    // A dialog on the home screen shows the button, and back closes it, not the app.
+    let closed = 0;
+    const done = owner.app.onBack(() => {
+      closed++;
+      done();
+    });
+    expect(shown()).toEqual({ is_visible: true });
+    back();
+    expect(closed).toBe(1);
+    expect(shown()).toEqual({ is_visible: false });
+
+    // On a screen of its own: the viewer on top goes first, then the screen.
+    await owner.app.storage();
+    const viewer = owner.app.onBack(() => viewer());
+    back();
+    expect(owner.app.screen.value.kind).toBe('storage');
+    expect(shown()).toEqual({ is_visible: true });
+    back();
+    await vi.waitFor(() => expect(home(owner.app.screen.value).tab).toBe('links'));
+    expect(shown()).toEqual({ is_visible: false });
   });
 });
 

@@ -217,7 +217,16 @@ export function createApp(deps: Deps) {
   // What this launch was opened with (a link or an invitation) is handled
   // once, not on every restart.
   let launchParam: string | null = isRegistrationLaunch(deps.launch.startParam) ? null : deps.launch.startParam || null;
-  deps.bridge?.on('back_button_pressed', () => void showHome());
+  // The back button (Telegram's, or the phone's): closes what's open on top
+  // first, a viewer, menu, dialog or panel, as in Telegram; then goes home.
+  let screenBack = false;
+  const onTop: (() => void)[] = [];
+  const showBack = () => deps.bridge?.post('web_app_setup_back_button', { is_visible: screenBack || onTop.length > 0 });
+  deps.bridge?.on('back_button_pressed', () => {
+    const close = onTop.at(-1);
+    if (close) close();
+    else void showHome();
+  });
   let messaging: Messaging | null = null;
   let mediaSettings: MediaSettings = DEFAULT_MEDIA_SETTINGS;
   let tab: 'chats' | 'links' = 'chats';
@@ -240,7 +249,11 @@ export function createApp(deps: Deps) {
     void setUpNotices();
   });
 
-  const backButton = (visible: boolean) => deps.bridge?.post('web_app_setup_back_button', { is_visible: visible });
+  /** Whether the screen itself has somewhere to go back to (anything open on top shows the button too). */
+  const backButton = (visible: boolean) => {
+    screenBack = visible;
+    showBack();
+  };
   // What "try again" does from the error screen.
   let retry: () => Promise<void> = () => start();
 
@@ -1227,6 +1240,19 @@ export function createApp(deps: Deps) {
     },
     blocked: () => showBlocked(),
     unblock,
+    /**
+     * While something is open on top of the screen (a viewer, menu, dialog or
+     * panel), the back button closes it. Returns what to call once it's closed.
+     */
+    onBack: (close: () => void) => {
+      onTop.push(close);
+      showBack();
+      return () => {
+        const i = onTop.lastIndexOf(close);
+        if (i >= 0) onTop.splice(i, 1);
+        showBack();
+      };
+    },
     /** Data and storage. */
     storage: () => showStorage(),
     setKeepMedia: (keep: KeepMedia) => changeMediaSettings((s) => ({ ...s, keep })),
