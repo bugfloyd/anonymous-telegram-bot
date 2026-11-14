@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.2.0](https://github.com/incognitochat/incognitochat/compare/v2.1.0...v2.2.0) (2026-11-14)
+
+
+### Features
+
+* **infra:** a monthly budget and alarms for each account ([#108](https://github.com/incognitochat/incognitochat/issues/108)) ([e05cdee](https://github.com/incognitochat/incognitochat/commit/e05cdee0b9b70df56f18e1332319689b3e3ca80e))
+* **infra:** CloudFront in front of the API, with an optional firewall ([#111](https://github.com/incognitochat/incognitochat/issues/111)) ([0c88215](https://github.com/incognitochat/incognitochat/commit/0c88215947c907ee4cfe26e06245a67b97e6ac2f))
+* **infra:** optional reserved concurrency per function ([#107](https://github.com/incognitochat/incognitochat/issues/107)) ([44c22f6](https://github.com/incognitochat/incognitochat/commit/44c22f6914632c4ec0272e63ec499046d07b2f08))
+* prepare the API for CloudFront in front of it ([#110](https://github.com/incognitochat/incognitochat/issues/110)) ([a1522b9](https://github.com/incognitochat/incognitochat/commit/a1522b90dbbfbba9493edeb4b6782d842d72c315))
+* **ws:** push to an account's five newest sockets only ([#109](https://github.com/incognitochat/incognitochat/issues/109)) ([7600cac](https://github.com/incognitochat/incognitochat/commit/7600cac2f608972c15f26df3c7cf9bb3e83b0992))
+
+
+### Bug Fixes
+
+* **api:** a replayed send token no longer uses up a mailbox's limit ([#106](https://github.com/incognitochat/incognitochat/issues/106)) ([b2af4ca](https://github.com/incognitochat/incognitochat/commit/b2af4ca7971614c3731584a75bcf1d3f3c935dd6))
+* **infra:** a firewall description AWS accepts ([#112](https://github.com/incognitochat/incognitochat/issues/112)) ([0a994ff](https://github.com/incognitochat/incognitochat/commit/0a994ff5d3ecab7541a6399790ab51c66719a63c))
+* **infra:** detach the firewall before deleting it ([#113](https://github.com/incognitochat/incognitochat/issues/113)) ([1dd1e3a](https://github.com/incognitochat/incognitochat/commit/1dd1e3aec25a9192ee7ea4adcf8bcf522a08759a))
+
+
+### Performance Improvements
+
+* **web:** delete uploads in the background, a few at a time ([#103](https://github.com/incognitochat/incognitochat/issues/103)) ([527919b](https://github.com/incognitochat/incognitochat/commit/527919b8910b95d351653ba170bec98809f946d2))
+
 ## [2.1.0](https://github.com/incognitochat/incognitochat/compare/v2.0.0...v2.1.0) (2026-11-14)
 
 
