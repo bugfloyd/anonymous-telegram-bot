@@ -123,6 +123,12 @@ variable "deletion_protection" {
   default     = true
 }
 
+variable "reserve_concurrency" {
+  description = "Reserve each function's share of the account's concurrent executions (infra/functions.tf), a guard against floods. Needs a Lambda concurrency quota of at least 235: AWS keeps 100 unreserved, and new accounts start at 10"
+  type        = bool
+  default     = false
+}
+
 variable "table_max_read_units" {
   description = "Per-table cap on on-demand read request units per second, a cost guard"
   type        = number

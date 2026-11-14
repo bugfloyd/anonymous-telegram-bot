@@ -14,9 +14,11 @@ locals {
       # but a batch of 20 send tokens (RSA signing, pure CPU) took ~4.5 s.
       # 256 MB doubles the CPU share; slow requests are logged with their
       # route and duration (internal/api) to size this from data.
-      memory     = 256
-      tables     = ["directory", "messages", "ephemeral"]
-      parameters = ["bot-id", "session-key", "telegram-id-pepper", "issuer-key"]
+      memory = 256
+      # About 30 ms a request: room for roughly 3,000 requests a second.
+      concurrency = 100
+      tables      = ["directory", "messages", "ephemeral"]
+      parameters  = ["bot-id", "session-key", "telegram-id-pepper", "issuer-key"]
       environment = {
         TABLE_DIRECTORY          = aws_dynamodb_table.table["directory"].name
         TABLE_MESSAGES           = aws_dynamodb_table.table["messages"].name
@@ -35,9 +37,10 @@ locals {
     # Telegram webhook: opens the app, cleans up service messages. The deploy
     # invokes it once with a setup event to register the webhook.
     bot = {
-      timeout    = 10
-      tables     = []
-      parameters = ["bot-token", "webhook-secret"]
+      timeout     = 10
+      concurrency = 5
+      tables      = []
+      parameters  = ["bot-token", "webhook-secret"]
       environment = {
         PARAM_BOT_TOKEN      = aws_ssm_parameter.parameter["bot-token"].name
         PARAM_WEBHOOK_SECRET = aws_ssm_parameter.parameter["webhook-secret"].name
@@ -46,10 +49,12 @@ locals {
       }
     }
     # WebSocket $connect / $disconnect.
+    # The WebSocket stage's throttle bounds how often it runs.
     ws = {
-      timeout    = 5
-      tables     = ["ephemeral"]
-      parameters = ["session-key"]
+      timeout     = 5
+      concurrency = 10
+      tables      = ["ephemeral"]
+      parameters  = ["session-key"]
       environment = {
         TABLE_EPHEMERAL   = aws_dynamodb_table.table["ephemeral"].name
         PARAM_SESSION_KEY = aws_ssm_parameter.parameter["session-key"].name
@@ -59,9 +64,10 @@ locals {
     # chat IDs, and without waiting after each delivery. Its quiet periods in
     # the ephemeral table get their own, narrower statement below.
     notify = {
-      timeout    = 10
-      tables     = ["directory"]
-      parameters = ["bot-token", "chat-key"]
+      timeout     = 10
+      concurrency = 20
+      tables      = ["directory"]
+      parameters  = ["bot-token", "chat-key"]
       environment = {
         TABLE_DIRECTORY = aws_dynamodb_table.table["directory"].name
         TABLE_EPHEMERAL = aws_dynamodb_table.table["ephemeral"].name
@@ -235,6 +241,12 @@ resource "aws_lambda_function" "fn" {
   s3_bucket               = aws_signer_signing_job.build[each.key].signed_object[0].s3[0].bucket
   s3_key                  = aws_signer_signing_job.build[each.key].signed_object[0].s3[0].key
   code_signing_config_arn = var.lambda_code_signing_config_arn
+
+  # A reservation is the function's guaranteed share of the account's
+  # concurrent executions and also its ceiling: a flood on one function
+  # can't starve the others, and its worst-case cost is bounded. -1 leaves
+  # the function unreserved.
+  reserved_concurrent_executions = var.reserve_concurrency ? each.value.concurrency : -1
 
   # Functions read their parameters once, at cold start. PARAMS_VERSION
   # changes whenever one of this function's parameters is rewritten, which
