@@ -22,6 +22,8 @@ import {
 } from './media/record';
 import { MAX_FILE_BYTES, shownAs, type Sticker } from './protocol/message';
 import { ART_CREDIT, ART_LICENSE, findSticker, loadArt, PACKS, type StickerInfo } from './stickers/catalog';
+import { EMOJI_GROUPS, type EmojiGroup } from './emoji/data';
+import { deleteBefore, insertAt, type Caret } from './emoji/edit';
 import {
   confirmationMatches,
   type AdminNotice,
@@ -981,6 +983,14 @@ function Composer({
 }) {
   const text = useSignal('');
   const stickers = useSignal(false);
+  // Where the cursor was in the message box, for typing from the emoji panel.
+  const caret = useRef<Caret>({ start: 0, end: 0 });
+  const keepCaret = (box: HTMLTextAreaElement) => (caret.current = { start: box.selectionStart, end: box.selectionEnd });
+  const typeIn = (edit: (text: string, at: Caret) => { text: string; caret: Caret }) => {
+    const done = edit(text.value, caret.current);
+    text.value = done.text;
+    caret.current = done.caret;
+  };
   const rec = useRecorder(language, onVoice, onRound);
   const attachMenu = useSignal(false);
   const picked = useSignal<Picked | null>(null);
@@ -1043,7 +1053,7 @@ function Composer({
             key="stickers"
             type="button"
             class="bar-icon"
-            aria-label={t(language, 'stickers')}
+            aria-label={t(language, 'emojiAndStickers')}
             aria-expanded={stickers.value}
             disabled={busy}
             onClick={() => {
@@ -1104,11 +1114,16 @@ function Composer({
             // Empty, it follows the page (the placeholder starts at the right in Persian); typed in, the text.
             dir={text.value ? 'auto' : undefined}
             rows={1}
-            maxLength={4000}
+            maxLength={MAX_TEXT}
             placeholder={t(language, 'messagePlaceholder')}
             value={text.value}
             disabled={busy}
-            onInput={(e) => (text.value = e.currentTarget.value)}
+            onInput={(e) => {
+              text.value = e.currentTarget.value;
+              keepCaret(e.currentTarget);
+            }}
+            onSelect={(e) => keepCaret(e.currentTarget)}
+            onBlur={(e) => keepCaret(e.currentTarget)}
             onFocus={() => (stickers.value = false)}
           />
         )}
@@ -1167,7 +1182,15 @@ function Composer({
           </button>
         )}
       </div>
-      {stickers.value && onSticker && !recording && <StickerPanel language={language} busy={busy} onPick={(s) => void onSticker({ id: s.id, e: s.e })} />}
+      {stickers.value && onSticker && !recording && (
+        <StickerPanel
+          language={language}
+          busy={busy}
+          onPick={(s) => void onSticker({ id: s.id, e: s.e })}
+          onEmoji={(e) => typeIn((value, at) => insertAt(value, at, e, MAX_TEXT))}
+          onDelete={() => typeIn(deleteBefore)}
+        />
+      )}
       {rec.mode === 'round' && recording && <RoundStage live={rec.live} elapsed={rec.elapsed} locked={locked} language={language} />}
       {attachMenu.value && (
         <div class="overlay" onClick={() => (attachMenu.value = false)} onKeyDown={(e) => e.key === 'Escape' && (attachMenu.value = false)}>
@@ -1221,8 +1244,120 @@ function loadStickerArt(): void {
 const recentStickers = signal<string[]>([]);
 const PACK_NAMES: Record<string, Key> = { faces: 'packFaces', love: 'packLove', animals: 'packAnimals' };
 
-/** The sticker panel under the composer: a tab per pack (and Recent), a tap sends. */
-function StickerPanel({ language, busy, onPick }: { language: Language; busy: boolean; onPick: (sticker: StickerInfo) => void }) {
+type PanelSection = 'emoji' | 'stickers';
+/** The panel's section last used, while the app is open. */
+const panelSection = signal<PanelSection>('emoji');
+/** Emoji used in this session, newest first (not kept on the device, like recent stickers). */
+const recentEmoji = signal<string[]>([]);
+const EMOJI_LISTS = Object.fromEntries(EMOJI_GROUPS.map((g) => [g.id, g.emoji.split(' ')])) as Record<EmojiGroup['id'], string[]>;
+const EMOJI_GROUP_TEXT: Record<EmojiGroup['id'], Key> = {
+  people: 'emojiPeople',
+  nature: 'emojiNature',
+  food: 'emojiFood',
+  activity: 'emojiActivity',
+  travel: 'emojiTravel',
+  objects: 'emojiObjects',
+  symbols: 'emojiSymbols',
+  flags: 'emojiFlags',
+};
+const EMOJI_GROUP_ICON: Record<EmojiGroup['id'], string> = {
+  people: '😀',
+  nature: '🐻',
+  food: '🍔',
+  activity: '⚽',
+  travel: '🚗',
+  objects: '💡',
+  symbols: '🔣',
+  flags: '🏳️',
+};
+
+/** The emoji and sticker panel under the message box, as in Telegram: emoji go into the text, a sticker is sent at once. */
+function StickerPanel({
+  language,
+  busy,
+  onPick,
+  onEmoji,
+  onDelete,
+}: {
+  language: Language;
+  busy: boolean;
+  onPick: (sticker: StickerInfo) => void;
+  onEmoji: (emoji: string) => void;
+  onDelete: () => void;
+}) {
+  const section = panelSection.value;
+  const mode = (to: PanelSection) => (
+    <button type="button" class="panel-mode" aria-pressed={section === to} onClick={() => (panelSection.value = to)}>
+      {t(language, to === 'emoji' ? 'emoji' : 'stickers')}
+    </button>
+  );
+  return (
+    <div class="sticker-panel">
+      {section === 'emoji' ? <EmojiSection language={language} onEmoji={onEmoji} /> : <StickerSection language={language} busy={busy} onPick={onPick} />}
+      <div class="panel-switch">
+        {mode('emoji')}
+        {mode('stickers')}
+        {section === 'emoji' && (
+          <button type="button" class="bar-icon panel-delete" aria-label={t(language, 'deleteCharacter')} onClick={onDelete}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21 5H8l-6 7 6 7h13zM11 9l6 6M17 9l-6 6" />
+            </svg>
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmojiSection({ language, onEmoji }: { language: Language; onEmoji: (emoji: string) => void }) {
+  const recent = recentEmoji.value;
+  const group = useSignal<EmojiGroup['id'] | 'recent'>(recent.length > 0 ? 'recent' : 'people');
+  const shown = group.value === 'recent' ? recent : EMOJI_LISTS[group.value];
+  const pick = (emoji: string) => {
+    // On the Recent tab, the order stays put under the finger.
+    if (!(group.peek() === 'recent' && recentEmoji.peek().includes(emoji))) {
+      recentEmoji.value = [emoji, ...recentEmoji.peek().filter((e) => e !== emoji)].slice(0, 32);
+    }
+    onEmoji(emoji);
+  };
+  return (
+    <>
+      <div class="sticker-tabs" role="tablist">
+        {recent.length > 0 && (
+          <button type="button" role="tab" class="sticker-tab" aria-selected={group.value === 'recent'} aria-label={t(language, 'recentStickers')} onClick={() => (group.value = 'recent')}>
+            <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 7v5l3 2M21 12a9 9 0 11-9-9 9 9 0 019 9z" />
+            </svg>
+          </button>
+        )}
+        {EMOJI_GROUPS.map((g) => (
+          <button
+            key={g.id}
+            type="button"
+            role="tab"
+            class="sticker-tab emoji-tab"
+            aria-selected={group.value === g.id}
+            aria-label={t(language, EMOJI_GROUP_TEXT[g.id])}
+            onClick={() => (group.value = g.id)}
+          >
+            {EMOJI_GROUP_ICON[g.id]}
+          </button>
+        ))}
+      </div>
+      {/* Keyed by tab, so each one starts at its top. */}
+      <div key={group.value} class="emoji-grid" role="tabpanel">
+        {shown.map((e) => (
+          <button key={e} type="button" class="emoji-cell" onClick={() => pick(e)}>
+            {e}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** The stickers: a tab per pack (and Recent), a tap sends. */
+function StickerSection({ language, busy, onPick }: { language: Language; busy: boolean; onPick: (sticker: StickerInfo) => void }) {
   const art = stickerArt.value;
   const recent = recentStickers.value.map(findSticker).filter((s): s is StickerInfo => !!s);
   const tab = useSignal(recent.length > 0 ? 'recent' : PACKS[0]!.id);
@@ -1232,7 +1367,7 @@ function StickerPanel({ language, busy, onPick }: { language: Language; busy: bo
     onPick(sticker);
   };
   return (
-    <div class="sticker-panel">
+    <>
       <div class="sticker-tabs" role="tablist">
         {recent.length > 0 && (
           <button type="button" role="tab" class="sticker-tab" aria-selected={tab.value === 'recent'} aria-label={t(language, 'recentStickers')} onClick={() => (tab.value = 'recent')}>
@@ -1251,7 +1386,7 @@ function StickerPanel({ language, busy, onPick }: { language: Language; busy: bo
           );
         })}
       </div>
-      <div class="sticker-grid" role="tabpanel">
+      <div key={tab.value} class="sticker-grid" role="tabpanel">
         {shown.map((s) => (
           <button key={s.id} type="button" class="sticker-cell" aria-label={s.e} disabled={busy} onClick={() => pick(s)}>
             {art?.[s.id] ? <img src={art[s.id]} alt="" draggable={false} /> : <span aria-hidden="true">{s.e}</span>}
@@ -1262,7 +1397,7 @@ function StickerPanel({ language, busy, onPick }: { language: Language; busy: bo
           <pre dir="ltr">{ART_LICENSE}</pre>
         </details>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -1288,6 +1423,8 @@ type RecordMode = 'voice' | 'round';
 const recordMode = signal<RecordMode>('voice');
 /** The most rows the message box grows to; past that, it scrolls. */
 const MAX_ROWS = 6;
+/** The longest message, in UTF-16 code units (the box's maxLength). */
+const MAX_TEXT = 4000;
 /** A press longer than this records; a shorter one is a tap. */
 const HOLD_MS = 250;
 /** How far up a press slides to lock the recording, and toward the start to drop it, in px. */
