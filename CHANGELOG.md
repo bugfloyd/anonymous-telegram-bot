@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0](https://github.com/incognitochat/incognitochat/compare/v2.0.0...v2.1.0) (2026-11-14)
+
+
+### Features
+
+* delete a whole conversation for both sides ([#101](https://github.com/incognitochat/incognitochat/issues/101)) ([afaa83d](https://github.com/incognitochat/incognitochat/commit/afaa83d076a9e20ef551e1b4164bf47554272c0e))
+* delete your own messages for both sides ([#100](https://github.com/incognitochat/incognitochat/issues/100)) ([f4d89d9](https://github.com/incognitochat/incognitochat/commit/f4d89d9f3bc2de6c08a9953bdb67ee711ebc5eb4))
+* edit your own messages ([#102](https://github.com/incognitochat/incognitochat/issues/102)) ([2cbf687](https://github.com/incognitochat/incognitochat/commit/2cbf687ed9a9e0aa56af6abeff146ea0f2aab9d2))
+* reactions to messages, end-to-end encrypted ([#91](https://github.com/incognitochat/incognitochat/issues/91)) ([033572b](https://github.com/incognitochat/incognitochat/commit/033572baf4dbad43abfc3ffe6dce41f2056f2542))
+* **web:** a message's whole row takes its gestures ([#98](https://github.com/incognitochat/incognitochat/issues/98)) ([0771c22](https://github.com/incognitochat/incognitochat/commit/0771c22a9dff7ea615db9e131b9ebe90b2abd6cf))
+* **web:** an emoji panel next to the stickers, as in Telegram ([#90](https://github.com/incognitochat/incognitochat/issues/90)) ([7be1579](https://github.com/incognitochat/incognitochat/commit/7be1579c41dfb4117a92e9d650453e27109be082))
+* **web:** data and storage settings for attachments ([#88](https://github.com/incognitochat/incognitochat/issues/88)) ([db1f3b1](https://github.com/incognitochat/incognitochat/commit/db1f3b1856a86f7165ff66d15419a86390f03230))
+* **web:** double-tap a message to react with a red heart ([#92](https://github.com/incognitochat/incognitochat/issues/92)) ([be44b87](https://github.com/incognitochat/incognitochat/commit/be44b87de859f29f8860eb2606011ac992253bd5))
+* **web:** the time on the text's last line, or on the reaction row ([#94](https://github.com/incognitochat/incognitochat/issues/94)) ([4f731f1](https://github.com/incognitochat/incognitochat/commit/4f731f1db8f3f41b6f5e1bf2654415b96e9b763f))
+
+
+### Bug Fixes
+
+* **web:** a long press never starts a text selection ([#96](https://github.com/incognitochat/incognitochat/issues/96)) ([aa9afc0](https://github.com/incognitochat/incognitochat/commit/aa9afc01e40f58e90eacd0bde8a0f3bbf6071657))
+* **web:** a message grows upward when its reactions change ([#93](https://github.com/incognitochat/incognitochat/issues/93)) ([bb6fde7](https://github.com/incognitochat/incognitochat/commit/bb6fde7f1eeac540b6e908d6290a3afab08909cd))
+* **web:** saving an attachment keeps its server copy ([#99](https://github.com/incognitochat/incognitochat/issues/99)) ([a2fe605](https://github.com/incognitochat/incognitochat/commit/a2fe60580f817201b3b00611e5aed67ca993a0e5))
+* **web:** taking a reaction back at the end of a chat keeps the message in place ([#95](https://github.com/incognitochat/incognitochat/issues/95)) ([f809b10](https://github.com/incognitochat/incognitochat/commit/f809b1007867e431a7a67f733a001068f6950b13))
+* **web:** the back button closes what's open on top first ([#97](https://github.com/incognitochat/incognitochat/issues/97)) ([3bf257c](https://github.com/incognitochat/incognitochat/commit/3bf257cbc43f690a46ba91494156d7145cc0b973))
+
 ## [2.0.0](https://github.com/incognitochat/incognitochat/compare/v1...v2.0.0) (2026-11-13)
 
 
