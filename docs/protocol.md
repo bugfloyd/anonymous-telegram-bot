@@ -268,7 +268,9 @@ each mailbox's owner, to deliver, but not who writes to it.
   the session token as the second subprotocol, never in a URL). After a
   delivery the server sends the owner's open sockets `{"t":"sync"}` and nothing
   else; the app then fetches its inbox. The Telegram notice goes out only if
-  no socket took the push. Receipts are pushed but never noticed. The app
+  no socket took the push. Receipts are pushed but never noticed. The server
+  pushes to an account's 5 newest sockets only; opening more drops the
+  oldest from its records. The app
   sends a heartbeat about every 5 minutes and keeps the socket only while
   it's visible. The server keeps a socket's account and connection ID until
   it closes (at most 2 h 10 min).
