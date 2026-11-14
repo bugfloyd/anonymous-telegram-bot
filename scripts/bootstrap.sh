@@ -2,8 +2,10 @@
 # One-time setup (rerun it to apply changes) of everything GitHub Actions
 # needs to deploy:
 #   - AWS: Terraform state bucket, GitHub OIDC provider, least-privilege deploy
-#     role, the Lambda permissions boundary, and Lambda code signing (build
-#     bucket, signing profile, code signing config) (infra/init)
+#     role, the Lambda permissions boundary, Lambda code signing (build
+#     bucket, signing profile, code signing config), and cost and health
+#     alerts (a monthly budget, alarms, and the topic they publish to)
+#     (infra/init)
 #   - GitHub: a deployment environment that only accepts one branch (main) or
 #     release tags, optionally with required reviewers, plus its secrets and
 #     variables
@@ -19,6 +21,8 @@
 #                                  (production deploys published releases).
 #        REVIEWERS=<login>[,<login>] ... GitHub users who must approve each deploy
 #                                  (when unset, the environment keeps its current ones).
+#        MONTHLY_BUDGET=<dollars> ... the account's monthly cost budget
+#                                  (default: 50 for production, 10 otherwise).
 #        AUTO_APPROVE=1 ... skips Terraform's interactive approval.
 #        GITHUB_REPO=<owner>/<repo> ... overrides the repo detected by gh.
 #
@@ -29,6 +33,9 @@ set -euo pipefail
 region=${1:?usage: AWS_PROFILE=<profile> $0 <aws-region> [github-environment]}
 environment=${2:-production}
 deploy_branch=${DEPLOY_BRANCH:-main}
+if [[ $environment == production ]]; then default_budget=50; else default_budget=10; fi
+monthly_budget=${MONTHLY_BUDGET:-$default_budget}
+environment_prefix="incognitochat-${environment}"
 if [[ -n "${DEPLOY_TAGS:-}" ]]; then
   policy_type=tag policy_name=$DEPLOY_TAGS
 else
@@ -55,6 +62,7 @@ tf_vars=(
   -var "state_bucket_name=${state_bucket}"
   -var "github_oidc_subject_prefix=${oidc_subject_prefix}"
   -var "github_environment=${environment}"
+  -var "monthly_budget_usd=${monthly_budget}"
 )
 apply_args=(-input=false "${tf_vars[@]}")
 [[ "${AUTO_APPROVE:-}" == "1" ]] && apply_args+=(-auto-approve)
@@ -145,3 +153,4 @@ EOF
 else
   echo "Done. BOT_TOKEN is already set. To deploy: ${how_to_deploy}."
 fi
+echo "Budget and alarm alerts go to the SNS topic ${environment_prefix}-alerts; subscribe an address to receive them (docs/deployment.md)."
