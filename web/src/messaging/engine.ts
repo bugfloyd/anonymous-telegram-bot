@@ -33,7 +33,7 @@ import {
 } from './keys';
 import { dropFromPool, pooled, POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, setText, sealPendingEdit, openPendingEdit, type LocalMedia } from './store';
+import { addMessage, deleteMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, queueUploadDeletes, pendingUploadDeletes, forgetUploadDeletes, setText, sealPendingEdit, openPendingEdit, type LocalMedia } from './store';
 import { decryptFile, encryptFile, newFileKey, uploadSize } from '../crypto/media';
 import { xhrTransfer, type Transfer } from '../net/transfer';
 
@@ -42,6 +42,8 @@ const DAY = 24 * 3600 * 1000;
 const MAX_AGE = 31 * DAY;
 /** The most deletes for messages not here yet that a conversation remembers. */
 const MAX_REMEMBERED_DELETES = 500;
+/** How many uploads are deleted from the server at once. */
+const UPLOAD_DELETE_PARALLEL = 6;
 const MAX_INBOX_PAGES = 10;
 const MAX_SEEN = 100;
 const META_BLOCKED = 'blocked-tags';
@@ -276,14 +278,50 @@ export function createMessaging(deps: MessagingDeps) {
     });
   }
 
-  /** Deletes an attachment's upload from the server, if it's still there. */
-  async function deleteUpload(media: LocalMedia | undefined): Promise<void> {
-    if (!media?.id || !media.d) return;
-    try {
-      await api.post(`/media/${media.id}/delete`, { secret: media.d }, checkObject);
-    } catch {
-      // It expires anyway.
-    }
+  /**
+   * Deletes attachments' uploads from the server, in the background: they go
+   * on a list first, so a chat with many attachments disappears at once and
+   * the rest is finished on the next start if the app closes halfway.
+   */
+  async function deleteUploadsLater(media: (LocalMedia | undefined)[]): Promise<void> {
+    const items = media.flatMap((m) => (m?.id && m.d ? [{ id: m.id, d: m.d }] : []));
+    if (items.length === 0) return;
+    await queueUploadDeletes(db, items);
+    void flushUploadDeletes();
+  }
+
+  let flushing: Promise<void> | null = null;
+  /**
+   * Works through the uploads waiting to be deleted, several at a time. One
+   * already gone counts as done; with the server unreachable or busy, the
+   * rest wait for the next try (each start, and upkeep).
+   */
+  function flushUploadDeletes(): Promise<void> {
+    flushing ??= withLock('upload-deletes-flush', async () => {
+      for (;;) {
+        const items = await pendingUploadDeletes(db);
+        if (items.length === 0) return;
+        const done: string[] = [];
+        let stop = false;
+        let next = 0;
+        const worker = async () => {
+          while (!stop && next < items.length) {
+            const item = items[next++]!;
+            try {
+              await api.post(`/media/${item.id}/delete`, { secret: item.d }, checkObject);
+              done.push(item.id);
+            } catch (err) {
+              if (err instanceof ApiError && err.code === 'not_found') done.push(item.id);
+              else stop = true;
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: UPLOAD_DELETE_PARALLEL }, worker));
+        await forgetUploadDeletes(db, done);
+        if (stop) return;
+      }
+    }).finally(() => (flushing = null));
+    return flushing;
   }
 
   /**
@@ -292,7 +330,7 @@ export function createMessaging(deps: MessagingDeps) {
    * message only for us leaves theirs as it is.
    */
   async function discardUploads(messages: { out: boolean; media?: LocalMedia }[]): Promise<void> {
-    for (const m of messages) if (!m.out) await deleteUpload(m.media);
+    await deleteUploadsLater(messages.filter((m) => !m.out).map((m) => m.media));
   }
 
   /**
@@ -328,7 +366,7 @@ export function createMessaging(deps: MessagingDeps) {
       throw new Error('nothing to delete for both sides');
     }
     await transmit(conv, { kind: 'delete', id: newId(), at: now(), delete: [id] });
-    await deleteUpload(m.media);
+    await deleteUploadsLater([m.media]);
     await deleteMessage(db, id);
   }
 
@@ -480,7 +518,7 @@ export function createMessaging(deps: MessagingDeps) {
       const c = await getConversation(db, conv);
       if (!c || c.status !== 'active') throw new Error("can't delete for both sides");
       await transmit(conv, { kind: 'delete', id: newId(), at: now(), all: true });
-      for (const m of await listMessages(db, conv)) if (m.out) await deleteUpload(m.media);
+      await deleteUploadsLater((await listMessages(db, conv)).filter((m) => m.out).map((m) => m.media));
     }
     await withLock(`send:${conv}`, async () => {
       const c = await getConversation(db, conv);
@@ -722,6 +760,7 @@ export function createMessaging(deps: MessagingDeps) {
    * deletes old keys whose time has come; gives the link a new key when due.
    */
   async function maintain(): Promise<void> {
+    await flushUploadDeletes();
     await healMailboxes();
     if ((await poolSize(db)) < POOL_LOW) await refillPool(db, session);
     if ((await countTokens(db, Math.floor(now() / 1000))) < LOW_WATER) {
@@ -785,7 +824,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sendMedia, fetchMedia, discardUploads, deleteForEveryone, edit, sync, markRead, markSeen, react, block, unblock, remove, maintain };
+  return { startConversation, send, sendMedia, fetchMedia, discardUploads, flushUploadDeletes, deleteForEveryone, edit, sync, markRead, markSeen, react, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

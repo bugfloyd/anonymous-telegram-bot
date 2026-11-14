@@ -357,7 +357,11 @@ export function createApp(deps: Deps) {
         return;
       }
     }
-    if (online) await sync();
+    if (online) {
+      await sync();
+      // Uploads left to delete from before (the app closed halfway).
+      void messaging?.flushUploadDeletes();
+    }
     if (deps.background === false || backgroundStarted || typeof document === 'undefined') return;
     backgroundStarted = true;
     // Shown: the page is visible and Telegram hasn't minimised the app.
@@ -922,6 +926,8 @@ export function createApp(deps: Deps) {
             // They expire on their own within 31 days.
           }
         }
+        // Done before the device is wiped, which takes the list with it.
+        await messaging.flushUploadDeletes();
       }
       await session.call('DELETE', '/account', undefined, checkObject, { sign: true });
     } catch (err) {

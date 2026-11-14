@@ -4,7 +4,7 @@
 
 import { concat, randomBytes, utf8 } from '../crypto/encoding';
 import type { Media, Sticker } from '../protocol/message';
-import { getKey, putKey, type ConversationRecord, type Database, type MessageRecord } from '../storage/db';
+import { deleteMeta, getKey, getMeta, putKey, putMeta, type ConversationRecord, type Database, type MessageRecord } from '../storage/db';
 import { withLock } from '../sync/locks';
 
 const STORAGE_KEY = 'storage-key';
@@ -256,4 +256,58 @@ export async function deleteMessages(db: Database, conv: string): Promise<void> 
     await tx.objectStore('media').delete(id);
   }
   await tx.done;
+}
+
+// Uploads to delete from the server, kept until done, so deleting survives
+// the app closing halfway. Their delete secrets are sealed under the storage
+// key, like the messages they came from.
+const UPLOAD_DELETES = 'upload-deletes';
+
+/** An upload to delete, with its delete secret. */
+export interface UploadDelete {
+  id: string;
+  d: string;
+}
+
+async function readUploadDeletes(db: Database): Promise<UploadDelete[]> {
+  const sealed = await getMeta<Uint8Array<ArrayBuffer>>(db, UPLOAD_DELETES);
+  if (!sealed) return [];
+  try {
+    return JSON.parse((await openBody(db, UPLOAD_DELETES, sealed)).text) as UploadDelete[];
+  } catch {
+    return [];
+  }
+}
+
+async function writeUploadDeletes(db: Database, list: UploadDelete[]): Promise<void> {
+  if (list.length === 0) await deleteMeta(db, UPLOAD_DELETES);
+  else await putMeta(db, UPLOAD_DELETES, await sealBody(db, UPLOAD_DELETES, { text: JSON.stringify(list) }));
+}
+
+/** Adds uploads to delete (each once). */
+export function queueUploadDeletes(db: Database, items: UploadDelete[]): Promise<void> {
+  return withLock(UPLOAD_DELETES, async () => {
+    const list = await readUploadDeletes(db);
+    const known = new Set(list.map((u) => u.id));
+    for (const item of items) {
+      if (known.has(item.id)) continue;
+      known.add(item.id);
+      list.push(item);
+    }
+    await writeUploadDeletes(db, list);
+  });
+}
+
+/** The uploads still to delete. */
+export function pendingUploadDeletes(db: Database): Promise<UploadDelete[]> {
+  return readUploadDeletes(db);
+}
+
+/** Takes uploads off the list once they're deleted (or already gone). */
+export function forgetUploadDeletes(db: Database, ids: string[]): Promise<void> {
+  if (ids.length === 0) return Promise.resolve();
+  return withLock(UPLOAD_DELETES, async () => {
+    const done = new Set(ids);
+    await writeUploadDeletes(db, (await readUploadDeletes(db)).filter((u) => !done.has(u.id)));
+  });
 }

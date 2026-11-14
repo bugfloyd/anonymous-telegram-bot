@@ -189,7 +189,10 @@ the server never sees a key, name or type.
   in the device's own browser. The file's key travels after the `#` in that
   address, which is never sent to a server.
 - The upload is deleted when the recipient deletes the message or the
-  conversation, and in any case after 31 days. Downloading or saving it
+  conversation, and in any case after 31 days. Deleting is done in the
+  background, a few at a time, so a chat with many attachments disappears at
+  once; the app keeps a list (sealed under its storage key) and finishes it
+  on the next start if it closed halfway. Downloading or saving it
   doesn't, so a cleared attachment can be fetched again meanwhile. The bucket
   keeps no versions and no access logs.
 
