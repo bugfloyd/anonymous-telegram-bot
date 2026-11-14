@@ -16,7 +16,7 @@ import { countTokens, LOW_WATER, refillTokens, returnToken, takeToken, type Stor
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
-import { newId, openMessage, sealMessage, type Draft, type Media, type Message, type Sticker } from '../protocol/message';
+import { isReactionEmoji, newId, openMessage, sealMessage, type Draft, type Media, type Message, type Sticker } from '../protocol/message';
 import { getMeta, getSealed, putMeta, type ConversationRecord, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
 import {
@@ -33,7 +33,7 @@ import {
 } from './keys';
 import { dropFromPool, pooled, POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, type LocalMedia } from './store';
+import { addMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, type LocalMedia } from './store';
 import { decryptFile, encryptFile, newFileKey, uploadSize } from '../crypto/media';
 import { xhrTransfer, type Transfer } from '../net/transfer';
 
@@ -339,6 +339,27 @@ export function createMessaging(deps: MessagingDeps) {
   }
 
   /**
+   * Reacts to a message in a conversation, theirs or ours, with one emoji; an
+   * empty one takes our reaction back. Shown at once, and sent like a
+   * receipt: quietly, so it triggers no notice. If sending fails, the
+   * reaction goes back to what it was.
+   */
+  async function react(conv: string, id: string, emoji: string): Promise<void> {
+    const c = await getConversation(db, conv);
+    const target = await getMessage(db, id);
+    if (!c || c.status !== 'active' || !target || target.conv !== conv) throw new Error('nothing to react to');
+    if (emoji !== '' && !isReactionEmoji(emoji)) throw new Error('not an emoji');
+    const before = target.reactions?.mine?.e ?? '';
+    await setReaction(db, id, 'mine', emoji, now());
+    try {
+      await transmit(conv, { kind: 'reaction', id: newId(), at: now(), reaction: { to: id, e: emoji } });
+    } catch (err) {
+      await setReaction(db, id, 'mine', before, now());
+      throw err;
+    }
+  }
+
+  /**
    * Opening a conversation: tells the other side, at once, which of their
    * messages we have now read (design D12), and clears the unread count.
    */
@@ -571,6 +592,10 @@ export function createMessaging(deps: MessagingDeps) {
     } else if (message.kind === 'seen') {
       // They opened these: our messages in this conversation only.
       for (const id of message.seen ?? []) if (await markOwnSeen(db, conv.id, id)) changed = true;
+    } else if (message.kind === 'reaction' && message.reaction) {
+      // To a message of this conversation only, by their clock: the latest wins.
+      const target = await getMessage(db, message.reaction.to);
+      if (target?.conv === conv.id) changed = await setReaction(db, target.id, 'theirs', message.reaction.e, message.at);
     } else if (message.kind === 'end') {
       changed = conv.status !== 'ended';
       conv.status = 'ended';
@@ -653,7 +678,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sendMedia, fetchMedia, discardUploads, sync, markRead, markSeen, block, unblock, remove, maintain };
+  return { startConversation, send, sendMedia, fetchMedia, discardUploads, sync, markRead, markSeen, react, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

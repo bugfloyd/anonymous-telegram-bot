@@ -824,6 +824,31 @@ export function createApp(deps: Deps) {
     await show();
   }
 
+  /**
+   * Reacts to a message in the open conversation with one emoji; the same
+   * emoji again takes the reaction back. Shown at once; if it can't be sent,
+   * it goes back and the conversation says why.
+   */
+  async function react(id: string, emoji: string): Promise<void> {
+    const current = screen.value;
+    if (current.kind !== 'conversation' || current.busy || !messaging) return;
+    const message = current.messages.find((m) => m.id === id);
+    if (!message) return;
+    const next = (message.reactions?.mine?.e ?? '') === emoji ? '' : emoji;
+    const shown = (m: MessageView): MessageView => (m.id === id ? { ...m, reactions: { ...m.reactions, mine: { e: next, at: Date.now() } } } : m);
+    screen.value = { ...current, error: null, messages: current.messages.map(shown) };
+    let error: SendError | null = null;
+    try {
+      await messaging.react(current.id, id, next);
+    } catch (err) {
+      if (handleGone(err)) return;
+      error = sendError(err);
+    }
+    deps.broadcast({ type: 'data-changed' });
+    const now = currentScreen();
+    if (now.kind === 'conversation' && now.id === current.id) screen.value = { ...now, error, messages: await listMessages(deps.db, current.id) };
+  }
+
   /** Writes the first message to the link just checked, starting a conversation. */
   async function writeToLink(text: string): Promise<void> {
     const current = screen.value;
@@ -1217,6 +1242,7 @@ export function createApp(deps: Deps) {
     refresh,
     openConversation,
     sendMessage,
+    react,
     block,
     writeToLink,
     createLink: () => linkAction(() => createLink(deps.db, session!), 'created'),

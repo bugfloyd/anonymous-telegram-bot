@@ -130,8 +130,9 @@ secret: one person keeps the same label through the same link.
   recipient knows who wrote, but can't prove it to anyone else (deniable). The
   server holds neither key, so it can't forge one.
 - **Padding:** inner messages are padded to a few fixed sizes.
-- **Replies, "seen" and blocks** are encrypted messages too. "Seen" is sent
-  the moment a message is read. Blocks are silent: the blocked side's sends
+- **Replies, reactions, "seen" and blocks** are encrypted messages too. "Seen"
+  is sent the moment a message is read. A reaction is one emoji per side per
+  message, from a quick row in the long-press menu or the full emoji picker. Blocks are silent: the blocked side's sends
   still look accepted, and new conversations from the same person through the
   same link are dropped by their sender tag.
 - **Key rotation:** conversation and link encryption keys are replaced every
@@ -155,7 +156,7 @@ secret: one person keeps the same label through the same link.
   the server sends it a content-free "sync" hint, and the app fetches.
 - **Notices:** if no app took the push, the bot sends a generic "New message"
   in the user's language: no names, no counts, at most one every 3 minutes,
-  replacing the previous one. "Seen" receipts never trigger one.
+  replacing the previous one. "Seen" receipts and reactions never trigger one.
 
 ## Attachments
 
