@@ -2400,24 +2400,26 @@ function Bubble({
   const lastTap = useRef<{ at: number; x: number; y: number } | null>(null);
   const item = useRef<HTMLLIElement>(null);
   // A reaction added or taken back changes the message's height. As in
-  // Telegram, it grows upward: its bottom, and everything after it, stays
-  // where it is, and what's before it moves. The height before the change is
-  // read while rendering, from the element still on screen; the page is
-  // scrolled by the difference before the next paint.
+  // Telegram, it grows (or shrinks) upward: its bottom, and everything after
+  // it, stays where it is, and what's before it moves. Where its bottom was
+  // is read while rendering, from the element still on screen; before the
+  // next paint the page scrolls it back there. That also covers the browser
+  // having moved it already: a page that got shorter at its end is scrolled
+  // back by the browser itself.
   const reactionKey = `${m.reactions?.mine?.e ?? ''}|${m.reactions?.theirs?.e ?? ''}`;
   const shownKey = useRef(reactionKey);
-  const heightBefore = useRef<number | null>(null);
+  const bottomBefore = useRef<number | null>(null);
   if (shownKey.current !== reactionKey) {
     shownKey.current = reactionKey;
-    heightBefore.current = item.current?.getBoundingClientRect().height ?? null;
+    bottomBefore.current = item.current?.getBoundingClientRect().bottom ?? null;
   }
   useLayoutEffect(() => {
-    const before = heightBefore.current;
-    heightBefore.current = null;
+    const before = bottomBefore.current;
+    bottomBefore.current = null;
     const rect = item.current?.getBoundingClientRect();
     // A message below the screen moves nothing that's shown: leave it.
-    if (before === null || !rect || rect.height === before || rect.top >= window.innerHeight) return;
-    window.scrollBy({ top: rect.height - before, behavior: 'instant' });
+    if (before === null || !rect || rect.bottom === before || before >= window.innerHeight) return;
+    window.scrollBy({ top: rect.bottom - before, behavior: 'instant' });
   }, [reactionKey]);
   const direction = () => (document.documentElement.dir === 'rtl' ? -1 : 1);
   const longPress = () => {
