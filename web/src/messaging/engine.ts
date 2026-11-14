@@ -248,8 +248,8 @@ export function createMessaging(deps: MessagingDeps) {
   /**
    * Fetches an attachment: downloads, decrypts and keeps it on this device.
    * A received one, or one of either side's that was cleared from this
-   * device. The upload stays until it's saved outside the app (the save page
-   * deletes it), the message or conversation is deleted, or it expires.
+   * device. The upload stays, saved or not, until the recipient deletes the
+   * message or the conversation, or it expires.
    * Returns where the file is now.
    */
   function fetchMedia(id: string, onProgress?: (fraction: number) => void): Promise<'local' | 'gone'> {

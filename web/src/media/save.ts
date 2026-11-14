@@ -4,11 +4,14 @@
 // this site in the device's own browser, with what's needed to fetch and
 // open the upload after the "#", which browsers never send to any server:
 //
-//   <site>/#save=<base64url(JSON {id, k, d, s, n?, m?})>
+//   <site>/#save=<base64url(JSON {id, k, s, n?, m?})>
 //
-// The page fetches the upload, decrypts it on the device, offers it as a
-// normal download, and then deletes the upload. The recipient's app keeps
-// the upload until then (or until the conversation goes, or it expires).
+// The page fetches the upload, decrypts it on the device and offers it as a
+// normal download. It doesn't delete the upload: saving or not, it stays
+// until the recipient deletes the message or the conversation, or it
+// expires, so the app can always fetch it again until then. The link
+// carries no delete secret, so one left in a browser's history can only
+// fetch what its holder could already open.
 
 import { fromBase64Url, toBase64Url, utf8 } from '../crypto/encoding';
 import { decryptFile } from '../crypto/media';
@@ -18,12 +21,12 @@ import { fileName, type Media } from '../protocol/message';
 
 export const SAVE_PREFIX = '#save=';
 
-/** What the save page needs: how to fetch, open and delete the upload, and what to call it. */
-export type SaveTicket = Pick<Media, 'id' | 'k' | 'd' | 's' | 'n' | 'm'>;
+/** What the save page needs: how to fetch and open the upload, and what to call it. */
+export type SaveTicket = Pick<Media, 'id' | 'k' | 's' | 'n' | 'm'>;
 
 /** The address that opens the save page for an attachment. */
 export function saveUrl(base: string, media: Media): string {
-  const ticket: SaveTicket = { id: media.id, k: media.k, d: media.d, s: media.s, n: fileName(media), ...(media.m ? { m: media.m } : {}) };
+  const ticket: SaveTicket = { id: media.id, k: media.k, s: media.s, n: fileName(media), ...(media.m ? { m: media.m } : {}) };
   return `${base}${SAVE_PREFIX}${toBase64Url(utf8(JSON.stringify(ticket)))}`;
 }
 
@@ -37,13 +40,12 @@ export function readTicket(hash: string): SaveTicket | null {
       id &&
       typeof t.k === 'string' &&
       fromBase64Url(t.k).length === 32 &&
-      typeof t.d === 'string' &&
-      fromBase64Url(t.d).length === 16 &&
       Number.isSafeInteger(t.s) &&
       (t.s as number) > 0 &&
       (t.n === undefined || typeof t.n === 'string') &&
       (t.m === undefined || (typeof t.m === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(t.m)));
-    return ok ? (t as unknown as SaveTicket) : null;
+    // Older links also carry a delete secret, which is left out.
+    return ok ? { id, k: t.k as string, s: t.s as number, ...(t.n !== undefined ? { n: t.n as string } : {}), ...(t.m !== undefined ? { m: t.m as string } : {}) } : null;
   } catch {
     return null;
   }
@@ -72,13 +74,4 @@ export async function fetchForSaving(api: Api, transfer: Transfer, ticket: SaveT
   }
   const bytes = await decryptFile(await transfer.get(url, onProgress), fromBase64Url(ticket.k), ticket.s);
   return new File([bytes], ticket.n ?? 'file', ticket.m ? { type: ticket.m } : {});
-}
-
-/** Deletes the upload once it's saved. */
-export async function forgetUpload(api: Api, ticket: SaveTicket): Promise<void> {
-  try {
-    await api.post(`/media/${ticket.id}/delete`, { secret: ticket.d }, checkObject);
-  } catch {
-    // It expires anyway.
-  }
 }

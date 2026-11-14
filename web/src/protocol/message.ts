@@ -52,7 +52,7 @@ export interface Media {
   id: string;
   /** The file's AES-256-GCM key (32 bytes). */
   k: string;
-  /** Delete secret (16 bytes): the recipient deletes the upload with it once stored. */
+  /** Delete secret (16 bytes): the recipient deletes the upload with it when deleting the message or the conversation. */
   d: string;
   /** The file's size in bytes, before padding. */
   s: number;

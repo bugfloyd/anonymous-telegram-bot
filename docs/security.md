@@ -113,11 +113,12 @@ it. This is how close it gets.
   token per started 5 MiB. So the server sees a size class, not the type, name
   or content.
 - **Attachments wait on the server, encrypted.** An upload stays in the bucket
-  until the recipient saves it outside the app, deletes the message or the
-  conversation, or 31 days pass. Until then it's ciphertext the server can't
-  open, but it exists. The link used to save a file in the device's browser
-  can stay in that browser's history; once the upload is deleted, it opens
-  nothing.
+  until the recipient deletes the message or the conversation, or 31 days
+  pass, whether or not it was downloaded or saved, so the app can fetch it
+  again meanwhile. It's ciphertext the server can't open, but it exists. The
+  link used to save a file in the device's browser can stay in that
+  browser's history; it carries no delete secret, and once the upload is
+  gone it opens nothing.
 - **Who invited whom** can be guessed from when an invitation code is used.
 - **Activity and volume:** roughly how many mailboxes and messages an account
   has.

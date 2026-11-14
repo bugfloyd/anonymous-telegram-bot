@@ -5,7 +5,7 @@ import { useSignal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { config } from './config';
 import { locale, t, type Language } from './i18n';
-import { fetchForSaving, forgetUpload, Gone, type SaveTicket } from './media/save';
+import { fetchForSaving, Gone, type SaveTicket } from './media/save';
 import { createApi } from './net/api';
 import { xhrTransfer } from './net/transfer';
 
@@ -63,11 +63,7 @@ export function SavePage({ ticket, language }: { ticket: SaveTicket | null; lang
             href={file.value.url}
             download={file.value.file.name}
             onClick={() => {
-              // Saved here, so the server's copy can go.
-              setTimeout(() => {
-                state.value = 'done';
-                if (api && ticket) void forgetUpload(api, ticket);
-              }, 0);
+              setTimeout(() => (state.value = 'done'), 0);
             }}
           >
             {tr('saveButton')}

@@ -183,9 +183,10 @@ the server never sees a key, name or type.
   app uses the share sheet where there is one, and otherwise opens a save page
   in the device's own browser. The file's key travels after the `#` in that
   address, which is never sent to a server.
-- The upload is deleted once it's saved, or the message or conversation is
-  deleted, and in any case after 31 days. The bucket keeps no versions and no
-  access logs.
+- The upload is deleted when the recipient deletes the message or the
+  conversation, and in any case after 31 days. Downloading or saving it
+  doesn't, so a cleared attachment can be fetched again meanwhile. The bucket
+  keeps no versions and no access logs.
 
 ## Emoji and stickers
 
