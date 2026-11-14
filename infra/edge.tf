@@ -122,8 +122,9 @@ resource "aws_wafv2_web_acl" "api" {
   count    = var.firewall ? 1 : 0
   provider = aws.global
 
-  name        = "${local.prefix}-api"
-  description = "Limits requests per IP address to the Incognito Chat API (${var.environment})"
+  name = "${local.prefix}-api"
+  # WAF descriptions take no parentheses.
+  description = "Limits requests per IP address to the Incognito Chat API, ${var.environment}"
   scope       = "CLOUDFRONT"
 
   default_action {
