@@ -2383,6 +2383,27 @@ function Bubble({
   const gesture = useRef<{ x: number; y: number; pointer: number; mode: 'pending' | 'swipe' | 'scroll'; timer: number; pressed: boolean } | null>(null);
   const pulled = useSignal(0);
   const lastTap = useRef<{ at: number; x: number; y: number } | null>(null);
+  const item = useRef<HTMLLIElement>(null);
+  // A reaction added or taken back changes the message's height. As in
+  // Telegram, it grows upward: its bottom, and everything after it, stays
+  // where it is, and what's before it moves. The height before the change is
+  // read while rendering, from the element still on screen; the page is
+  // scrolled by the difference before the next paint.
+  const reactionKey = `${m.reactions?.mine?.e ?? ''}|${m.reactions?.theirs?.e ?? ''}`;
+  const shownKey = useRef(reactionKey);
+  const heightBefore = useRef<number | null>(null);
+  if (shownKey.current !== reactionKey) {
+    shownKey.current = reactionKey;
+    heightBefore.current = item.current?.getBoundingClientRect().height ?? null;
+  }
+  useLayoutEffect(() => {
+    const before = heightBefore.current;
+    heightBefore.current = null;
+    const rect = item.current?.getBoundingClientRect();
+    // A message below the screen moves nothing that's shown: leave it.
+    if (before === null || !rect || rect.height === before || rect.top >= window.innerHeight) return;
+    window.scrollBy({ top: rect.height - before, behavior: 'instant' });
+  }, [reactionKey]);
   const direction = () => (document.documentElement.dir === 'rtl' ? -1 : 1);
   const longPress = () => {
     const g = gesture.current;
@@ -2436,6 +2457,7 @@ function Bubble({
   const bare = !!m.sticker || (!!m.media && shownAs(m.media) === 'round' && !m.text);
   return (
     <li
+      ref={item}
       id={`m-${m.id}`}
       class={`bubble ${m.out ? 'out' : 'in'}${bare ? ' bare' : ''}${highlighted ? ' flash' : ''}${pulled.value ? ' pulling' : ''}`}
       style={pulled.value ? { transform: `translateX(${-pulled.value * direction()}px)` } : undefined}
