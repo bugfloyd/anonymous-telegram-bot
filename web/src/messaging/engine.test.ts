@@ -5,14 +5,14 @@ import type { TokenIssuer } from '../account/wallet';
 import { i2osp, modPow, os2ip, type IssuerKey } from '../crypto/blindrsa';
 import { fromBase64Url, toBase64Url } from '../crypto/encoding';
 import { generateVaultKey } from '../crypto/vault';
-import { ApiError, type Api } from '../net/api';
+import { ApiError, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, type LinkRef } from '../protocol/link';
 import { countTokens, LOW_WATER } from '../account/wallet';
 import { getMeta, getSealed, openDatabase, putKey, putMeta, type Database } from '../storage/db';
 import { POOL_LOW, poolSize } from './pool';
 import { createMessaging } from './engine';
-import { clearMedia, getConversation, getMedia, listConversations, listMessages, mediaUsage } from './store';
+import { clearMedia, getConversation, getMedia, listConversations, listMessages, mediaUsage, pendingUploadDeletes } from './store';
 import type { Transfer } from '../net/transfer';
 import { KEY_RETENTION_MS, scheduleKeyDeletion, type KeyEntry } from './keys';
 
@@ -38,6 +38,8 @@ async function fakeBackend() {
   const spent = new Set<string>();
   const seenEnvelopes: string[] = [];
   const sendHeaders: (Record<string, string> | undefined)[] = [];
+  /** Parts of the server that can't be reached. */
+  const down = { deletes: false };
   const quietSends: boolean[] = [];
   const uploads = new Map<string, { size: number; deleteHash: string; body: Uint8Array<ArrayBuffer> | null }>();
   // The bucket: presigned PUTs must carry exactly the paid-for size.
@@ -83,6 +85,7 @@ async function fakeBackend() {
         return check({ url: `https://bucket.example/m/${path.split('/')[2]!}` });
       }
       if (method === 'POST' && path.startsWith('/media/') && path.endsWith('/delete')) {
+        if (down.deletes) throw new NetworkError('down');
         const id = path.split('/')[2]!;
         const { secret } = JSON.parse(init.body!) as { secret: string };
         const hash = toBase64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', fromBase64Url(secret))));
@@ -154,7 +157,7 @@ async function fakeBackend() {
     };
   }
 
-  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends, mailboxes, uploads, transfer };
+  return { api, session, issuer, seenEnvelopes, sendHeaders, inboxes, quietSends, mailboxes, uploads, transfer, down };
 }
 
 async function person(backend: Awaited<ReturnType<typeof fakeBackend>>, account: string, now?: () => number) {
@@ -689,6 +692,7 @@ describe('deleting for both sides', () => {
     await sender.messaging.deleteForEveryone(conv, oops!.id);
     await sender.messaging.deleteForEveryone(conv, pic!.id);
     expect(backend.quietSends.slice(quiet)).toEqual([true, true]);
+    await sender.messaging.flushUploadDeletes();
     // Gone here, and the upload is gone from the server.
     expect((await listMessages(sender.db, conv)).map((m) => m.text)).toEqual(['hello']);
     expect(backend.uploads.size).toBe(0);
@@ -774,6 +778,7 @@ describe('deleting a whole conversation for both sides', () => {
     await sender.messaging.remove(conv, true);
     expect(backend.quietSends.slice(quiet)).toEqual([true]);
     expect(await listMessages(sender.db, conv)).toEqual([]);
+    await sender.messaging.flushUploadDeletes();
     expect(backend.uploads.size).toBe(0);
     // The owner's side: both sides' messages go, and it leaves the list.
     expect(await owner.messaging.sync()).toBe(1);
@@ -800,6 +805,40 @@ describe('deleting a whole conversation for both sides', () => {
     await owner.messaging.block(conv);
     await expect(owner.messaging.remove(conv, true)).rejects.toThrow();
     expect((await listMessages(owner.db, conv)).length).toBe(1);
+  });
+});
+
+describe('deleting uploads in the background', () => {
+  it('keeps them on a list while the server is unreachable, and finishes later', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'hi');
+    await sender.messaging.sync();
+    for (let i = 0; i < 9; i++) {
+      const photo = crypto.getRandomValues(new Uint8Array(300 + i));
+      await sender.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 3, h: 3, m: 'image/jpeg' } });
+    }
+    expect(backend.uploads.size).toBe(9);
+    // The chat goes for both sides at once, with the server's delete route down.
+    backend.down.deletes = true;
+    await sender.messaging.remove(conv, true);
+    await sender.messaging.flushUploadDeletes();
+    expect(await listMessages(sender.db, conv)).toEqual([]);
+    expect(backend.uploads.size).toBe(9);
+    expect((await pendingUploadDeletes(sender.db)).length).toBe(9);
+    // The list is sealed: no delete secret in the clear.
+    const stored = await getMeta<Uint8Array>(sender.db, 'upload-deletes');
+    const [anyUpload] = await pendingUploadDeletes(sender.db);
+    expect(new TextDecoder().decode(stored!).includes(anyUpload!.d)).toBe(false);
+    // Back again: the next try deletes them all, and empties the list.
+    backend.down.deletes = false;
+    await sender.messaging.flushUploadDeletes();
+    expect(backend.uploads.size).toBe(0);
+    expect(await pendingUploadDeletes(sender.db)).toEqual([]);
   });
 });
 
@@ -908,6 +947,7 @@ describe('attachments', () => {
     expect(backend.uploads.size).toBe(1);
     // ...or the conversation is deleted here.
     await owner.messaging.remove(conv);
+    await owner.messaging.flushUploadDeletes();
     expect(backend.uploads.size).toBe(0);
   });
 
