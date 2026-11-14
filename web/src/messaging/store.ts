@@ -28,6 +28,8 @@ export interface MessageBody {
   sticker?: Sticker;
   /** Reactions, one per side: ours and theirs. */
   reactions?: { mine?: ReactionMark; theirs?: ReactionMark };
+  /** When the text was last edited (the sender's clock), if it was. */
+  edited?: number;
 }
 
 /** A message with its text, for showing. */
@@ -173,6 +175,7 @@ export async function setReaction(db: Database, id: string, side: 'mine' | 'thei
       ...(message.replyTo ? { replyTo: message.replyTo } : {}),
       ...(message.media ? { media: message.media } : {}),
       ...(message.sticker ? { sticker: message.sticker } : {}),
+      ...(message.edited ? { edited: message.edited } : {}),
       reactions: { ...message.reactions, [side]: { e, at } },
     };
     const sealed = await sealBody(db, id, body);
@@ -182,6 +185,41 @@ export async function setReaction(db: Database, id: string, side: 'mine' | 'thei
     await tx.done;
     return !!record && (current?.e ?? '') !== e;
   });
+}
+
+/**
+ * Gives a message a new text, as edited at a time (the editor's clock). An
+ * edit older than the last one changes nothing (a replay, or one arriving
+ * late). Returns whether it changed.
+ */
+export async function setText(db: Database, id: string, text: string, at: number): Promise<boolean> {
+  return withLock(`message:${id}`, async () => {
+    const message = await getMessage(db, id);
+    if (!message || (message.edited ?? 0) >= at) return false;
+    const body: MessageBody = {
+      text,
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+      ...(message.media ? { media: message.media } : {}),
+      ...(message.sticker ? { sticker: message.sticker } : {}),
+      ...(message.reactions ? { reactions: message.reactions } : {}),
+      edited: at,
+    };
+    const sealed = await sealBody(db, id, body);
+    const tx = db.transaction('messages', 'readwrite');
+    const record = await tx.store.get(id);
+    if (record) await tx.store.put({ ...record, sealed });
+    await tx.done;
+    return !!record;
+  });
+}
+
+/** An edit that came before its message, sealed under the storage key like any text, until the message comes. */
+export async function sealPendingEdit(db: Database, id: string, text: string): Promise<Uint8Array<ArrayBuffer>> {
+  return sealBody(db, `edit:${id}`, { text });
+}
+
+export async function openPendingEdit(db: Database, id: string, sealed: Uint8Array<ArrayBuffer>): Promise<string> {
+  return (await openBody(db, `edit:${id}`, sealed)).text;
 }
 
 /** Marks one of our messages in a conversation as seen, if it was sent; returns whether it did. */

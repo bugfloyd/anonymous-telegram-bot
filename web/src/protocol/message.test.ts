@@ -195,6 +195,23 @@ describe('checkMessage', () => {
     }
   });
 
+  it('accepts an edit: one message and its new text', () => {
+    const edit = { ...valid, kind: 'edit', text: undefined };
+    expect(checkMessage({ ...edit, edit: { to: valid.id, text: 'fixed' } }).edit).toEqual({ to: valid.id, text: 'fixed' });
+    expect(checkMessage({ ...edit, edit: { to: valid.id, text: '' } }).edit?.text).toBe('');
+    for (const bad of [
+      edit,
+      { ...edit, edit: { to: valid.id } },
+      { ...edit, edit: { to: 'short', text: 'x' } },
+      { ...edit, edit: { to: valid.id, text: 'x'.repeat(12_001) } },
+      { ...edit, edit: 'fixed' },
+      { ...edit, edit: { to: valid.id, text: 'x' }, text: 'x' },
+      { ...valid, edit: { to: valid.id, text: 'x' } },
+    ]) {
+      expect(() => checkMessage(bad)).toThrow(MessageError);
+    }
+  });
+
   it('accepts kinds from newer versions and shows them as files', () => {
     const voice = checkMessage({ ...valid, media: { ...media, t: 'voice_note' } }).media!;
     expect(shownAs(voice)).toBe('file');

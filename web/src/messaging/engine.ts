@@ -16,7 +16,7 @@ import { countTokens, LOW_WATER, refillTokens, returnToken, takeToken, type Stor
 import { ApiError, checkObject, NetworkError, type Api } from '../net/api';
 import type { Session } from '../net/session';
 import { checkBundle, verifyBundle, type Bundle, type LinkRef } from '../protocol/link';
-import { isReactionEmoji, newId, openMessage, sealMessage, type Draft, type Media, type Message, type Sticker } from '../protocol/message';
+import { isReactionEmoji, MAX_TEXT_BYTES, newId, openMessage, sealMessage, type Draft, type Media, type Message, type Sticker } from '../protocol/message';
 import { getMeta, getSealed, putMeta, type ConversationRecord, type Database } from '../storage/db';
 import { withLock } from '../sync/locks';
 import {
@@ -33,7 +33,7 @@ import {
 } from './keys';
 import { dropFromPool, pooled, POOL_LOW, poolSize, refillPool, takeMailbox } from './pool';
 import { accountSecret, label, senderTag } from './secret';
-import { addMessage, deleteMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, type LocalMedia } from './store';
+import { addMessage, deleteMessage, deleteMessages, getConversation, getMessage, hasMessage, listConversations, listMessages, markOwnSeen, putConversation, putMedia, setFile, setMessageStatus, setReaction, setText, sealPendingEdit, openPendingEdit, type LocalMedia } from './store';
 import { decryptFile, encryptFile, newFileKey, uploadSize } from '../crypto/media';
 import { xhrTransfer, type Transfer } from '../net/transfer';
 
@@ -293,6 +293,25 @@ export function createMessaging(deps: MessagingDeps) {
    */
   async function discardUploads(messages: { out: boolean; media?: LocalMedia }[]): Promise<void> {
     for (const m of messages) if (!m.out) await deleteUpload(m.media);
+  }
+
+  /**
+   * Edits one of our messages: a text message's text, or an attachment's
+   * caption (which may become empty). Sent quietly, like a receipt, and kept
+   * here once sent; their app shows the new text, marked edited. Like
+   * deleting for both sides, it relies on their app.
+   */
+  async function edit(conv: string, id: string, text: string): Promise<void> {
+    const c = await getConversation(db, conv);
+    const m = await getMessage(db, id);
+    if (!c || c.status !== 'active' || !m || m.conv !== conv || !m.out || (m.status !== 'sent' && m.status !== 'seen') || m.sticker) {
+      throw new Error('nothing to edit');
+    }
+    if ((text.trim() === '' && !m.media) || utf8(text).length > MAX_TEXT_BYTES) throw new Error('not a valid text');
+    if (text === m.text) return;
+    const at = now();
+    await transmit(conv, { kind: 'edit', id: newId(), at, edit: { to: id, text } });
+    await setText(db, id, text, at);
   }
 
   /**
@@ -638,9 +657,31 @@ export function createMessaging(deps: MessagingDeps) {
       // Something new brings a deleted conversation back.
       conv.hidden = false;
       changed = true;
+      // An edit of it that came first.
+      const early = conv.edits?.find((e) => e.id === message.id);
+      if (early) {
+        conv.edits = conv.edits!.filter((e) => e !== early);
+        const text = await openPendingEdit(db, early.id, early.sealed);
+        if (text.trim() !== '' || message.media) await setText(db, message.id, text, early.at);
+      }
     } else if (message.kind === 'seen') {
       // They opened these: our messages in this conversation only.
       for (const id of message.seen ?? []) if (await markOwnSeen(db, conv.id, id)) changed = true;
+    } else if (message.kind === 'edit' && message.edit) {
+      // Only their own messages, and the latest edit wins. One for a message
+      // that hasn't arrived yet is kept, sealed, until it does.
+      const { to, text } = message.edit;
+      const target = await getMessage(db, to);
+      if (target) {
+        if (target.conv === conv.id && !target.out && !target.sticker && (text.trim() !== '' || target.media)) {
+          changed = await setText(db, to, text, message.at);
+        }
+      } else {
+        const since = t - MAX_AGE;
+        const kept = (conv.edits ?? []).filter((e) => e.at >= since && !(e.id === to && e.at < message.at));
+        if (!kept.some((e) => e.id === to)) kept.push({ id: to, at: message.at, sealed: await sealPendingEdit(db, to, text) });
+        conv.edits = kept.slice(-MAX_REMEMBERED_DELETES);
+      }
     } else if (message.kind === 'delete' && message.delete) {
       // Only their own messages: a delete can't reach ours. One that hasn't
       // arrived yet is remembered, and dropped when it comes.
@@ -744,7 +785,7 @@ export function createMessaging(deps: MessagingDeps) {
     }
   }
 
-  return { startConversation, send, sendMedia, fetchMedia, discardUploads, deleteForEveryone, sync, markRead, markSeen, react, block, unblock, remove, maintain };
+  return { startConversation, send, sendMedia, fetchMedia, discardUploads, deleteForEveryone, edit, sync, markRead, markSeen, react, block, unblock, remove, maintain };
 }
 
 export type Messaging = ReturnType<typeof createMessaging>;

@@ -105,8 +105,8 @@ it. This is how close it gets.
 - **Telegram** sees who opens which link, and when notices are sent.
 - **Recipients are known to the server.** It must know a mailbox's owner to
   deliver to it. Only senders and pairings are hidden.
-- **Which messages are quiet.** "Seen" receipts, reactions, deletes and key
-  updates are marked so they don't trigger a notice. The server sees the mark, not
+- **Which messages are quiet.** "Seen" receipts, reactions, edits, deletes
+  and key updates are marked so they don't trigger a notice. The server sees the mark, not
   which of these it is or who sent it.
 - **Attachment sizes, roughly.** Files are padded before upload (to the next
   power of two up to 1 MiB, then the next whole MiB), and paid with one send
@@ -137,6 +137,10 @@ it. This is how close it gets.
   If Telegram or the phone clears the app's storage, the account is gone.
   Whether iPhones keep the app's storage over long periods is still being
   tested.
+- **Edits rely on honest apps too.** An edit asks the other side's app to
+  replace a message's text and mark it edited; a modified app could keep the
+  original, as anyone can keep a screenshot. Only the sender's own messages
+  can be edited.
 - **Deleting for both sides relies on honest apps.** Deleting a message, or
   a whole conversation, for both sides asks the other side's app to delete
   it, and deletes the deleter's uploads from the server. A modified app could

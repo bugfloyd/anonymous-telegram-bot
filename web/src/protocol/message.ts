@@ -21,8 +21,8 @@ const TAG_LENGTH = 32;
 export const MAX_TEXT_BYTES = 12_000;
 const MAX_SEEN = 100;
 
-export type Kind = 'message' | 'seen' | 'reaction' | 'delete' | 'key_update' | 'end';
-const KINDS: readonly Kind[] = ['message', 'seen', 'reaction', 'delete', 'key_update', 'end'];
+export type Kind = 'message' | 'seen' | 'reaction' | 'delete' | 'edit' | 'key_update' | 'end';
+const KINDS: readonly Kind[] = ['message', 'seen', 'reaction', 'delete', 'edit', 'key_update', 'end'];
 /** The most messages one "delete" names. */
 export const MAX_DELETE = 100;
 /** The longest reaction, in UTF-16 units: one emoji, joined sequences included. */
@@ -129,6 +129,14 @@ export interface Message {
   delete?: string[];
   /** For kind "delete", instead of IDs: the whole conversation, both sides' messages, as in Telegram. */
   all?: true;
+  /** For kind "edit": one of the sender's messages, and its new text (empty only for an attachment's caption). */
+  edit?: Edit;
+}
+
+/** A new text for one of the sender's own messages. */
+export interface Edit {
+  to: string;
+  text: string;
 }
 
 /** What a sender fills in; the protocol fields are added when sealing. */
@@ -241,6 +249,13 @@ export function checkMessage(value: unknown): Message {
   }
   if (m.kind !== 'delete' && m.delete !== undefined) throw new MessageError(`bad ${m.kind}`);
   if (m.all !== undefined && (m.all !== true || m.kind !== 'delete')) throw new MessageError(`bad ${m.kind}`);
+  if (m.edit !== undefined) {
+    const e = m.edit as Record<string, unknown> | null;
+    if (!e || typeof e !== 'object' || Array.isArray(e)) throw new MessageError('bad edit');
+    bytes(e.to, 16, 'edit');
+    if (typeof e.text !== 'string' || utf8(e.text).length > MAX_TEXT_BYTES) throw new MessageError('bad edit');
+  }
+  if (m.kind !== 'edit' && m.edit !== undefined) throw new MessageError(`bad ${m.kind}`);
   switch (m.kind) {
     case 'message':
       // Text, an attachment, or both (a caption); or a sticker on its own.
@@ -253,6 +268,9 @@ export function checkMessage(value: unknown): Message {
       break;
     case 'reaction':
       if (m.reaction === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad reaction');
+      break;
+    case 'edit':
+      if (m.edit === undefined || m.text !== undefined || m.seen !== undefined || m.media !== undefined) throw new MessageError('bad edit');
       break;
     case 'delete':
       // Some messages, or the whole conversation: one or the other.

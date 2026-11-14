@@ -16,7 +16,7 @@ whom.
   Telegram can write to one.
 - **Conversations like Telegram's:** text, replies, photos, videos, GIFs,
   files, music, voice messages, round video messages, emoji and stickers,
-  reactions, deleting for both sides, and "sent" and "seen" ticks.
+  reactions, editing, deleting for both sides, and "sent" and "seen" ticks.
 - **Anonymous both ways:** a sender is a label like `🦊 K3F9`, the same each
   time they write through your link, and unlinkable to anything else they do.
 - **Silent blocks:** the blocked person isn't told; their messages just stop

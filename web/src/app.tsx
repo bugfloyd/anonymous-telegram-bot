@@ -432,6 +432,9 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
   }, [sending]);
   // The message being answered, the one whose menu is open, and the one just jumped to.
   const replying = useSignal<MessageView | null>(null);
+  // One of ours being edited in the message bar; back cancels it, as in Telegram.
+  const editing = useSignal<MessageView | null>(null);
+  useBackCloses(!!editing.value, () => (editing.value = null));
   const menu = useSignal<MessageView | null>(null);
   useBackCloses(!!menu.value, () => (menu.value = null));
   const highlight = useSignal<string | null>(null);
@@ -550,6 +553,11 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
           canReact={canReact(screen, menu.value)}
           peer={screen.label}
           canDeleteForBoth={canReact(screen, menu.value) && menu.value.out}
+          canEdit={canEdit(screen, menu.value)}
+          onEdit={(m) => {
+            replying.value = null;
+            editing.value = m;
+          }}
           onClose={() => (menu.value = null)}
           onReact={(m, e) => void app.react(m.id, e)}
           onReply={(m) => (replying.value = m)}
@@ -603,7 +611,19 @@ function Conversation({ app, language, screen }: { app: AppState; language: Lang
                   : null
               }
               onCancelReply={() => (replying.value = null)}
+              editing={
+                editing.value
+                  ? { id: editing.value.id, text: editing.value.text, preview: contentLine(language, editing.value), mayBeEmpty: !!editing.value.media }
+                  : null
+              }
+              onCancelEdit={() => (editing.value = null)}
               onSend={async (text) => {
+                if (editing.value) {
+                  const id = editing.value.id;
+                  editing.value = null;
+                  await app.editMessage(id, text);
+                  return;
+                }
                 const to = replying.value?.id;
                 replying.value = null;
                 await app.sendMessage(text, to);
@@ -997,6 +1017,8 @@ function Composer({
   onSend,
   reply = null,
   onCancelReply,
+  editing = null,
+  onCancelEdit,
   onAttach,
   onVoice,
   onRound,
@@ -1008,6 +1030,9 @@ function Composer({
   /** The message being answered: who wrote it, and its text. */
   reply?: { name: string; text: string } | null;
   onCancelReply?: () => void;
+  /** One of ours being edited: its text to start from, what the bar shows, and whether it may be emptied (a caption). */
+  editing?: { id: string; text: string; preview: string; mayBeEmpty: boolean } | null;
+  onCancelEdit?: () => void;
   /** Sends a picked file (absent when attachments are off). */
   onAttach?: (file: File, as: SendAs, caption: string) => Promise<void>;
   /** Sends a recorded voice message (absent when attachments are off). */
@@ -1045,9 +1070,19 @@ function Composer({
   useEffect(() => {
     if (reply) input.current?.focus();
   }, [reply?.text]);
+  // Editing: the box starts from the message's text, with the cursor at its end.
+  useEffect(() => {
+    text.value = editing?.text ?? '';
+    caret.current = { start: text.value.length, end: text.value.length };
+    if (editing) requestAnimationFrame(() => {
+      const box = input.current;
+      box?.focus();
+      box?.setSelectionRange(box.value.length, box.value.length);
+    });
+  }, [editing?.id]);
   const send = async (e: MouseEvent) => {
     const value = text.value;
-    if (value.trim() === '') return;
+    if (value.trim() === '' && !editing?.mayBeEmpty) return;
     // The button goes (the microphone takes its place): from the keyboard, back to the box.
     if (document.activeElement === e.currentTarget) input.current?.focus();
     text.value = '';
@@ -1077,7 +1112,15 @@ function Composer({
   // it) from idle to holding to locked, so the children are flat and keyed.
   return (
     <div class="composer-wrap" onKeyDown={(e) => e.key === 'Escape' && recording && rec.cancel()}>
-      {reply && (
+      {editing && (
+        <div class="reply-bar">
+          <Quote name={t(language, 'editingMessage')} text={editing.preview} />
+          <button type="button" class="reply-cancel" aria-label={t(language, 'cancelEdit')} onClick={onCancelEdit}>
+            ×
+          </button>
+        </div>
+      )}
+      {reply && !editing && (
         <div class="reply-bar">
           <Quote name={t(language, 'replyingTo', { name: reply.name })} text={reply.text} />
           <button type="button" class="reply-cancel" aria-label={t(language, 'cancelReply')} onClick={onCancelReply}>
@@ -1165,14 +1208,14 @@ function Composer({
             onFocus={() => (stickers.value = false)}
           />
         )}
-        {!recording && onAttach ? (
+        {!recording && onAttach && !editing ? (
           <button key="attach" type="button" class="bar-icon attach-icon" aria-label={t(language, 'attach')} disabled={busy} onClick={() => (attachMenu.value = true)}>
             <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M16.5 6.5l-8 8a2.5 2.5 0 003.5 3.5l8.5-8.5a4.5 4.5 0 00-6.4-6.4L5.5 11.7a6.5 6.5 0 009.2 9.2l6.8-6.8" />
             </svg>
           </button>
         ) : null}
-        {rec.available && (recording || text.value.trim() === '') ? (
+        {rec.available && !editing && (recording || text.value.trim() === '') ? (
           <button
             key="record"
             type="button"
@@ -1208,15 +1251,21 @@ function Composer({
             key="send"
             type="button"
             class="round-button"
-            aria-label={t(language, 'send')}
-            disabled={busy || text.value.trim() === ''}
+            aria-label={t(language, editing ? 'saveEdit' : 'send')}
+            disabled={busy || (text.value.trim() === '' && !editing?.mayBeEmpty)}
             // Keeps the focus (and the keyboard) in the message box, as in Telegram.
             onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => void send(e)}
           >
-            <svg class="icon-stroke send-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 11.5L21 3l-8.5 18-2-7.5z" />
-            </svg>
+            {editing ? (
+              <svg class="icon-stroke" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12.5l4.5 4.5L19 7" />
+              </svg>
+            ) : (
+              <svg class="icon-stroke send-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 11.5L21 3l-8.5 18-2-7.5z" />
+              </svg>
+            )}
           </button>
         )}
       </div>
@@ -2504,7 +2553,7 @@ function Bubble({
   const quoteName = quoted ? (quoted.out ? tr('you') : peer) : '';
   const meta = (
     <>
-      <span>{m.status === 'failed' ? tr('notSent') : time.format(new Date(m.at))}</span>
+      <span>{m.status === 'failed' ? tr('notSent') : `${m.edited ? `${tr('edited')} ` : ''}${time.format(new Date(m.at))}`}</span>
       {m.out && <Ticks status={m.status} language={language} />}
     </>
   );
@@ -2578,6 +2627,12 @@ function canReact(screen: Extract<Screen, { kind: 'conversation' }>, m: MessageV
   return !screen.blocked && !screen.ended && !(m.out && (m.status === 'sending' || m.status === 'failed'));
 }
 
+/** Whether one of ours can be edited: sent, in an open conversation, with text or a caption to edit (not a sticker, voice or video message). */
+function canEdit(screen: Extract<Screen, { kind: 'conversation' }>, m: MessageView): boolean {
+  if (!canReact(screen, m) || !m.out || m.sticker) return false;
+  return m.text !== '' || (!!m.media && !['voice', 'round'].includes(shownAs(m.media)));
+}
+
 /** A message's reactions under it: one chip per emoji, ours highlighted; a tap adds ours, or takes it back. */
 function Reactions({ message: m, language, canReact, onReact }: { message: MessageView; language: Language; canReact: boolean; onReact: (emoji: string) => void }) {
   const mine = m.reactions?.mine?.e ?? '';
@@ -2618,6 +2673,8 @@ function MessageMenu({
   canReact,
   peer,
   canDeleteForBoth,
+  canEdit,
+  onEdit,
   onClose,
   onReact,
   onReply,
@@ -2631,6 +2688,8 @@ function MessageMenu({
   peer: string;
   /** One of ours, sent, in an open conversation: it can be deleted on their side too. */
   canDeleteForBoth: boolean;
+  canEdit: boolean;
+  onEdit: (m: MessageView) => void;
   onClose: () => void;
   onReact: (m: MessageView, emoji: string) => void;
   onReply: (m: MessageView) => void;
@@ -2703,6 +2762,11 @@ function MessageMenu({
                 onClick={act(() => void navigator.clipboard?.writeText(message.text).catch(() => {}))}
               >
                 {tr('copy')}
+              </button>
+            )}
+            {canEdit && (
+              <button type="button" class="menu-item" onClick={act(() => onEdit(message))}>
+                {tr('edit')}
               </button>
             )}
             <button type="button" class="menu-item danger" {...(!canReply && !message.text ? { ref: first } : {})} onClick={() => (confirming.value = true)}>

@@ -803,6 +803,73 @@ describe('deleting a whole conversation for both sides', () => {
   });
 });
 
+describe('editing', () => {
+  it('sends an edit quietly; the other side shows the new text, edited, and the latest wins', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'helo');
+    await owner.messaging.sync();
+    const [mine] = await listMessages(sender.db, conv);
+    const quiet = backend.quietSends.length;
+    await sender.messaging.edit(conv, mine!.id, 'hello');
+    const first = backend.seenEnvelopes.at(-1)!;
+    expect(backend.quietSends.slice(quiet)).toEqual([true]);
+    expect((await listMessages(sender.db, conv))[0]).toMatchObject({ text: 'hello', edited: expect.any(Number) });
+    expect(await owner.messaging.sync()).toBe(1);
+    expect((await listMessages(owner.db, conv))[0]).toMatchObject({ text: 'hello', edited: expect.any(Number) });
+    // A second edit, then the first delivered again: the second stays.
+    await sender.messaging.edit(conv, mine!.id, 'hello there');
+    await owner.messaging.sync();
+    backend.inboxes.get('owner')!.push({ id: rand(), mailbox: bundle.mailbox, envelope: first });
+    expect(await owner.messaging.sync()).toBe(0);
+    expect((await listMessages(owner.db, conv))[0]!.text).toBe('hello there');
+    // A text message can't be emptied; the same text sends nothing.
+    await expect(sender.messaging.edit(conv, mine!.id, '  ')).rejects.toThrow();
+    const sends = backend.quietSends.length;
+    await sender.messaging.edit(conv, mine!.id, 'hello there');
+    expect(backend.quietSends.length).toBe(sends);
+  });
+
+  it('applies an edit that comes before its message, and empties a caption', async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hi');
+    await owner.messaging.sync();
+    const photo = crypto.getRandomValues(new Uint8Array(600));
+    await sender.messaging.sendMedia(conv, { file: photo, media: { t: 'photo', s: photo.length, w: 6, h: 6, m: 'image/jpeg' } }, 'a caption');
+    const pic = (await listMessages(sender.db, conv)).at(-1)!;
+    await sender.messaging.edit(conv, pic.id, '');
+    // The edit arrives first.
+    backend.inboxes.get('owner')!.reverse();
+    await owner.messaging.sync();
+    const theirs = (await listMessages(owner.db, conv)).at(-1)!;
+    expect(theirs).toMatchObject({ id: pic.id, text: '', edited: expect.any(Number), media: { t: 'photo' } });
+    expect((await getConversation(owner.db, conv))!.edits).toEqual([]);
+  });
+
+  it("can't edit the other side's messages, even from a modified app", async () => {
+    const backend = await fakeBackend();
+    const owner = await person(backend, 'owner');
+    const sender = await person(backend, 'sender');
+    const { ref, bundle } = await linkOf(backend, owner);
+    const conv = await sender.messaging.startConversation(ref, bundle, 'hello');
+    await owner.messaging.sync();
+    await owner.messaging.send(conv, 'my words');
+    await sender.messaging.sync();
+    const theirs = (await listMessages(sender.db, conv)).find((m) => !m.out)!;
+    await expect(sender.messaging.edit(conv, theirs.id, 'not your words')).rejects.toThrow();
+    const record = (await sender.db.get('messages', theirs.id))!;
+    await sender.db.put('messages', { ...record, out: true, status: 'sent' });
+    await sender.messaging.edit(conv, theirs.id, 'not your words');
+    expect(await owner.messaging.sync()).toBe(0);
+    expect((await listMessages(owner.db, conv)).map((m) => m.text)).toEqual(['hello', 'my words']);
+  });
+});
+
 describe('attachments', () => {
   it('sends a file encrypted, and the recipient fetches, keeps and deletes it', async () => {
     const backend = await fakeBackend();
