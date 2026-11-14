@@ -132,7 +132,8 @@ secret: one person keeps the same label through the same link.
 - **Padding:** inner messages are padded to a few fixed sizes.
 - **Replies, reactions, "seen" and blocks** are encrypted messages too. "Seen"
   is sent the moment a message is read. A reaction is one emoji per side per
-  message, from a quick row in the long-press menu or the full emoji picker. Blocks are silent: the blocked side's sends
+  message, from a quick row in the long-press menu or the full emoji picker;
+  a double-tap reacts with ❤️, as in Telegram. Blocks are silent: the blocked side's sends
   still look accepted, and new conversations from the same person through the
   same link are dropped by their sender tag.
 - **Key rotation:** conversation and link encryption keys are replaced every
