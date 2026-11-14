@@ -66,6 +66,10 @@ async function main(): Promise<void> {
     broadcast: (event) => channel?.send(event),
   });
   restart = () => void app.start();
+  // No browser menu on a long press (messages open their own); fields keep theirs.
+  document.addEventListener('contextmenu', (e) => {
+    if (!(e.target instanceof Element && e.target.closest('input, textarea'))) e.preventDefault();
+  });
   render(<App app={app} language={language} />, root);
   await app.start();
 }
