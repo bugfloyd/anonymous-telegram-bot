@@ -27,6 +27,8 @@ type Issuer interface {
 // Spent remembers spent tokens.
 type Spent interface {
 	Spend(ctx context.Context, nonce []byte, forgetAfter time.Time) (bool, error)
+	// Unspend gives back a token Spend just took.
+	Unspend(ctx context.Context, nonce []byte) error
 }
 
 // issueTokens signs a batch of blinded tokens for a logged-in device. The

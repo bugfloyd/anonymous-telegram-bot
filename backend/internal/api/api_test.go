@@ -495,6 +495,13 @@ func (m *memSpent) Spend(_ context.Context, nonce []byte, _ time.Time) (bool, er
 	return true, nil
 }
 
+func (m *memSpent) Unspend(_ context.Context, nonce []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.spent, string(nonce))
+	return nil
+}
+
 // testIssuer is one issuer key for the whole test binary (RSA keys are slow to make).
 var testIssuer = sync.OnceValue(func() *tokens.Issuer {
 	key, err := rsa.GenerateKey(rand.Reader, tokens.ModulusBits)
