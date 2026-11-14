@@ -26,6 +26,11 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--app-bg); color: var(--app-text); }
+/* As in Telegram, the app's own text can't be selected: on Android a long
+   press would otherwise start a selection, with handles and a toolbar that
+   take over the touches. Fields stay editable and selectable. */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 body { font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"; }
 .muted { color: var(--app-muted); font-size: 0.875rem; }
 .page { max-inline-size: 32rem; margin-inline: auto; padding: 2rem 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
