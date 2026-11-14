@@ -46,7 +46,7 @@ async function backend() {
     post: (path, body, check) => api.request('POST', path, { body: JSON.stringify(body) }, check),
     async request(method, path, init, check) {
       const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
-      const auth = init.headers?.Authorization;
+      const auth = init.headers?.['X-Session'];
       const account = auth ? auth.split('.')[1]! : '';
       const token = (a: string) => ({ account: a, token: `v1.${a}.m`, expires: Math.floor(Date.now() / 1000) + 900 });
       if (path === '/register') {

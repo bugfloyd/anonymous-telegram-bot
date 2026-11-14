@@ -214,7 +214,7 @@ describe('messaging between two people', () => {
       for (const p of ['hello', 'hi back', 'how are you']) expect(raw).not.toContain(p);
       for (const p of plaintexts) expect(env).not.toContain(p);
     }
-    expect(backend.sendHeaders.every((h) => !h || !Object.keys(h).some((k) => k.toLowerCase() === 'authorization'))).toBe(true);
+    expect(backend.sendHeaders.every((h) => !h || !Object.keys(h).some((k) => ['authorization', 'x-session'].includes(k.toLowerCase())))).toBe(true);
   });
 
   it('ignores replays, and keeps one label per person per link', async () => {

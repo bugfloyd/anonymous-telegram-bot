@@ -20,7 +20,7 @@ function server(options: { expireFirst?: boolean; replaced?: boolean } = {}) {
         if (path === '/session') logins++;
         return check({ account: 'BBBBBBBBBBBBBBBBBBBBBB', token: `v1.t${logins}.m`, expires: NOW + 900 });
       }
-      seen.push({ method, path, auth: init.headers?.Authorization, signature: init.headers?.['X-Device-Signature'] });
+      seen.push({ method, path, auth: init.headers?.['X-Session'], signature: init.headers?.['X-Device-Signature'] });
       if (expired) {
         expired = false;
         throw new ApiError(401, 'session_expired');
@@ -46,7 +46,7 @@ describe('session', () => {
     await session.call('GET', '/account', undefined, checkObject);
     await session.call('GET', '/account', undefined, checkObject);
     expect(s.logins()).toBe(1);
-    expect(s.seen.map((c) => c.auth)).toEqual(['Bearer v1.t1.m', 'Bearer v1.t1.m']);
+    expect(s.seen.map((c) => c.auth)).toEqual(['v1.t1.m', 'v1.t1.m']);
     expect(s.seen[0]!.signature).toBeUndefined();
   });
 
@@ -55,7 +55,7 @@ describe('session', () => {
     const session = createSession(await registeredDb(s.api), s.api, () => NOW);
     await session.call('GET', '/account', undefined, checkObject);
     expect(s.logins()).toBe(2);
-    expect(s.seen.map((c) => c.auth)).toEqual(['Bearer v1.t1.m', 'Bearer v1.t2.m']);
+    expect(s.seen.map((c) => c.auth)).toEqual(['v1.t1.m', 'v1.t2.m']);
   });
 
   it('signs sensitive requests with a fresh nonce each time', async () => {

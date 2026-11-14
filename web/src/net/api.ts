@@ -1,6 +1,8 @@
 // The HTTPS API. Requests carry no cookies, no referrer and no cache; every
 // response is checked before use, since the server isn't trusted.
 
+import { toHex } from '../crypto/encoding';
+
 /** Error codes the backend returns (backend/internal/api). */
 export type ErrorCode =
   | 'bad_request'
@@ -96,9 +98,13 @@ export function createApi(baseUrl: string, fetchImpl: Fetch = (input, init) => f
     async request(method, path, init, check) {
       let response: Response;
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json', ...init.headers };
+        // CloudFront, in front of the API, signs each request to the backend,
+        // and the signature must cover the body: its hash travels with it.
+        if (init.body !== undefined) headers['X-Amz-Content-Sha256'] = await sha256Hex(init.body);
         response = await fetchImpl(baseUrl + path, {
           method,
-          headers: { 'Content-Type': 'application/json', ...init.headers },
+          headers,
           ...(init.body === undefined ? {} : { body: init.body }),
           credentials: 'omit',
           referrerPolicy: 'no-referrer',
@@ -128,6 +134,10 @@ export function createApi(baseUrl: string, fetchImpl: Fetch = (input, init) => f
     },
   };
   return api;
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))));
 }
 
 /** Accepts any JSON object, for responses whose content doesn't matter. */

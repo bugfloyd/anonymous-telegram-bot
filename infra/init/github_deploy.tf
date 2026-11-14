@@ -283,6 +283,79 @@ resource "aws_iam_policy" "deploy" {
   policy      = data.aws_iam_policy_document.deploy.json
 }
 
+# The edge in front of the API: CloudFront and its firewall. A policy of its
+# own, because one managed policy can't hold everything.
+data "aws_iam_policy_document" "deploy_edge" {
+  # CloudFront in front of the API. Distribution and access-control IDs are
+  # random, so this can't be narrowed by name.
+  statement {
+    sid = "CloudFront"
+    actions = [
+      "cloudfront:CreateDistribution",
+      "cloudfront:CreateDistributionWithTags",
+      "cloudfront:GetDistribution",
+      "cloudfront:GetDistributionConfig",
+      "cloudfront:UpdateDistribution",
+      "cloudfront:DeleteDistribution",
+      "cloudfront:TagResource",
+      "cloudfront:UntagResource",
+      "cloudfront:ListTagsForResource",
+      "cloudfront:CreateOriginAccessControl",
+      "cloudfront:GetOriginAccessControl",
+      "cloudfront:GetOriginAccessControlConfig",
+      "cloudfront:UpdateOriginAccessControl",
+      "cloudfront:DeleteOriginAccessControl",
+    ]
+    resources = [
+      "arn:${local.partition}:cloudfront::${local.account_id}:distribution/*",
+      "arn:${local.partition}:cloudfront::${local.account_id}:origin-access-control/*",
+    ]
+  }
+
+  # AWS's managed cache and origin-request policies, looked up by name.
+  statement {
+    sid = "CloudFrontPolicies"
+    actions = [
+      "cloudfront:ListCachePolicies",
+      "cloudfront:GetCachePolicy",
+      "cloudfront:ListOriginRequestPolicies",
+      "cloudfront:GetOriginRequestPolicy",
+      "cloudfront:ListOriginAccessControls",
+    ]
+    resources = ["*"]
+  }
+
+  # The firewall in front of CloudFront: web ACLs named with the prefix
+  # (they live in us-east-1, as CloudFront's do), and AWS's managed rules.
+  statement {
+    sid = "Firewall"
+    actions = [
+      "wafv2:CreateWebACL",
+      "wafv2:GetWebACL",
+      "wafv2:UpdateWebACL",
+      "wafv2:DeleteWebACL",
+      "wafv2:TagResource",
+      "wafv2:UntagResource",
+      "wafv2:ListTagsForResource",
+    ]
+    resources = [
+      "arn:${local.partition}:wafv2:us-east-1:${local.account_id}:global/webacl/${local.prefix}-*/*",
+      "arn:${local.partition}:wafv2:us-east-1:${local.account_id}:global/managedruleset/*/*",
+    ]
+  }
+}
+
+resource "aws_iam_policy" "deploy_edge" {
+  name        = "${local.prefix}-github-deploy-edge"
+  description = "Permissions for deploying CloudFront and its firewall in front of the Incognito Chat API (${var.github_environment})"
+  policy      = data.aws_iam_policy_document.deploy_edge.json
+}
+
+resource "aws_iam_role_policy_attachment" "deploy_edge" {
+  role       = aws_iam_role.deploy.name
+  policy_arn = aws_iam_policy.deploy_edge.arn
+}
+
 # The most any function's execution role can ever be allowed to do. Each
 # function gets a narrower policy of its own in the app stack.
 data "aws_iam_policy_document" "lambda_boundary" {

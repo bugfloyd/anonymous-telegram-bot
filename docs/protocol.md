@@ -58,6 +58,10 @@ them.
 | `incognitochat/v2/request` | device key | account ID, device ID, method, path, timestamp (decimal), nonce, SHA-256(body) |
 
 A registration launch has `start_param = "reg" ‖ fingerprint(account key)`.
+The session token travels in `X-Session` (not `Authorization`, which
+CloudFront fills in when it signs a request to the backend), and a request
+with a body carries the body's SHA-256, in hex, in `X-Amz-Content-Sha256`,
+which that signature covers.
 Signed requests carry `X-Device-Signature: <timestamp>.<nonce>.<signature>`
 next to the session token. Nonces are 16–64 base64url characters and are used
 once; timestamps must be within 60 seconds of the server's clock.

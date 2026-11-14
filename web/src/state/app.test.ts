@@ -49,7 +49,7 @@ function fakeServer(outcomes: { register?: Outcome[]; session?: Outcome[]; creat
     async request(method, path, init, check) {
       const body = init.body ? (JSON.parse(init.body) as Record<string, unknown>) : {};
       calls.push(`${method} ${path}${body.replace ? '?replace' : ''}`);
-      const signed = !!init.headers?.['X-Device-Signature'] && !!init.headers?.Authorization;
+      const signed = !!init.headers?.['X-Device-Signature'] && !!init.headers?.['X-Session'];
       const needsSignature = () => {
         if (!signed) unsigned.push(`${method} ${path}`);
       };

@@ -19,6 +19,11 @@ import (
 // session.RequestParts.
 const SignatureHeader = "X-Device-Signature"
 
+// SessionHeader carries the session token. It isn't Authorization because
+// CloudFront, in front of the API, signs each request to the function URL
+// and puts its own value there.
+const SessionHeader = "X-Session"
+
 // caller is a logged-in device, read from the directory.
 type caller struct {
 	session.Claims
@@ -84,9 +89,13 @@ func (s *Server) withSignature(route string, h callerHandler) httpapi.HandlerFun
 }
 
 func (s *Server) authenticate(ctx context.Context, route string, req httpapi.Request) (caller, httpapi.Response, bool) {
-	token, ok := strings.CutPrefix(httpapi.Header(req, "Authorization"), "Bearer ")
-	if !ok {
-		return caller{}, httpapi.Error(http.StatusUnauthorized, "session_expired"), false
+	token := httpapi.Header(req, SessionHeader)
+	if token == "" {
+		// Apps built before SessionHeader send "Authorization: Bearer <token>".
+		var ok bool
+		if token, ok = strings.CutPrefix(httpapi.Header(req, "Authorization"), "Bearer "); !ok {
+			return caller{}, httpapi.Error(http.StatusUnauthorized, "session_expired"), false
+		}
 	}
 	claims, err := s.Sessions.Verify(token, s.Now())
 	if err != nil {
